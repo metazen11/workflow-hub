@@ -1,11 +1,16 @@
 """Pytest fixtures for Workflow Hub tests."""
 import os
 import pytest
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-# Use test database
-os.environ["DATABASE_URL"] = "postgresql+psycopg2://app:app@localhost:5432/app"
+# Load environment from .env file
+load_dotenv()
+
+# Verify DATABASE_URL is set
+if not os.getenv("DATABASE_URL"):
+    raise ValueError("DATABASE_URL must be set in .env file to run tests")
 
 from app.db import Base, engine
 from app.models import Project, Requirement, Task, Run, AgentReport, ThreatIntel, AuditEvent
