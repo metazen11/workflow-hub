@@ -1,0 +1,6 @@
+django
+sqlalchemy
+psycopg2-binary
+pytest
+alembic
+python-dotenv
