@@ -60,6 +60,7 @@ urlpatterns = [
     path('api/runs/<int:run_id>/advance', api.run_advance, name='run_advance'),
     path('api/runs/<int:run_id>/retry', api.run_retry, name='run_retry'),
     path('api/runs/<int:run_id>/reset-to-dev', api.run_reset_to_dev, name='run_reset_to_dev'),
+    path('api/runs/<int:run_id>/create-tasks-from-findings', api.run_create_tasks_from_findings, name='run_create_tasks_from_findings'),
     path('api/runs/<int:run_id>/approve-deploy', api.run_approve_deploy, name='run_approve_deploy'),
 
     # Threat Intel

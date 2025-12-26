@@ -120,15 +120,24 @@ def project_update(request, project_id):
         if not project:
             return JsonResponse({"error": "Project not found"}, status=404)
 
-        # Update allowed fields
-        if "name" in data:
-            project.name = data["name"]
-        if "description" in data:
-            project.description = data["description"]
-        if "repo_path" in data:
-            project.repo_path = data["repo_path"]
-        if "stack_tags" in data:
-            project.stack_tags = data["stack_tags"]
+        # Update allowed fields - scalars
+        scalar_fields = [
+            "name", "description", "repo_path", "repository_url", "repository_ssh_url",
+            "primary_branch", "documentation_url", "git_credential_id", "git_auth_method",
+            "entry_point", "build_command", "test_command", "run_command", "deploy_command",
+            "default_port", "python_version", "node_version", "is_active", "is_archived"
+        ]
+        for field in scalar_fields:
+            if field in data:
+                setattr(project, field, data[field])
+
+        # Update allowed fields - arrays (JSON columns)
+        array_fields = [
+            "stack_tags", "languages", "frameworks", "databases", "key_files", "config_files"
+        ]
+        for field in array_fields:
+            if field in data:
+                setattr(project, field, data[field])
 
         db.commit()
         db.refresh(project)
@@ -584,17 +593,83 @@ def run_retry(request, run_id):
 @csrf_exempt
 @require_http_methods(["POST"])
 def run_reset_to_dev(request, run_id):
-    """Reset a failed run back to DEV stage for fixes."""
+    """Reset a failed run back to DEV stage for fixes.
+
+    Automatically creates tasks from QA/Security findings.
+    Pass {"create_tasks": false} to skip task creation.
+    """
     db = next(get_db())
     try:
         data = json.loads(request.body) if request.body else {}
         actor = data.get("actor", "orchestrator")
+        create_tasks = data.get("create_tasks", True)
 
         service = RunService(db)
-        new_state, error = service.reset_to_dev(run_id, actor)
+
+        # Get tasks that will be created (for response)
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        new_state, error = service.reset_to_dev(run_id, actor, create_tasks=create_tasks)
         if error:
             return JsonResponse({"error": error}, status=400)
-        return JsonResponse({"state": new_state.value, "message": "Reset to DEV for fixes"})
+
+        # Get incomplete tasks for this project to show dev what to work on
+        incomplete_tasks = db.query(Task).filter(
+            Task.project_id == run.project_id,
+            Task.status != TaskStatus.DONE
+        ).order_by(Task.priority.desc()).all()
+
+        return JsonResponse({
+            "status": "success",
+            "state": new_state.value,
+            "message": "Reset to DEV for fixes",
+            "tasks_to_fix": [
+                {
+                    "task_id": t.task_id,
+                    "title": t.title,
+                    "priority": t.priority,
+                    "description": t.description[:200] if t.description else None
+                }
+                for t in incomplete_tasks
+            ]
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def run_create_tasks_from_findings(request, run_id):
+    """Manually create tasks from the latest QA or Security report findings."""
+    db = next(get_db())
+    try:
+        data = json.loads(request.body) if request.body else {}
+        role = data.get("role", "security")  # qa or security
+
+        if role not in ("qa", "security"):
+            return JsonResponse({"error": "Role must be 'qa' or 'security'"}, status=400)
+
+        from app.models.report import AgentRole
+        agent_role = AgentRole.QA if role == "qa" else AgentRole.SECURITY
+
+        service = RunService(db)
+        tasks = service.create_tasks_from_findings(run_id, agent_role)
+
+        return JsonResponse({
+            "status": "success",
+            "tasks_created": len(tasks),
+            "tasks": [
+                {
+                    "id": t.id,
+                    "task_id": t.task_id,
+                    "title": t.title,
+                    "priority": t.priority
+                }
+                for t in tasks
+            ]
+        })
     finally:
         db.close()
 
