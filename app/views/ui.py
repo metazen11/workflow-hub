@@ -370,33 +370,102 @@ def project_view(request, project_id):
 
 
 def run_view(request, run_id):
-    """Run detail view."""
+    """Run detail view with controls."""
     db = next(get_db())
     try:
         run = db.query(Run).filter(Run.id == run_id).first()
         if not run:
             return HttpResponse("Run not found", status=404)
 
-        # For now, render a simple page - can be templated later
-        html = f'''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>{run.name} - Workflow Hub</title>
-            <link rel="stylesheet" href="/static/css/app.css">
-        </head>
-        <body>
-            <div style="padding: 40px; max-width: 800px; margin: 0 auto;">
-                <h1>{run.name}</h1>
-                <p>State: <span class="badge badge-{_get_status_class(run.state.value)}">{run.state.value.upper()}</span></p>
-                <p>Created: {run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else ''}</p>
-                <p><a href="/ui/">Back to Dashboard</a></p>
-            </div>
-            <script src="/static/js/app.js"></script>
-        </body>
-        </html>
-        '''
-        return HttpResponse(html)
+        project = db.query(Project).filter(Project.id == run.project_id).first()
+        open_bugs = _get_open_bugs_count(db)
+
+        # Get tasks for this run
+        tasks = db.query(Task).filter(Task.run_id == run_id).order_by(Task.priority.desc()).all()
+
+        # Get audit events for this run
+        audit_events = db.query(AuditEvent).filter(
+            AuditEvent.entity_type == "run",
+            AuditEvent.entity_id == run_id
+        ).order_by(AuditEvent.timestamp.desc()).limit(20).all()
+
+        # Build pipeline stages
+        all_states = ["pm", "dev", "qa", "sec", "docs", "ready_for_commit", "merged", "ready_for_deploy", "testing", "deployed"]
+        failed_states = ["qa_failed", "sec_failed", "docs_failed", "testing_failed"]
+        current_state = run.state.value
+
+        pipeline_stages = []
+        current_found = False
+        for state in all_states:
+            stage = {
+                "name": state,
+                "label": state.upper().replace("_", " "),
+                "completed": False,
+                "failed": False
+            }
+            if state == current_state:
+                current_found = True
+            elif not current_found:
+                stage["completed"] = True
+            pipeline_stages.append(stage)
+
+        # Check for failed states
+        if current_state in failed_states:
+            base_state = current_state.replace("_failed", "")
+            for stage in pipeline_stages:
+                if stage["name"] == base_state:
+                    stage["failed"] = True
+
+        # Build results dict
+        results = {
+            "pm": run.pm_result,
+            "dev": run.dev_result,
+            "qa": run.qa_result,
+            "sec": run.sec_result,
+            "docs": run.docs_result if hasattr(run, 'docs_result') else None,
+            "testing": run.testing_result if hasattr(run, 'testing_result') else None,
+        }
+
+        # State flags for template
+        is_failed = current_state in ['qa_failed', 'sec_failed', 'docs_failed', 'testing_failed']
+        is_ready_for_deploy = current_state == 'ready_for_deploy'
+
+        context = {
+            'active_page': 'runs',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'run': {
+                'id': run.id,
+                'name': run.name,
+                'state': current_state,
+                'state_class': _get_status_class(current_state),
+                'project_id': run.project_id,
+                'project_name': project.name if project else 'Unknown',
+                'killed': run.killed,
+                'is_failed': is_failed,
+                'is_ready_for_deploy': is_ready_for_deploy,
+                'created_at': run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '',
+                'results': results,
+            },
+            'pipeline_stages': pipeline_stages,
+            'all_states': all_states + failed_states,
+            'tasks': [{
+                'id': t.id,
+                'task_id': t.task_id,
+                'title': t.title,
+                'description': t.description,
+                'status': t.status.value if t.status else 'backlog',
+                'status_class': _get_status_class(t.status.value if t.status else 'backlog'),
+                'priority': t.priority,
+            } for t in tasks],
+            'audit_events': [{
+                'timestamp': e.timestamp.strftime('%H:%M:%S') if e.timestamp else '',
+                'actor': e.actor,
+                'action': e.action,
+                'details': str(e.details) if e.details else '',
+            } for e in audit_events],
+        }
+
+        return render(request, 'run_detail.html', context)
     finally:
         db.close()
 

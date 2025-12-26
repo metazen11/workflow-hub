@@ -46,6 +46,7 @@ urlpatterns = [
     path('api/projects/<int:project_id>/tasks', api.tasks_list, name='tasks_list'),
     path('api/projects/<int:project_id>/tasks/create', api.task_create, name='task_create'),
     path('api/tasks/<int:task_id>/status', api.task_update_status, name='task_update_status'),
+    path('api/tasks/<int:task_id>/update', api.task_update, name='task_update'),
     path('api/tasks/<int:task_id>/execute', api.task_execute, name='task_execute'),
     path('api/tasks/<int:task_id>/context', api.task_context, name='task_context'),
     path('api/tasks/<int:task_id>/attachments', api.task_attachments_list, name='task_attachments_list'),

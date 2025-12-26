@@ -306,6 +306,54 @@ def task_update_status(request, task_id):
 
 
 @csrf_exempt
+@require_http_methods(["PATCH"])
+def task_update(request, task_id):
+    """Update task details (title, description, priority, etc.)."""
+    data = _get_json_body(request)
+    if not data:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        updated_fields = []
+
+        if "title" in data:
+            task.title = data["title"]
+            updated_fields.append("title")
+
+        if "description" in data:
+            task.description = data["description"]
+            updated_fields.append("description")
+
+        if "priority" in data:
+            task.priority = int(data["priority"])
+            updated_fields.append("priority")
+
+        if "blocked_by" in data:
+            task.blocked_by = data["blocked_by"]
+            updated_fields.append("blocked_by")
+
+        if "acceptance_criteria" in data:
+            task.acceptance_criteria = data["acceptance_criteria"]
+            updated_fields.append("acceptance_criteria")
+
+        if "run_id" in data:
+            task.run_id = data["run_id"]
+            updated_fields.append("run_id")
+
+        db.commit()
+        db.refresh(task)
+        log_event(db, "human", "update", "task", task_id, {"updated_fields": updated_fields})
+        return JsonResponse({"success": True, "task": task.to_dict()})
+    finally:
+        db.close()
+
+
+@csrf_exempt
 @require_http_methods(["POST"])
 def task_execute(request, task_id):
     """

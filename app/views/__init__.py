@@ -13,6 +13,7 @@ from app.views.api import (
     tasks_list,
     task_create,
     task_update_status,
+    task_update,
     task_execute,
     task_context,
     task_attachments_list,
