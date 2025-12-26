@@ -4,3 +4,5 @@ psycopg2-binary
 pytest
 alembic
 python-dotenv
+requests
+rich>=13.0.0

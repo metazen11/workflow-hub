@@ -3,6 +3,10 @@ from typing import Optional, Tuple
 from app.models.run import Run, RunState, VALID_TRANSITIONS
 from app.models.report import AgentReport, AgentRole, ReportStatus
 from app.models.audit import log_event
+from app.services.webhook_service import (
+    dispatch_webhook, EVENT_STATE_CHANGE, EVENT_REPORT_SUBMITTED,
+    EVENT_RUN_CREATED, EVENT_GATE_FAILED, EVENT_READY_FOR_DEPLOY
+)
 
 
 class RunService:
@@ -26,6 +30,16 @@ class RunService:
             entity_id=run.id,
             details={"name": name, "initial_state": "pm"}
         )
+
+        # Dispatch webhook - new run created, PM agent should start
+        dispatch_webhook(EVENT_RUN_CREATED, {
+            "run_id": run.id,
+            "project_id": project_id,
+            "name": name,
+            "state": "pm",
+            "next_agent": "pm"
+        })
+
         return run
 
     def submit_report(
@@ -40,7 +54,6 @@ class RunService:
         """
         Submit an agent report for a run.
         Returns (report, error_message).
-        If status is FAIL for QA/Security, run state transitions to failed state.
         """
         run = self.db.query(Run).filter(Run.id == run_id).first()
         if not run:
@@ -84,6 +97,15 @@ class RunService:
             details={"role": role.value, "status": status.value}
         )
 
+        # Dispatch webhook - report submitted
+        dispatch_webhook(EVENT_REPORT_SUBMITTED, {
+            "run_id": run_id,
+            "role": role.value,
+            "status": status.value,
+            "summary": summary,
+            "current_state": run.state.value
+        })
+
         return report, None
 
     def advance_state(
@@ -116,6 +138,11 @@ class RunService:
                 self.db.commit()
                 log_event(self.db, actor, "state_change", "run", run_id,
                          {"from": current_state.value, "to": "qa_failed", "reason": "QA failed"})
+                dispatch_webhook(EVENT_GATE_FAILED, {
+                    "run_id": run_id,
+                    "gate": "qa",
+                    "reason": "QA tests failed"
+                })
                 return RunState.QA_FAILED, "QA gate failed"
 
         if current_state == RunState.SEC:
@@ -127,6 +154,11 @@ class RunService:
                 self.db.commit()
                 log_event(self.db, actor, "state_change", "run", run_id,
                          {"from": current_state.value, "to": "sec_failed", "reason": "Security failed"})
+                dispatch_webhook(EVENT_GATE_FAILED, {
+                    "run_id": run_id,
+                    "gate": "security",
+                    "reason": "Security check failed"
+                })
                 return RunState.SEC_FAILED, "Security gate failed"
 
         # Human approval required for deploy
@@ -141,6 +173,22 @@ class RunService:
         log_event(self.db, actor, "state_change", "run", run_id,
                  {"from": old_state, "to": next_state.value})
 
+        # Dispatch webhook - state changed
+        next_agent = self._get_agent_for_state(next_state)
+        dispatch_webhook(EVENT_STATE_CHANGE, {
+            "run_id": run_id,
+            "from_state": old_state,
+            "to_state": next_state.value,
+            "next_agent": next_agent
+        })
+
+        # Special webhook for ready_for_deploy (human approval needed)
+        if next_state == RunState.READY_FOR_DEPLOY:
+            dispatch_webhook(EVENT_READY_FOR_DEPLOY, {
+                "run_id": run_id,
+                "message": "Human approval required for deployment"
+            })
+
         return next_state, None
 
     def retry_from_failed(self, run_id: int, actor: str = "human") -> Tuple[Optional[RunState], Optional[str]]:
@@ -151,19 +199,57 @@ class RunService:
 
         if run.state == RunState.QA_FAILED:
             run.state = RunState.QA
+            next_agent = "qa"
         elif run.state == RunState.SEC_FAILED:
             run.state = RunState.SEC
+            next_agent = "security"
         else:
             return None, "Run is not in a failed state"
 
         self.db.commit()
         log_event(self.db, actor, "retry", "run", run_id, {"new_state": run.state.value})
+
+        dispatch_webhook(EVENT_STATE_CHANGE, {
+            "run_id": run_id,
+            "from_state": "failed",
+            "to_state": run.state.value,
+            "next_agent": next_agent,
+            "is_retry": True
+        })
+
         return run.state, None
+
+    def reset_to_dev(self, run_id: int, actor: str = "orchestrator") -> Tuple[Optional[RunState], Optional[str]]:
+        """Reset a failed run back to DEV stage for fixes."""
+        run = self.db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return None, "Run not found"
+
+        old_state = run.state.value
+        allowed_states = {RunState.QA_FAILED, RunState.SEC_FAILED, RunState.QA, RunState.SEC}
+
+        if run.state not in allowed_states:
+            return None, f"Cannot reset to DEV from state: {old_state}"
+
+        run.state = RunState.DEV
+        self.db.commit()
+
+        log_event(self.db, actor, "reset_to_dev", "run", run_id,
+                 {"from_state": old_state, "to_state": "dev"})
+
+        dispatch_webhook(EVENT_STATE_CHANGE, {
+            "run_id": run_id,
+            "from_state": old_state,
+            "to_state": "dev",
+            "next_agent": "dev",
+            "is_loopback": True
+        })
+
+        return RunState.DEV, None
 
     def _get_next_state(self, run: Run) -> Optional[RunState]:
         """Get the next valid state (primary path, not failed states)."""
         transitions = VALID_TRANSITIONS.get(run.state, [])
-        # Return first non-failed state, or None
         for state in transitions:
             if "FAILED" not in state.value.upper():
                 return state
@@ -177,3 +263,13 @@ class RunService:
             .order_by(AgentReport.created_at.desc())
             .first()
         )
+
+    def _get_agent_for_state(self, state: RunState) -> Optional[str]:
+        """Get the agent responsible for a state."""
+        agent_map = {
+            RunState.PM: "pm",
+            RunState.DEV: "dev",
+            RunState.QA: "qa",
+            RunState.SEC: "security",
+        }
+        return agent_map.get(state)

@@ -31,16 +31,10 @@ def db_session():
     session.rollback()
     session.close()
 
-    # Clear all data (in reverse order of dependencies)
+    # Clear test data using TRUNCATE CASCADE for clean slate
+    # Note: In production, use completed flag to preserve history
     with engine.connect() as conn:
-        conn.execute(text("DELETE FROM agent_reports"))
-        conn.execute(text("DELETE FROM task_requirements"))
-        conn.execute(text("DELETE FROM runs"))
-        conn.execute(text("DELETE FROM tasks"))
-        conn.execute(text("DELETE FROM requirements"))
-        conn.execute(text("DELETE FROM projects"))
-        conn.execute(text("DELETE FROM threat_intel"))
-        conn.execute(text("DELETE FROM audit_events"))
+        conn.execute(text("TRUNCATE agent_reports, task_requirements, tasks, runs, requirements, projects, threat_intel, audit_events, bug_reports CASCADE"))
         conn.commit()
 
 

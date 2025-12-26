@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Workflow Hub{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- Stats Cards -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <span class="stat-card-title">Open Bugs</span>
+            <div class="stat-card-icon danger">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+            </div>
+        </div>
+        <div class="stat-card-value {% if stats.open_bugs > 0 %}danger{% endif %}">{{ stats.open_bugs }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <span class="stat-card-title">Active Runs</span>
+            <div class="stat-card-icon info">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+            </div>
+        </div>
+        <div class="stat-card-value">{{ stats.active_runs }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <span class="stat-card-title">Total Tasks</span>
+            <div class="stat-card-icon success">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="9 11 12 14 22 4"></polyline>
+                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                </svg>
+            </div>
+        </div>
+        <div class="stat-card-value">{{ stats.total_tasks }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <span class="stat-card-title">Projects</span>
+            <div class="stat-card-icon warning">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+            </div>
+        </div>
+        <div class="stat-card-value">{{ stats.total_projects }}</div>
+    </div>
+</div>
+
+<!-- New Task Input -->
+<div class="section">
+    <div class="card">
+        <div class="card-body">
+            <form id="new-task-form" class="task-input-form">
+                <div class="task-input-row">
+                    <input type="text" id="task-input" class="task-input" placeholder="Enter a feature request or task..." autocomplete="off">
+                    <select id="project-select" class="project-select">
+                        <option value="">Select Project</option>
+                        {% for project in projects %}
+                        <option value="{{ project.id }}">{{ project.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        Start Pipeline
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Pipeline Kanban Board -->
+<div class="section">
+    <h3 class="section-title">Pipeline</h3>
+    <div class="kanban-board">
+        <!-- PM Column -->
+        <div class="kanban-column pm">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">PM</span>
+                <span class="kanban-column-count">{{ kanban.pm|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for run in kanban.pm %}
+                <div class="kanban-card">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
+                        <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="kanban-card-meta">{{ run.created_at }}</div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- DEV Column -->
+        <div class="kanban-column dev">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">DEV</span>
+                <span class="kanban-column-count">{{ kanban.dev|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for run in kanban.dev %}
+                <div class="kanban-card">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
+                        <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="kanban-card-meta">{{ run.created_at }}</div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- QA Column -->
+        <div class="kanban-column qa">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">QA</span>
+                <span class="kanban-column-count">{{ kanban.qa|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for run in kanban.qa %}
+                <div class="kanban-card">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
+                        <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="kanban-card-meta">{{ run.created_at }}</div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Failed Column -->
+        <div class="kanban-column failed">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">Failed</span>
+                <span class="kanban-column-count">{{ kanban.failed|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for run in kanban.failed %}
+                <div class="kanban-card">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
+                        <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="kanban-card-meta">
+                        <span class="badge badge-danger">{{ run.state }}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- SEC Column -->
+        <div class="kanban-column sec">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">SEC</span>
+                <span class="kanban-column-count">{{ kanban.sec|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for run in kanban.sec %}
+                <div class="kanban-card">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
+                        <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="kanban-card-meta">{{ run.created_at }}</div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- DOCS Column -->
+        <div class="kanban-column docs">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">DOCS</span>
+                <span class="kanban-column-count">{{ kanban.docs|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for run in kanban.docs %}
+                <div class="kanban-card">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
+                        <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="kanban-card-meta">{{ run.created_at }}</div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Deploy Column -->
+        <div class="kanban-column deploy">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">Deploy</span>
+                <span class="kanban-column-count">{{ kanban.deploy|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for run in kanban.deploy %}
+                <div class="kanban-card">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
+                        <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="kanban-card-meta">
+                        <span class="badge badge-{{ run.state_class }}">{{ run.state }}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Testing Column -->
+        <div class="kanban-column testing">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">Testing</span>
+                <span class="kanban-column-count">{{ kanban.testing|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for run in kanban.testing %}
+                <div class="kanban-card">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
+                        <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="kanban-card-meta">
+                        <span class="badge badge-warning">Playwright</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="section">
+    <h3 class="section-title">Recent Activity</h3>
+    <div class="card">
+        <div class="card-body">
+            {% if activity %}
+            <div class="activity-feed">
+                {% for item in activity %}
+                {% if item.url %}
+                <a href="{{ item.url }}" class="activity-item clickable">
+                {% else %}
+                <div class="activity-item">
+                {% endif %}
+                    <div class="activity-icon {{ item.type }}">
+                        {% if item.type == 'bug' %}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
+                        {% elif item.type == 'run' %}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        {% elif item.type == 'task' %}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polyline points="9 11 12 14 22 4" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+                        {% else %}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
+                        {% endif %}
+                    </div>
+                    <div class="activity-content">
+                        <div class="activity-title">{{ item.title }}</div>
+                        <div class="activity-meta">{{ item.description }}</div>
+                    </div>
+                    <div class="activity-time">{{ item.time }}</div>
+                {% if item.url %}
+                </a>
+                {% else %}
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <p>No recent activity</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Projects -->
+<div class="section">
+    <h3 class="section-title">Projects</h3>
+    <div class="card">
+        <div class="card-body no-padding">
+            {% if projects %}
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Tasks</th>
+                        <th>Runs</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for project in projects %}
+                    <tr>
+                        <td><a href="/ui/project/{{ project.id }}/">{{ project.name }}</a></td>
+                        <td>{{ project.description|default:"—"|truncatechars:50 }}</td>
+                        <td>{{ project.task_count }}</td>
+                        <td>{{ project.run_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <p>No projects yet. Create one via API.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,344 +1,398 @@
 """UI views for Workflow Hub dashboard."""
+from django.shortcuts import render
 from django.http import HttpResponse
 from app.db import get_db
-from app.models import Project, Run, Task, TaskStatus, AuditEvent
+from app.models import Project, Run, Task, TaskStatus, AuditEvent, RunState, Credential, Environment
+from app.models.bug_report import BugReport, BugReportStatus
 
 
-def _state_color(state_value):
-    """Get color for run state."""
-    colors = {
-        "pm": "#6366f1",
-        "dev": "#8b5cf6",
-        "qa": "#3b82f6",
-        "qa_failed": "#ef4444",
-        "sec": "#f59e0b",
-        "sec_failed": "#ef4444",
-        "ready_for_commit": "#10b981",
-        "merged": "#06b6d4",
-        "ready_for_deploy": "#84cc16",
-        "deployed": "#22c55e",
+def _get_status_class(status_value):
+    """Map status to CSS class."""
+    mapping = {
+        # Bug statuses
+        "open": "danger",
+        "in_progress": "warning",
+        "resolved": "success",
+        "closed": "secondary",
+        # Run states
+        "pm": "info",
+        "dev": "info",
+        "qa": "warning",
+        "qa_failed": "danger",
+        "sec": "purple",
+        "sec_failed": "danger",
+        "docs": "info",
+        "docs_failed": "danger",
+        "ready_for_commit": "success",
+        "merged": "info",
+        "ready_for_deploy": "warning",
+        "testing": "warning",
+        "testing_failed": "danger",
+        "deployed": "success",
+        # Task statuses
+        "backlog": "secondary",
+        "blocked": "danger",
+        "done": "success",
+        "failed": "danger",
     }
-    return colors.get(state_value, "#6b7280")
+    return mapping.get(status_value, "secondary")
 
 
-def _status_color(status_value):
-    """Get color for task status."""
-    colors = {
-        "backlog": "#6b7280",
-        "in_progress": "#3b82f6",
-        "blocked": "#ef4444",
-        "done": "#22c55e",
+def _get_open_bugs_count(db):
+    """Get count of open bugs for nav badge (excludes killed)."""
+    return db.query(BugReport).filter(
+        BugReport.status == BugReportStatus.OPEN,
+        BugReport.killed == False
+    ).count()
+
+
+def _format_run(r):
+    """Format a run for template context."""
+    return {
+        'id': r.id,
+        'name': r.name,
+        'state': r.state.value.upper(),
+        'state_class': _get_status_class(r.state.value),
+        'created_at': r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else ''
     }
-    return colors.get(status_value, "#6b7280")
 
 
 def dashboard(request):
     """Main dashboard view."""
     db = next(get_db())
     try:
-        projects = db.query(Project).order_by(Project.created_at.desc()).all()
-        recent_runs = db.query(Run).order_by(Run.created_at.desc()).limit(10).all()
+        # Stats (exclude killed items)
+        open_bugs = db.query(BugReport).filter(
+            BugReport.status == BugReportStatus.OPEN,
+            BugReport.killed == False
+        ).count()
+        active_runs = db.query(Run).filter(
+            Run.state.notin_([RunState.DEPLOYED]),
+            Run.killed == False
+        ).count()
+        total_tasks = db.query(Task).count()
+        total_projects = db.query(Project).count()
+
+        # All runs for kanban board (exclude killed)
+        all_runs = db.query(Run).filter(Run.killed == False).order_by(Run.created_at.desc()).all()
+
+        # Group runs by pipeline stage
+        kanban = {
+            'pm': [],
+            'dev': [],
+            'qa': [],
+            'failed': [],
+            'sec': [],
+            'docs': [],
+            'deploy': [],
+            'testing': []
+        }
+
+        for r in all_runs:
+            run_data = _format_run(r)
+            state = r.state
+
+            if state == RunState.PM:
+                kanban['pm'].append(run_data)
+            elif state == RunState.DEV:
+                kanban['dev'].append(run_data)
+            elif state == RunState.QA:
+                kanban['qa'].append(run_data)
+            elif state in (RunState.QA_FAILED, RunState.SEC_FAILED, RunState.DOCS_FAILED, RunState.TESTING_FAILED):
+                kanban['failed'].append(run_data)
+            elif state == RunState.SEC:
+                kanban['sec'].append(run_data)
+            elif state == RunState.DOCS:
+                kanban['docs'].append(run_data)
+            elif state in (RunState.READY_FOR_COMMIT, RunState.MERGED, RunState.READY_FOR_DEPLOY):
+                kanban['deploy'].append(run_data)
+            elif state == RunState.TESTING:
+                kanban['testing'].append(run_data)
+            elif state == RunState.DEPLOYED:
+                kanban['deploy'].append(run_data)  # Show deployed in deploy column
+
+        # Projects
+        projects_list = db.query(Project).order_by(Project.created_at.desc()).all()
+        projects = [{
+            'id': p.id,
+            'name': p.name,
+            'description': p.description,
+            'task_count': len(p.tasks),
+            'run_count': len(p.runs)
+        } for p in projects_list]
+
+        # Recent activity (from audit log + bugs + tasks, exclude killed)
         recent_events = db.query(AuditEvent).order_by(AuditEvent.timestamp.desc()).limit(10).all()
+        recent_bugs = db.query(BugReport).filter(BugReport.killed == False).order_by(BugReport.created_at.desc()).limit(5).all()
+        recent_tasks = db.query(Task).order_by(Task.created_at.desc()).limit(5).all()
 
-        projects_html = ""
-        for p in projects:
-            run_count = len(p.runs)
-            task_count = len(p.tasks)
-            projects_html += f'''
-            <div class="card">
-                <h3><a href="/ui/project/{p.id}">{p.name}</a></h3>
-                <p class="muted">{p.description or 'No description'}</p>
-                <div class="stats">
-                    <span>{task_count} tasks</span>
-                    <span>{run_count} runs</span>
-                </div>
-                <div class="tags">
-                    {''.join(f'<span class="tag">{t}</span>' for t in (p.stack_tags or []))}
-                </div>
-            </div>
-            '''
-
-        runs_html = ""
-        for r in recent_runs:
-            color = _state_color(r.state.value)
-            runs_html += f'''
-            <tr>
-                <td><a href="/ui/run/{r.id}">{r.name}</a></td>
-                <td><span class="badge" style="background:{color}">{r.state.value.upper()}</span></td>
-                <td>{r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else ''}</td>
-            </tr>
-            '''
-
-        events_html = ""
+        activity = []
+        for b in recent_bugs:
+            activity.append({
+                'type': 'bug',
+                'title': f'Bug #{b.id}: {b.title}',
+                'description': f'{b.app_name or "Unknown app"} - {b.status.value}',
+                'time': b.created_at.strftime('%H:%M') if b.created_at else '',
+                'timestamp': b.created_at,
+                'url': f'/ui/bugs/{b.id}/'
+            })
+        for t in recent_tasks:
+            activity.append({
+                'type': 'task',
+                'title': f'Task: {t.title}',
+                'description': f'{t.status.value if t.status else "backlog"} - {t.project.name if t.project else "No project"}',
+                'time': t.created_at.strftime('%H:%M') if t.created_at else '',
+                'timestamp': t.created_at,
+                'url': f'/ui/task/{t.id}/'
+            })
         for e in recent_events:
-            events_html += f'''
-            <tr>
-                <td>{e.timestamp.strftime('%H:%M:%S') if e.timestamp else ''}</td>
-                <td>{e.actor}</td>
-                <td>{e.action}</td>
-                <td>{e.entity_type} #{e.entity_id or ''}</td>
-            </tr>
-            '''
+            activity.append({
+                'type': 'human' if e.actor == 'human' else 'event',
+                'title': f'{e.action.title()} {e.entity_type}',
+                'description': f'by {e.actor}',
+                'time': e.timestamp.strftime('%H:%M') if e.timestamp else '',
+                'timestamp': e.timestamp,
+                'url': None
+            })
 
-        html = f'''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Workflow Hub</title>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-                body {{
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    background: #0f172a;
-                    color: #e2e8f0;
-                    line-height: 1.6;
-                }}
-                .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
-                header {{
-                    background: #1e293b;
-                    padding: 20px;
-                    margin-bottom: 30px;
-                    border-bottom: 1px solid #334155;
-                }}
-                header h1 {{ color: #38bdf8; font-size: 1.8rem; }}
-                header nav {{ margin-top: 10px; }}
-                header nav a {{
-                    color: #94a3b8;
-                    text-decoration: none;
-                    margin-right: 20px;
-                }}
-                header nav a:hover {{ color: #38bdf8; }}
-                .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }}
-                .card {{
-                    background: #1e293b;
-                    border-radius: 8px;
-                    padding: 20px;
-                    border: 1px solid #334155;
-                }}
-                .card h3 {{ color: #f1f5f9; margin-bottom: 10px; }}
-                .card h3 a {{ color: inherit; text-decoration: none; }}
-                .card h3 a:hover {{ color: #38bdf8; }}
-                .muted {{ color: #64748b; font-size: 0.9rem; }}
-                .stats {{ margin-top: 15px; color: #94a3b8; font-size: 0.85rem; }}
-                .stats span {{ margin-right: 15px; }}
-                .tags {{ margin-top: 10px; }}
-                .tag {{
-                    display: inline-block;
-                    background: #334155;
-                    color: #94a3b8;
-                    padding: 2px 8px;
-                    border-radius: 4px;
-                    font-size: 0.75rem;
-                    margin-right: 5px;
-                }}
-                h2 {{
-                    color: #f1f5f9;
-                    margin: 30px 0 15px;
-                    font-size: 1.3rem;
-                }}
-                table {{ width: 100%; border-collapse: collapse; }}
-                th, td {{
-                    text-align: left;
-                    padding: 12px;
-                    border-bottom: 1px solid #334155;
-                }}
-                th {{ color: #94a3b8; font-weight: 500; }}
-                td a {{ color: #38bdf8; text-decoration: none; }}
-                td a:hover {{ text-decoration: underline; }}
-                .badge {{
-                    display: inline-block;
-                    padding: 3px 10px;
-                    border-radius: 4px;
-                    font-size: 0.75rem;
-                    font-weight: 600;
-                    color: white;
-                }}
-                .section {{ background: #1e293b; border-radius: 8px; padding: 20px; margin-bottom: 20px; }}
-            </style>
-        </head>
-        <body>
-            <header>
-                <div class="container">
-                    <h1>Workflow Hub</h1>
-                    <nav>
-                        <a href="/ui/">Dashboard</a>
-                        <a href="/api/status">API Status</a>
-                        <a href="/api/audit">Audit Log</a>
-                    </nav>
-                </div>
-            </header>
-            <div class="container">
-                <h2>Projects</h2>
-                <div class="grid">
-                    {projects_html or '<div class="card"><p class="muted">No projects yet. Create one via API.</p></div>'}
-                </div>
+        # Sort by timestamp and take most recent
+        activity.sort(key=lambda x: x['timestamp'] or '', reverse=True)
+        activity = activity[:10]
 
-                <h2>Recent Runs</h2>
-                <div class="section">
-                    <table>
-                        <thead><tr><th>Run</th><th>State</th><th>Created</th></tr></thead>
-                        <tbody>{runs_html or '<tr><td colspan="3" class="muted">No runs yet</td></tr>'}</tbody>
-                    </table>
-                </div>
+        context = {
+            'active_page': 'dashboard',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'stats': {
+                'open_bugs': open_bugs,
+                'active_runs': active_runs,
+                'total_tasks': total_tasks,
+                'total_projects': total_projects
+            },
+            'kanban': kanban,
+            'projects': projects,
+            'activity': activity
+        }
 
-                <h2>Recent Activity</h2>
-                <div class="section">
-                    <table>
-                        <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Entity</th></tr></thead>
-                        <tbody>{events_html or '<tr><td colspan="4" class="muted">No activity yet</td></tr>'}</tbody>
-                    </table>
-                </div>
-            </div>
-        </body>
-        </html>
-        '''
-        return HttpResponse(html)
+        return render(request, 'dashboard.html', context)
+    finally:
+        db.close()
+
+
+def bugs_list(request):
+    """Bug reports list view."""
+    db = next(get_db())
+    try:
+        # Exclude killed bugs from main list
+        all_bugs = db.query(BugReport).filter(BugReport.killed == False).order_by(BugReport.created_at.desc()).all()
+
+        # Stats
+        stats = {
+            'total': len(all_bugs),
+            'open': sum(1 for b in all_bugs if b.status == BugReportStatus.OPEN),
+            'in_progress': sum(1 for b in all_bugs if b.status == BugReportStatus.IN_PROGRESS),
+            'resolved': sum(1 for b in all_bugs if b.status == BugReportStatus.RESOLVED)
+        }
+
+        bugs = [{
+            'id': b.id,
+            'title': b.title,
+            'app_name': b.app_name,
+            'status': b.status.value.upper(),
+            'status_class': _get_status_class(b.status.value),
+            'screenshot': b.screenshot,
+            'created_at': b.created_at.strftime('%Y-%m-%d %H:%M') if b.created_at else ''
+        } for b in all_bugs]
+
+        context = {
+            'active_page': 'bugs',
+            'open_bugs_count': stats['open'] if stats['open'] > 0 else None,
+            'stats': stats,
+            'bugs': bugs
+        }
+
+        return render(request, 'bugs.html', context)
+    finally:
+        db.close()
+
+
+def bug_detail_view(request, bug_id):
+    """Bug report detail view."""
+    db = next(get_db())
+    try:
+        bug = db.query(BugReport).filter(BugReport.id == bug_id).first()
+        if not bug:
+            return HttpResponse("Bug not found", status=404)
+
+        open_bugs = _get_open_bugs_count(db)
+
+        context = {
+            'active_page': 'bugs',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'bug': {
+                'id': bug.id,
+                'title': bug.title,
+                'description': bug.description,
+                'screenshot': bug.screenshot,
+                'url': bug.url,
+                'user_agent': bug.user_agent,
+                'app_name': bug.app_name,
+                'status': bug.status.value,
+                'status_class': _get_status_class(bug.status.value),
+                'created_at': bug.created_at.strftime('%Y-%m-%d %H:%M') if bug.created_at else '',
+                'resolved_at': bug.resolved_at.strftime('%Y-%m-%d %H:%M') if bug.resolved_at else None
+            }
+        }
+
+        return render(request, 'bug_detail.html', context)
+    finally:
+        db.close()
+
+
+def projects_list(request):
+    """Projects list view."""
+    db = next(get_db())
+    try:
+        all_projects = db.query(Project).order_by(Project.created_at.desc()).all()
+        open_bugs = _get_open_bugs_count(db)
+
+        # Stats
+        stats = {
+            'total': len(all_projects),
+            'active': sum(1 for p in all_projects if p.is_active is not False),
+            'with_tasks': sum(1 for p in all_projects if len(p.tasks) > 0)
+        }
+
+        projects = [{
+            'id': p.id,
+            'name': p.name,
+            'description': p.description,
+            'repo_path': p.repo_path,
+            'task_count': len(p.tasks),
+            'run_count': len(p.runs),
+            'is_active': p.is_active is not False,
+            'is_archived': p.is_archived or False
+        } for p in all_projects]
+
+        context = {
+            'active_page': 'projects',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'stats': stats,
+            'projects': projects
+        }
+
+        return render(request, 'projects.html', context)
     finally:
         db.close()
 
 
 def project_view(request, project_id):
-    """Project detail view."""
+    """Project detail view with credentials and environments."""
     db = next(get_db())
     try:
         project = db.query(Project).filter(Project.id == project_id).first()
         if not project:
             return HttpResponse("Project not found", status=404)
 
-        # Requirements
-        reqs_html = ""
-        for r in project.requirements:
-            reqs_html += f'''
-            <tr>
-                <td><strong>{r.req_id}</strong></td>
-                <td>{r.title}</td>
-                <td class="muted">{(r.acceptance_criteria or '')[:100]}...</td>
-            </tr>
-            '''
+        open_bugs = _get_open_bugs_count(db)
 
-        # Tasks
-        tasks_html = ""
-        for t in project.tasks:
-            color = _status_color(t.status.value)
-            reqs = ', '.join(r.req_id for r in t.requirements) or '-'
-            tasks_html += f'''
-            <tr>
-                <td><strong>{t.task_id}</strong></td>
-                <td>{t.title}</td>
-                <td><span class="badge" style="background:{color}">{t.status.value.upper()}</span></td>
-                <td>{reqs}</td>
-            </tr>
-            '''
+        # Get credentials
+        credentials = db.query(Credential).filter(Credential.project_id == project_id).all()
+        credentials_data = [{
+            'id': c.id,
+            'name': c.name,
+            'credential_type': c.credential_type.value if c.credential_type else 'other',
+            'service': c.service,
+            'environment': c.environment,
+            'is_active': c.is_active if c.is_active is not None else True
+        } for c in credentials]
 
-        # Runs
-        runs_html = ""
-        for r in project.runs:
-            color = _state_color(r.state.value)
-            runs_html += f'''
-            <tr>
-                <td><a href="/ui/run/{r.id}">{r.name}</a></td>
-                <td><span class="badge" style="background:{color}">{r.state.value.upper()}</span></td>
-                <td>{r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else ''}</td>
-            </tr>
-            '''
+        # Get environments
+        environments = db.query(Environment).filter(Environment.project_id == project_id).all()
+        environments_data = [{
+            'id': e.id,
+            'name': e.name,
+            'env_type': e.env_type.value if e.env_type else 'other',
+            'url': e.url,
+            'ssh_host': e.ssh_host,
+            'ssh_port': e.ssh_port,
+            'ssh_user': e.ssh_user,
+            'path': e.path,
+            'is_healthy': e.is_healthy,
+            'is_active': e.is_active if e.is_active is not None else True
+        } for e in environments]
 
+        # Get tasks
+        tasks = [{
+            'id': t.id,
+            'task_id': t.task_id,
+            'title': t.title,
+            'status': t.status.value if t.status else 'backlog',
+            'status_class': _get_status_class(t.status.value if t.status else 'backlog'),
+            'priority': t.priority
+        } for t in project.tasks]
+
+        context = {
+            'active_page': 'projects',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'project': {
+                'id': project.id,
+                'name': project.name,
+                'description': project.description,
+                'repo_path': project.repo_path,
+                'repository_url': project.repository_url,
+                'repository_ssh_url': project.repository_ssh_url,
+                'primary_branch': project.primary_branch,
+                'documentation_url': project.documentation_url,
+                'entry_point': project.entry_point,
+                'languages': project.languages or [],
+                'frameworks': project.frameworks or [],
+                'databases': project.databases or [],
+                'key_files': project.key_files or [],
+                'config_files': project.config_files or [],
+                'build_command': project.build_command,
+                'test_command': project.test_command,
+                'run_command': project.run_command,
+                'deploy_command': project.deploy_command,
+                'default_port': project.default_port,
+                'python_version': project.python_version,
+                'node_version': project.node_version,
+                'is_active': project.is_active,
+                'is_archived': project.is_archived
+            },
+            'credentials': credentials_data,
+            'environments': environments_data,
+            'tasks': tasks
+        }
+
+        return render(request, 'project_detail.html', context)
+    finally:
+        db.close()
+
+
+def run_view(request, run_id):
+    """Run detail view."""
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return HttpResponse("Run not found", status=404)
+
+        # For now, render a simple page - can be templated later
         html = f'''
         <!DOCTYPE html>
         <html>
         <head>
-            <title>{project.name} - Workflow Hub</title>
-            <meta charset="utf-8">
-            <style>
-                * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-                body {{
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    background: #0f172a;
-                    color: #e2e8f0;
-                    line-height: 1.6;
-                }}
-                .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
-                header {{
-                    background: #1e293b;
-                    padding: 20px;
-                    margin-bottom: 30px;
-                    border-bottom: 1px solid #334155;
-                }}
-                header h1 {{ color: #38bdf8; font-size: 1.8rem; }}
-                header nav {{ margin-top: 10px; }}
-                header nav a {{ color: #94a3b8; text-decoration: none; margin-right: 20px; }}
-                header nav a:hover {{ color: #38bdf8; }}
-                .muted {{ color: #64748b; }}
-                h2 {{ color: #f1f5f9; margin: 30px 0 15px; font-size: 1.3rem; }}
-                table {{ width: 100%; border-collapse: collapse; }}
-                th, td {{ text-align: left; padding: 12px; border-bottom: 1px solid #334155; }}
-                th {{ color: #94a3b8; font-weight: 500; }}
-                td a {{ color: #38bdf8; text-decoration: none; }}
-                .badge {{
-                    display: inline-block;
-                    padding: 3px 10px;
-                    border-radius: 4px;
-                    font-size: 0.75rem;
-                    font-weight: 600;
-                    color: white;
-                }}
-                .section {{ background: #1e293b; border-radius: 8px; padding: 20px; margin-bottom: 20px; }}
-                .tags {{ margin-top: 10px; }}
-                .tag {{
-                    display: inline-block;
-                    background: #334155;
-                    color: #94a3b8;
-                    padding: 4px 12px;
-                    border-radius: 4px;
-                    font-size: 0.85rem;
-                    margin-right: 8px;
-                }}
-            </style>
+            <title>{run.name} - Workflow Hub</title>
+            <link rel="stylesheet" href="/static/css/app.css">
         </head>
         <body>
-            <header>
-                <div class="container">
-                    <h1>{project.name}</h1>
-                    <nav>
-                        <a href="/ui/">← Dashboard</a>
-                        <a href="/api/projects/{project.id}">API</a>
-                    </nav>
-                </div>
-            </header>
-            <div class="container">
-                <div class="section">
-                    <p>{project.description or 'No description'}</p>
-                    <p class="muted" style="margin-top:10px">Path: {project.repo_path or 'Not set'}</p>
-                    <div class="tags" style="margin-top:15px">
-                        {''.join(f'<span class="tag">{t}</span>' for t in (project.stack_tags or []))}
-                    </div>
-                </div>
-
-                <h2>Requirements</h2>
-                <div class="section">
-                    <table>
-                        <thead><tr><th>ID</th><th>Title</th><th>Acceptance Criteria</th></tr></thead>
-                        <tbody>{reqs_html or '<tr><td colspan="3" class="muted">No requirements</td></tr>'}</tbody>
-                    </table>
-                </div>
-
-                <h2>Tasks</h2>
-                <div class="section">
-                    <table>
-                        <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Requirements</th></tr></thead>
-                        <tbody>{tasks_html or '<tr><td colspan="4" class="muted">No tasks</td></tr>'}</tbody>
-                    </table>
-                </div>
-
-                <h2>Runs</h2>
-                <div class="section">
-                    <table>
-                        <thead><tr><th>Run</th><th>State</th><th>Created</th></tr></thead>
-                        <tbody>{runs_html or '<tr><td colspan="3" class="muted">No runs</td></tr>'}</tbody>
-                    </table>
-                </div>
+            <div style="padding: 40px; max-width: 800px; margin: 0 auto;">
+                <h1>{run.name}</h1>
+                <p>State: <span class="badge badge-{_get_status_class(run.state.value)}">{run.state.value.upper()}</span></p>
+                <p>Created: {run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else ''}</p>
+                <p><a href="/ui/">Back to Dashboard</a></p>
             </div>
+            <script src="/static/js/app.js"></script>
         </body>
         </html>
         '''
@@ -347,174 +401,40 @@ def project_view(request, project_id):
         db.close()
 
 
-def run_view(request, run_id):
-    """Run detail view with state machine visualization."""
+def task_view(request, task_id):
+    """Task detail view with attachments."""
     db = next(get_db())
     try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            return HttpResponse("Run not found", status=404)
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return HttpResponse("Task not found", status=404)
 
-        # State machine visualization
-        states = ["pm", "dev", "qa", "sec", "ready_for_commit", "merged", "ready_for_deploy", "deployed"]
-        current_idx = states.index(run.state.value) if run.state.value in states else -1
+        open_bugs = _get_open_bugs_count(db)
 
-        state_html = ""
-        for i, s in enumerate(states):
-            if i < current_idx:
-                cls = "completed"
-            elif i == current_idx:
-                cls = "current"
-            else:
-                cls = "pending"
-            state_html += f'<div class="state {cls}">{s.upper()}</div>'
-            if i < len(states) - 1:
-                state_html += '<div class="arrow">→</div>'
+        # Get attachments
+        from app.models import TaskAttachment
+        attachments = db.query(TaskAttachment).filter(TaskAttachment.task_id == task_id).all()
 
-        # Reports
-        reports_html = ""
-        for report in run.reports:
-            status_color = "#22c55e" if report.status.value == "pass" else "#ef4444" if report.status.value == "fail" else "#f59e0b"
-            reports_html += f'''
-            <div class="report">
-                <div class="report-header">
-                    <strong>{report.role.value.upper()}</strong>
-                    <span class="badge" style="background:{status_color}">{report.status.value.upper()}</span>
-                </div>
-                <p>{report.summary or 'No summary'}</p>
-                <pre>{str(report.details) if report.details else ''}</pre>
-            </div>
-            '''
+        context = {
+            'active_page': 'tasks',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'task': {
+                'id': task.id,
+                'task_id': task.task_id,
+                'title': task.title,
+                'description': task.description,
+                'status': task.status.value if task.status else 'backlog',
+                'status_class': _get_status_class(task.status.value if task.status else 'backlog'),
+                'priority': task.priority,
+                'blocked_by': task.blocked_by or [],
+                'project_id': task.project_id,
+                'project_name': task.project.name if task.project else 'Unknown',
+                'run_id': task.run_id,
+                'created_at': task.created_at.strftime('%Y-%m-%d %H:%M') if task.created_at else '',
+            },
+            'attachments': [a.to_dict() for a in attachments]
+        }
 
-        html = f'''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>{run.name} - Workflow Hub</title>
-            <meta charset="utf-8">
-            <style>
-                * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-                body {{
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    background: #0f172a;
-                    color: #e2e8f0;
-                    line-height: 1.6;
-                }}
-                .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
-                header {{
-                    background: #1e293b;
-                    padding: 20px;
-                    margin-bottom: 30px;
-                }}
-                header h1 {{ color: #38bdf8; font-size: 1.8rem; }}
-                header nav {{ margin-top: 10px; }}
-                header nav a {{ color: #94a3b8; text-decoration: none; margin-right: 20px; }}
-                .section {{ background: #1e293b; border-radius: 8px; padding: 20px; margin-bottom: 20px; }}
-                h2 {{ color: #f1f5f9; margin: 30px 0 15px; font-size: 1.3rem; }}
-                .pipeline {{
-                    display: flex;
-                    align-items: center;
-                    flex-wrap: wrap;
-                    gap: 5px;
-                    padding: 20px;
-                }}
-                .state {{
-                    padding: 10px 15px;
-                    border-radius: 6px;
-                    font-size: 0.8rem;
-                    font-weight: 600;
-                }}
-                .state.completed {{ background: #22c55e; color: white; }}
-                .state.current {{ background: #3b82f6; color: white; animation: pulse 2s infinite; }}
-                .state.pending {{ background: #334155; color: #64748b; }}
-                .arrow {{ color: #64748b; font-size: 1.2rem; }}
-                @keyframes pulse {{
-                    0%, 100% {{ opacity: 1; }}
-                    50% {{ opacity: 0.7; }}
-                }}
-                .badge {{
-                    display: inline-block;
-                    padding: 3px 10px;
-                    border-radius: 4px;
-                    font-size: 0.75rem;
-                    font-weight: 600;
-                    color: white;
-                }}
-                .report {{
-                    background: #0f172a;
-                    border-radius: 6px;
-                    padding: 15px;
-                    margin-bottom: 15px;
-                }}
-                .report-header {{
-                    display: flex;
-                    justify-content: space-between;
-                    margin-bottom: 10px;
-                }}
-                .report pre {{
-                    background: #1e293b;
-                    padding: 10px;
-                    border-radius: 4px;
-                    font-size: 0.8rem;
-                    overflow-x: auto;
-                    margin-top: 10px;
-                }}
-                .actions {{ margin-top: 20px; }}
-                .btn {{
-                    display: inline-block;
-                    padding: 10px 20px;
-                    background: #3b82f6;
-                    color: white;
-                    text-decoration: none;
-                    border-radius: 6px;
-                    font-weight: 500;
-                    margin-right: 10px;
-                    border: none;
-                    cursor: pointer;
-                }}
-                .btn:hover {{ background: #2563eb; }}
-                .btn.approve {{ background: #22c55e; }}
-                .btn.approve:hover {{ background: #16a34a; }}
-            </style>
-        </head>
-        <body>
-            <header>
-                <div class="container">
-                    <h1>{run.name}</h1>
-                    <nav>
-                        <a href="/ui/">← Dashboard</a>
-                        <a href="/api/runs/{run.id}">API</a>
-                    </nav>
-                </div>
-            </header>
-            <div class="container">
-                <h2>Pipeline Status</h2>
-                <div class="section">
-                    <div class="pipeline">
-                        {state_html}
-                    </div>
-                    <div class="actions">
-                        <p style="color:#64748b;margin-bottom:10px">Current state: <strong>{run.state.value.upper()}</strong></p>
-                        {'<p style="color:#84cc16">Ready for human approval to deploy!</p>' if run.state.value == 'ready_for_deploy' else ''}
-                    </div>
-                </div>
-
-                <h2>Agent Reports</h2>
-                <div class="section">
-                    {reports_html or '<p style="color:#64748b">No reports submitted yet</p>'}
-                </div>
-
-                <h2>Artifacts</h2>
-                <div class="section">
-                    <p><strong>PM Result:</strong> {str(run.pm_result) if run.pm_result else 'None'}</p>
-                    <p><strong>Dev Result:</strong> {str(run.dev_result) if run.dev_result else 'None'}</p>
-                    <p><strong>QA Result:</strong> {str(run.qa_result) if run.qa_result else 'None'}</p>
-                    <p><strong>Security Result:</strong> {str(run.sec_result) if run.sec_result else 'None'}</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        '''
-        return HttpResponse(html)
+        return render(request, 'task_detail.html', context)
     finally:
         db.close()

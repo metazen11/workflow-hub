@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}Task: {{ task.title }} - Workflow Hub{% endblock %}
+{% block page_title %}{{ task.title }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <span class="badge badge-{{ task.status_class }}" style="font-size: 0.9rem;">{{ task.status|upper }}</span>
+        {% if task.priority %}
+        <span class="badge badge-secondary" style="margin-left: 8px;">Priority: {{ task.priority }}</span>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        <!-- Meta information -->
+        <div class="detail-meta">
+            <div class="detail-meta-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                <span>Created: <strong>{{ task.created_at }}</strong></span>
+            </div>
+            <div class="detail-meta-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+                <span>Project: <a href="/ui/project/{{ task.project_id }}/">{{ task.project_name }}</a></span>
+            </div>
+            {% if task.run_id %}
+            <div class="detail-meta-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                <span>Run: <a href="/ui/run/{{ task.run_id }}/">#{{ task.run_id }}</a></span>
+            </div>
+            {% endif %}
+            <div class="detail-meta-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <span>Task ID: <strong>{{ task.task_id }}</strong></span>
+            </div>
+        </div>
+
+        <!-- Description -->
+        <div class="section">
+            <h4 class="section-title">Description</h4>
+            {% if task.description %}
+            <div class="description-box">{{ task.description }}</div>
+            {% else %}
+            <p style="color: var(--text-muted); font-style: italic;">No description provided</p>
+            {% endif %}
+        </div>
+
+        <!-- Blocked By -->
+        {% if task.blocked_by %}
+        <div class="section">
+            <h4 class="section-title">Blocked By</h4>
+            <div class="blocked-by-list">
+                {% for blocker in task.blocked_by %}
+                <span class="badge badge-danger">{{ blocker }}</span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Attachments -->
+        <div class="section">
+            <h4 class="section-title">Attachments</h4>
+            {% if attachments %}
+            <div class="attachments-grid">
+                {% for att in attachments %}
+                <div class="attachment-card">
+                    {% if att.attachment_type == 'image' %}
+                    <div class="attachment-preview">
+                        <img src="/api/tasks/{{ task.id }}/attachments/{{ att.id }}/download" alt="{{ att.filename }}">
+                    </div>
+                    {% else %}
+                    <div class="attachment-icon">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                            <polyline points="10 9 9 9 8 9"></polyline>
+                        </svg>
+                    </div>
+                    {% endif %}
+                    <div class="attachment-info">
+                        <span class="attachment-name">{{ att.filename }}</span>
+                        <span class="attachment-size">{{ att.file_size|filesizeformat }}</span>
+                    </div>
+                    <a href="/api/tasks/{{ task.id }}/attachments/{{ att.id }}/download" class="btn btn-sm" download>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Download
+                    </a>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-style: italic;">No attachments</p>
+            {% endif %}
+
+            <!-- Upload Form -->
+            <div class="upload-section">
+                <h5>Add Attachment</h5>
+                <form id="upload-form" enctype="multipart/form-data">
+                    <input type="file" id="file-input" name="file" accept=".txt,.md,.json,.xml,.csv,.png,.jpg,.jpeg,.gif,.webp">
+                    <button type="submit" class="btn btn-primary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        Upload
+                    </button>
+                </form>
+                <p class="upload-hint">Allowed: Images (PNG, JPG, GIF, WebP up to 10MB) and text files (TXT, MD, JSON, XML, CSV up to 1MB)</p>
+            </div>
+        </div>
+
+        <!-- Status Actions -->
+        <div class="section">
+            <h4 class="section-title">Update Status</h4>
+            <div class="status-buttons">
+                <button class="status-btn backlog" onclick="updateTaskStatus({{ task.id }}, 'backlog')">Backlog</button>
+                <button class="status-btn in_progress" onclick="updateTaskStatus({{ task.id }}, 'in_progress')">In Progress</button>
+                <button class="status-btn blocked" onclick="updateTaskStatus({{ task.id }}, 'blocked')">Blocked</button>
+                <button class="status-btn done" onclick="updateTaskStatus({{ task.id }}, 'done')">Done</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function updateTaskStatus(taskId, status) {
+    fetch(`/api/tasks/${taskId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: status })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to update status'));
+        }
+    })
+    .catch(err => alert('Error updating status'));
+}
+
+document.getElementById('upload-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const fileInput = document.getElementById('file-input');
+    if (!fileInput.files.length) {
+        alert('Please select a file');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    fetch(`/api/tasks/{{ task.id }}/attachments/upload`, {
+        method: 'POST',
+        body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to upload file'));
+        }
+    })
+    .catch(err => alert('Error uploading file'));
+});
+</script>
+{% endblock %}

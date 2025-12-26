@@ -1,6 +1,6 @@
 """Run model with state machine."""
 import enum
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, JSON, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db import Base
@@ -14,9 +14,13 @@ class RunState(enum.Enum):
     QA_FAILED = "qa_failed"
     SEC = "sec"
     SEC_FAILED = "sec_failed"
+    DOCS = "docs"  # Documentation stage
+    DOCS_FAILED = "docs_failed"
     READY_FOR_COMMIT = "ready_for_commit"
     MERGED = "merged"
     READY_FOR_DEPLOY = "ready_for_deploy"
+    TESTING = "testing"  # Production testing via Playwright
+    TESTING_FAILED = "testing_failed"
     DEPLOYED = "deployed"
 
 
@@ -25,12 +29,16 @@ VALID_TRANSITIONS = {
     RunState.PM: [RunState.DEV],
     RunState.DEV: [RunState.QA],
     RunState.QA: [RunState.SEC, RunState.QA_FAILED],
-    RunState.QA_FAILED: [RunState.QA],  # retry
-    RunState.SEC: [RunState.READY_FOR_COMMIT, RunState.SEC_FAILED],
-    RunState.SEC_FAILED: [RunState.SEC],  # retry
+    RunState.QA_FAILED: [RunState.DEV],  # retry goes back to dev
+    RunState.SEC: [RunState.DOCS, RunState.SEC_FAILED],
+    RunState.SEC_FAILED: [RunState.DEV],  # security issues go back to dev
+    RunState.DOCS: [RunState.READY_FOR_COMMIT, RunState.DOCS_FAILED],
+    RunState.DOCS_FAILED: [RunState.DOCS],  # retry docs
     RunState.READY_FOR_COMMIT: [RunState.MERGED],
     RunState.MERGED: [RunState.READY_FOR_DEPLOY],
-    RunState.READY_FOR_DEPLOY: [RunState.DEPLOYED],  # requires human approval
+    RunState.READY_FOR_DEPLOY: [RunState.TESTING],  # deploy then test
+    RunState.TESTING: [RunState.DEPLOYED, RunState.TESTING_FAILED],
+    RunState.TESTING_FAILED: [RunState.DEV],  # production issues go back to dev
     RunState.DEPLOYED: [],
 }
 
@@ -49,7 +57,11 @@ class Run(Base):
     dev_result = Column(JSON, nullable=True)
     qa_result = Column(JSON, nullable=True)
     sec_result = Column(JSON, nullable=True)
+    docs_result = Column(JSON, nullable=True)  # Documentation updates
+    testing_result = Column(JSON, nullable=True)  # Playwright/E2E test results
 
+    killed = Column(Boolean, default=False, nullable=False)  # Soft delete flag
+    killed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -78,5 +90,9 @@ class Run(Base):
             "dev_result": self.dev_result,
             "qa_result": self.qa_result,
             "sec_result": self.sec_result,
+            "docs_result": self.docs_result,
+            "testing_result": self.testing_result,
+            "killed": self.killed,
+            "killed_at": self.killed_at.isoformat() if self.killed_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

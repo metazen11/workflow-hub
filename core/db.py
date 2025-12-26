@@ -1,11 +1,21 @@
 """SQLAlchemy database configuration and session management."""
 import os
+from pathlib import Path
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
+# Load .env file if it exists
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+except ImportError:
+    pass  # python-dotenv not installed
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg2://app:app@localhost:5432/app"
+    "postgresql+psycopg2://wfhub:wfhub@localhost:5432/wfhub"
 )
 
 engine = create_engine(DATABASE_URL, echo=False)

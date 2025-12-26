@@ -2,6 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## READ FIRST - Every Session
+
+**Before doing anything, read these files:**
+1. `_spec/SESSION_CONTEXT.md` - Current task and what we're building
+2. `_spec/HANDOFF.md` - What's been done and current state
+3. `_spec/BRIEF.md` - Project goals
+
+---
+
+## Core Principles (NON-NEGOTIABLE)
+
+### TDD - Test-Driven Development
+- Write tests FIRST, then implement
+- Red → Green → Refactor
+- Don't mark complete until tests pass
+- Run: `pytest tests/ -v`
+
+### DRY - Don't Repeat Yourself
+- Check existing patterns before writing new code
+- Refactor duplicates into helpers
+- One source of truth
+
+### Stay Focused
+- Complete ONE task before starting the next
+- Don't refactor unrelated code
+- Don't add unrequested features
+- Clean up as you go, stay on main task
+
+---
+
 ## Project Overview
 
 **Workflow Hub** - A local-first web app for managing agentic software development cycles with explicit handoffs, test/security gates, and human approval for deployment.
@@ -62,6 +94,7 @@ Always read before starting work:
 | Security | Converts threat intel into tests/scanners |
 
 **Rules:**
+- **TDD: Write tests FIRST, then implement** (Red → Green → Refactor)
 - Dev does not weaken tests
 - Only PM updates `_spec/*.md`
 - Tests define truth

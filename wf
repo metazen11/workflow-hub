@@ -1,0 +1,78 @@
+#!/bin/bash
+# Workflow Wrapper - Easy-to-use wrapper for the workflow pipeline
+#
+# Usage:
+#   wf "Add feature X"                    # Uses defaults from .env
+#   wf -p "Todo App" "Add feature X"      # Override project
+#   wf -i 5 "Complex feature"             # Override max iterations
+#
+# Configuration via .env:
+#   WORKFLOW_MAX_ITER=3
+#   WORKFLOW_PROJECT=My Project
+#   WORKFLOW_DIR=/path/to/project
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKFLOW_SCRIPT="$SCRIPT_DIR/scripts/workflow.py"
+
+# Load .env if exists
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    export $(grep -v '^#' "$SCRIPT_DIR/.env" | xargs)
+fi
+
+# Defaults (from env or fallback)
+MAX_ITER="${WORKFLOW_MAX_ITER:-3}"
+PROJECT="${WORKFLOW_PROJECT:-$(basename "$(pwd)")}"
+WORK_DIR="${WORKFLOW_DIR:-$(pwd)}"
+
+# Parse args
+while getopts "p:i:d:h" opt; do
+    case $opt in
+        p) PROJECT="$OPTARG" ;;
+        i) MAX_ITER="$OPTARG" ;;
+        d) WORK_DIR="$OPTARG" ;;
+        h) echo "Usage: wf [-p project] [-i max_iter] [-d dir] \"task\""
+           echo ""
+           echo "Options:"
+           echo "  -p PROJECT    Project name (default: current dir name or WORKFLOW_PROJECT)"
+           echo "  -i ITER       Max iterations (default: 3 or WORKFLOW_MAX_ITER)"
+           echo "  -d DIR        Working directory (default: cwd or WORKFLOW_DIR)"
+           echo ""
+           echo "Environment (.env):"
+           echo "  WORKFLOW_MAX_ITER  Default max iterations"
+           echo "  WORKFLOW_PROJECT   Default project name"
+           echo "  WORKFLOW_DIR       Default working directory"
+           exit 0
+           ;;
+        \?) exit 1 ;;
+    esac
+done
+shift $((OPTIND-1))
+
+TASK="$*"
+
+if [ -z "$TASK" ]; then
+    echo "Error: Task description required"
+    echo "Usage: wf \"Add feature X\""
+    exit 1
+fi
+
+echo ""
+echo "╔════════════════════════════════════════════════════════════╗"
+echo "║  WORKFLOW PIPELINE                                         ║"
+echo "╠════════════════════════════════════════════════════════════╣"
+echo "║  Project:    $PROJECT"
+echo "║  Directory:  $WORK_DIR"
+echo "║  Max Iter:   $MAX_ITER"
+echo "║  Task:       ${TASK:0:45}..."
+echo "╚════════════════════════════════════════════════════════════╝"
+echo ""
+echo "Press Ctrl+C to interrupt | Pipeline starting..."
+echo ""
+
+python3 "$WORKFLOW_SCRIPT" \
+    --project "$PROJECT" \
+    --dir "$WORK_DIR" \
+    --max-iter "$MAX_ITER" \
+    "$TASK"

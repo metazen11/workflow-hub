@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}Bug #{{ bug.id }} - Workflow Hub{% endblock %}
+{% block page_title %}{{ bug.title }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <span class="badge badge-{{ bug.status_class }}" style="font-size: 0.9rem;">{{ bug.status|upper }}</span>
+    </div>
+    <div class="card-body">
+        <!-- Meta information -->
+        <div class="detail-meta">
+            <div class="detail-meta-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                <span>Created: <strong>{{ bug.created_at }}</strong></span>
+            </div>
+            <div class="detail-meta-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+                <span>App: <strong>{{ bug.app_name|default:"Unknown" }}</strong></span>
+            </div>
+            {% if bug.resolved_at %}
+            <div class="detail-meta-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span>Resolved: <strong>{{ bug.resolved_at }}</strong></span>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if bug.url %}
+        <div class="detail-meta" style="margin-bottom: 16px;">
+            <div class="detail-meta-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                </svg>
+                <span>URL: <a href="{{ bug.url }}" target="_blank">{{ bug.url }}</a></span>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Description -->
+        <div class="section">
+            <h4 class="section-title">Description</h4>
+            {% if bug.description %}
+            <div class="description-box">{{ bug.description }}</div>
+            {% else %}
+            <p style="color: var(--text-muted); font-style: italic;">No description provided</p>
+            {% endif %}
+        </div>
+
+        <!-- Screenshot -->
+        {% if bug.screenshot %}
+        <div class="section">
+            <h4 class="section-title">Screenshot</h4>
+            <img src="{{ bug.screenshot }}" alt="Bug screenshot" class="screenshot">
+        </div>
+        {% endif %}
+
+        <!-- Status Actions -->
+        <div class="section">
+            <h4 class="section-title">Update Status</h4>
+            <div class="status-buttons">
+                <button class="status-btn open" onclick="updateBugStatus({{ bug.id }}, 'open')">Open</button>
+                <button class="status-btn in_progress" onclick="updateBugStatus({{ bug.id }}, 'in_progress')">In Progress</button>
+                <button class="status-btn resolved" onclick="updateBugStatus({{ bug.id }}, 'resolved')">Resolved</button>
+                <button class="status-btn closed" onclick="updateBugStatus({{ bug.id }}, 'closed')">Closed</button>
+            </div>
+        </div>
+
+        <!-- Kill Action -->
+        <div class="section">
+            <h4 class="section-title">Danger Zone</h4>
+            <button class="btn btn-danger" onclick="killBug({{ bug.id }})">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                Kill Bug
+            </button>
+            <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 8px;">This removes the bug from active views but preserves history.</p>
+        </div>
+
+        <!-- User Agent -->
+        {% if bug.user_agent %}
+        <div class="section">
+            <h4 class="section-title">Browser Info</h4>
+            <p style="color: var(--text-muted); font-size: 0.85rem; word-break: break-all;">{{ bug.user_agent }}</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -34,3 +34,14 @@ htmlcov/
 
 # Claude Code
 .claude/
+# Private files
+coding_principles.md
+**/coding_principles.md
+
+# User workspaces and projects (generated content)
+workspaces/
+projects/
+
+# Task attachments (uploaded files)
+uploads/attachments/*
+!uploads/attachments/.gitkeep
