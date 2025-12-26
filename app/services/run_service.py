@@ -192,6 +192,51 @@ class RunService:
 
         return next_state, None
 
+    def set_state(
+        self,
+        run_id: int,
+        new_state: str,
+        actor: str = "human"
+    ) -> Tuple[Optional[RunState], Optional[str]]:
+        """
+        Manually set run state (human override).
+        Bypasses gate enforcement for admin/debugging purposes.
+        Returns (new_state, error_message).
+        """
+        run = self.db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return None, "Run not found"
+
+        # Parse state string to enum (accepts either case)
+        state_upper = new_state.upper()
+        state_lower = new_state.lower()
+        target_state = None
+        for s in RunState:
+            if s.name == state_upper or s.value == state_lower:
+                target_state = s
+                break
+
+        if not target_state:
+            valid_states = [s.value for s in RunState]
+            return None, f"Invalid state '{new_state}'. Valid: {valid_states}"
+
+        old_state = run.state.value
+        run.state = target_state
+        self.db.commit()
+
+        log_event(self.db, actor, "force_state_change", "run", run_id,
+                 {"from": old_state, "to": target_state.value, "forced": True})
+
+        dispatch_webhook(EVENT_STATE_CHANGE, {
+            "run_id": run_id,
+            "from_state": old_state,
+            "to_state": target_state.value,
+            "next_agent": self._get_agent_for_state(target_state),
+            "forced": True
+        })
+
+        return target_state, None
+
     def retry_from_failed(self, run_id: int, actor: str = "human") -> Tuple[Optional[RunState], Optional[str]]:
         """Retry a failed QA or Security stage."""
         run = self.db.query(Run).filter(Run.id == run_id).first()

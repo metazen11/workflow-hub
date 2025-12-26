@@ -577,6 +577,25 @@ def run_advance(request, run_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+def run_set_state(request, run_id):
+    """Manually set run state (human override, bypasses gates)."""
+    data = _get_json_body(request)
+    if not data or "state" not in data:
+        return JsonResponse({"error": "state is required"}, status=400)
+
+    db = next(get_db())
+    try:
+        service = RunService(db)
+        new_state, error = service.set_state(run_id, data["state"], actor="human")
+        if error:
+            return JsonResponse({"error": error}, status=400)
+        return JsonResponse({"state": new_state.value, "forced": True})
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
 def run_retry(request, run_id):
     """Retry a failed run stage."""
     db = next(get_db())
@@ -1110,12 +1129,63 @@ def project_refresh(request, project_id):
 # --- Audit Log ---
 
 def audit_log(request):
-    """List recent audit events."""
+    """List recent audit events, optionally filtered by project."""
     limit = int(request.GET.get("limit", 100))
+    project_id = request.GET.get("project_id")
+
     db = next(get_db())
     try:
-        events = db.query(AuditEvent).order_by(AuditEvent.timestamp.desc()).limit(limit).all()
+        if project_id:
+            # Filter events related to a project (runs, tasks, project itself)
+            project_id = int(project_id)
+
+            # Get all run IDs for this project
+            run_ids = [r.id for r in db.query(Run.id).filter(Run.project_id == project_id).all()]
+            # Get all task IDs for this project
+            task_ids = [t.id for t in db.query(Task.id).filter(Task.project_id == project_id).all()]
+
+            from sqlalchemy import or_
+            query = db.query(AuditEvent).filter(
+                or_(
+                    (AuditEvent.entity_type == "project") & (AuditEvent.entity_id == project_id),
+                    (AuditEvent.entity_type == "run") & (AuditEvent.entity_id.in_(run_ids)) if run_ids else False,
+                    (AuditEvent.entity_type == "task") & (AuditEvent.entity_id.in_(task_ids)) if task_ids else False,
+                )
+            )
+        else:
+            query = db.query(AuditEvent)
+
+        events = query.order_by(AuditEvent.timestamp.desc()).limit(limit).all()
         return JsonResponse({"audit_events": [e.to_dict() for e in events]})
+    finally:
+        db.close()
+
+
+def project_audit_log(request, project_id):
+    """List audit events for a specific project."""
+    limit = int(request.GET.get("limit", 100))
+
+    db = next(get_db())
+    try:
+        # Get all run IDs for this project
+        run_ids = [r.id for r in db.query(Run.id).filter(Run.project_id == project_id).all()]
+        # Get all task IDs for this project
+        task_ids = [t.id for t in db.query(Task.id).filter(Task.project_id == project_id).all()]
+
+        from sqlalchemy import or_
+        query = db.query(AuditEvent).filter(
+            or_(
+                (AuditEvent.entity_type == "project") & (AuditEvent.entity_id == project_id),
+                (AuditEvent.entity_type == "run") & (AuditEvent.entity_id.in_(run_ids)) if run_ids else False,
+                (AuditEvent.entity_type == "task") & (AuditEvent.entity_id.in_(task_ids)) if task_ids else False,
+            )
+        )
+
+        events = query.order_by(AuditEvent.timestamp.desc()).limit(limit).all()
+        return JsonResponse({
+            "project_id": project_id,
+            "audit_events": [e.to_dict() for e in events]
+        })
     finally:
         db.close()
 

@@ -58,6 +58,7 @@ urlpatterns = [
     path('api/runs/<int:run_id>', api.run_detail, name='run_detail'),
     path('api/runs/<int:run_id>/report', api.run_submit_report, name='run_submit_report'),
     path('api/runs/<int:run_id>/advance', api.run_advance, name='run_advance'),
+    path('api/runs/<int:run_id>/set-state', api.run_set_state, name='run_set_state'),
     path('api/runs/<int:run_id>/retry', api.run_retry, name='run_retry'),
     path('api/runs/<int:run_id>/reset-to-dev', api.run_reset_to_dev, name='run_reset_to_dev'),
     path('api/runs/<int:run_id>/create-tasks-from-findings', api.run_create_tasks_from_findings, name='run_create_tasks_from_findings'),
@@ -69,6 +70,7 @@ urlpatterns = [
 
     # Audit
     path('api/audit', api.audit_log, name='audit_log'),
+    path('api/projects/<int:project_id>/audit', api.project_audit_log, name='project_audit_log'),
 
     # Activity Feed (combined bugs, runs, events)
     path('api/activity', api.activity_feed, name='activity_feed'),
