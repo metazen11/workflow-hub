@@ -170,32 +170,92 @@
                 Project Tasks
                 <span class="section-count">({{ project_task_count }} total{% if run_task_count %}, {{ run_task_count }} linked to run{% endif %})</span>
             </h4>
+
+            <!-- Task Filters -->
+            <div class="task-filters">
+                <div class="filter-group">
+                    <label>Status:</label>
+                    <select id="filter-status" onchange="filterTasks()">
+                        <option value="">All</option>
+                        <option value="backlog">Backlog</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="done">Done</option>
+                        <option value="blocked">Blocked</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Pipeline Stage:</label>
+                    <select id="filter-stage" onchange="filterTasks()">
+                        <option value="">All</option>
+                        <option value="none">Not Started</option>
+                        <option value="dev">DEV</option>
+                        <option value="qa">QA</option>
+                        <option value="sec">SEC</option>
+                        <option value="docs">DOCS</option>
+                        <option value="complete">Complete</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Linked:</label>
+                    <select id="filter-linked" onchange="filterTasks()">
+                        <option value="">All</option>
+                        <option value="true">This Run</option>
+                        <option value="false">Project Only</option>
+                    </select>
+                </div>
+                <button class="btn btn-sm" onclick="clearFilters()">Clear</button>
+            </div>
+
             {% if tasks %}
-            <div class="tasks-list">
+            <table class="tasks-table" id="tasks-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Title</th>
+                        <th>Status</th>
+                        <th>Stage</th>
+                        <th>Priority</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
                 {% for task in tasks %}
-                <div class="task-row {% if task.linked_to_run %}linked-to-run{% endif %}">
-                    <div class="task-info">
-                        <span class="task-id">{{ task.task_id }}</span>
+                <tr class="task-row {% if task.linked_to_run %}linked-to-run{% endif %}"
+                    data-status="{{ task.status }}"
+                    data-stage="{{ task.pipeline_stage }}"
+                    data-linked="{{ task.linked_to_run|lower }}">
+                    <td class="task-id">{{ task.task_id }}</td>
+                    <td>
                         <a href="/ui/task/{{ task.id }}/" class="task-title">{{ task.title }}</a>
-                        <span class="badge badge-{{ task.status_class }}">{{ task.status|upper }}</span>
                         {% if task.linked_to_run %}
-                        <span class="badge badge-info" title="Task linked to this run">RUN</span>
+                        <span class="badge badge-info badge-sm" title="Task linked to this run">RUN</span>
                         {% endif %}
-                    </div>
-                    <div class="task-actions">
+                    </td>
+                    <td><span class="badge badge-{{ task.status_class }}">{{ task.status|upper }}</span></td>
+                    <td><span class="badge badge-{{ task.pipeline_stage_class }}">{{ task.pipeline_stage|upper }}</span></td>
+                    <td class="priority-cell">{{ task.priority }}</td>
+                    <td class="task-actions">
+                        <button class="btn btn-sm btn-success trigger-task-btn"
+                            data-task-id="{{ task.id }}"
+                            data-stage="{{ task.pipeline_stage }}"
+                            title="Trigger work on this task">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                            </svg>
+                        </button>
                         <button class="btn btn-sm edit-task-btn"
                             data-task-id="{{ task.id }}"
                             data-title="{{ task.title }}"
                             data-description="{{ task.description }}"
                             data-priority="{{ task.priority }}"
                             data-status="{{ task.status }}"
+                            data-pipeline-stage="{{ task.pipeline_stage }}"
                             data-blocked-by="{{ task.blocked_by }}"
                             data-acceptance="{{ task.acceptance_criteria }}">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                             </svg>
-                            Edit
                         </button>
                         <button class="btn btn-sm btn-danger delete-task-btn"
                             data-task-id="{{ task.id }}"
@@ -206,10 +266,11 @@
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                             </svg>
                         </button>
-                    </div>
-                </div>
+                    </td>
+                </tr>
                 {% endfor %}
-            </div>
+                </tbody>
+            </table>
             {% else %}
             <p style="color: var(--text-muted); font-style: italic;">No tasks in this project yet</p>
             {% endif %}
@@ -399,23 +460,62 @@
     margin: 0;
 }
 
-.tasks-list {
+/* Task Filters */
+.task-filters {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.task-row {
-    display: flex;
-    justify-content: space-between;
+    gap: 16px;
     align-items: center;
+    margin-bottom: 16px;
     padding: 12px;
     background: var(--bg-secondary);
     border-radius: 8px;
+    flex-wrap: wrap;
 }
-.task-info {
+.filter-group {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
+}
+.filter-group label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+.filter-group select {
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+/* Tasks Table */
+.tasks-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+.tasks-table th {
+    text-align: left;
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border-bottom: 2px solid var(--border);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.tasks-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+.tasks-table tr:hover {
+    background: var(--bg-secondary);
+}
+.tasks-table tr.linked-to-run {
+    border-left: 3px solid var(--accent);
+}
+.tasks-table tr.hidden {
+    display: none;
 }
 .task-id {
     font-family: monospace;
@@ -429,8 +529,38 @@
 .task-title:hover {
     text-decoration: underline;
 }
-.task-row.linked-to-run {
-    border-left: 3px solid var(--accent);
+.priority-cell {
+    text-align: center;
+    font-weight: 500;
+}
+.badge-sm {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    margin-left: 6px;
+}
+.badge-purple {
+    background: #8b5cf6;
+    color: white;
+}
+.task-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+}
+.task-actions .btn-sm {
+    padding: 4px 8px;
+}
+.spinner-sm {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
 .section-count {
     font-weight: normal;
@@ -826,6 +956,81 @@ document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeTaskModal();
     }
+});
+
+// ============================================
+// Task Filtering
+// ============================================
+function filterTasks() {
+    const statusFilter = document.getElementById('filter-status').value;
+    const stageFilter = document.getElementById('filter-stage').value;
+    const linkedFilter = document.getElementById('filter-linked').value;
+
+    const rows = document.querySelectorAll('#tasks-table tbody tr');
+    rows.forEach(row => {
+        const status = row.dataset.status;
+        const stage = row.dataset.stage;
+        const linked = row.dataset.linked;
+
+        let show = true;
+        if (statusFilter && status !== statusFilter) show = false;
+        if (stageFilter && stage !== stageFilter) show = false;
+        if (linkedFilter && linked !== linkedFilter) show = false;
+
+        row.classList.toggle('hidden', !show);
+    });
+}
+
+function clearFilters() {
+    document.getElementById('filter-status').value = '';
+    document.getElementById('filter-stage').value = '';
+    document.getElementById('filter-linked').value = '';
+    filterTasks();
+}
+
+// ============================================
+// Trigger Work on Task
+// ============================================
+document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.trigger-task-btn');
+    if (!btn) return;
+
+    const taskId = btn.dataset.taskId;
+    const stage = btn.dataset.stage;
+
+    // Determine which agent to use based on stage
+    let agent = 'dev';
+    if (stage === 'qa') agent = 'qa';
+    else if (stage === 'sec') agent = 'security';
+    else if (stage === 'docs') agent = 'docs';
+
+    if (!confirm(`Trigger ${agent.toUpperCase()} agent to work on this task?`)) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-sm"></span>';
+
+    // For now, just advance the task to next stage (placeholder for actual agent work)
+    fetch(`/api/tasks/${taskId}/advance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ result: 'pass', notes: 'Manually triggered - agent work simulated' })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error: ' + data.error);
+            btn.disabled = false;
+            btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+        } else {
+            alert(`Task advanced to ${data.new_stage || 'next stage'}`);
+            window.location.reload();
+        }
+    })
+    .catch(err => {
+        alert('Error triggering task: ' + err);
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+    });
 });
 </script>
 {% endblock %}

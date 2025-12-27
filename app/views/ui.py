@@ -38,6 +38,19 @@ def _get_status_class(status_value):
     return mapping.get(status_value, "secondary")
 
 
+def _get_pipeline_stage_class(stage_value):
+    """Map pipeline stage to CSS class."""
+    mapping = {
+        "none": "secondary",
+        "dev": "info",
+        "qa": "warning",
+        "sec": "purple",
+        "docs": "info",
+        "complete": "success",
+    }
+    return mapping.get(stage_value, "secondary")
+
+
 def _get_open_bugs_count(db):
     """Get count of open bugs for nav badge (excludes killed)."""
     return db.query(BugReport).filter(
@@ -500,6 +513,8 @@ def run_view(request, run_id):
                 'description': t.description or '',
                 'status': t.status.value if t.status else 'backlog',
                 'status_class': _get_status_class(t.status.value if t.status else 'backlog'),
+                'pipeline_stage': t.pipeline_stage.value if t.pipeline_stage else 'none',
+                'pipeline_stage_class': _get_pipeline_stage_class(t.pipeline_stage.value if t.pipeline_stage else 'none'),
                 'priority': t.priority or 5,
                 'blocked_by': ','.join(t.blocked_by) if t.blocked_by else '',
                 'acceptance_criteria': '\n'.join(t.acceptance_criteria) if t.acceptance_criteria else '',
@@ -556,5 +571,51 @@ def task_view(request, task_id):
         }
 
         return render(request, 'task_detail.html', context)
+    finally:
+        db.close()
+
+def task_board_view(request, project_id):
+    """Kanban board view for a project."""
+    db = next(get_db())
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return HttpResponse("Project not found", status=404)
+
+        open_bugs = _get_open_bugs_count(db)
+
+        # Categorize tasks by pipeline stage
+        board = {
+            'none': [],
+            'dev': [],
+            'qa': [],
+            'sec': [],
+            'docs': [],
+            'complete': []
+        }
+
+        # Fetch all tasks for the project
+        tasks = project.tasks
+        
+        for task in tasks:
+            stage = task.pipeline_stage.value if task.pipeline_stage else 'none'
+            if stage in board:
+                board[stage].append(task)
+            else:
+                 # Fallback for unknown stages
+                board['none'].append(task)
+        
+        # Sort each column by priority (descending)
+        for stage in board:
+            board[stage].sort(key=lambda t: t.priority or 0, reverse=True)
+
+        context = {
+            'active_page': 'projects',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'project': project,
+            'board': board
+        }
+
+        return render(request, 'task_board.html', context)
     finally:
         db.close()
