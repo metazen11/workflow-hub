@@ -316,6 +316,37 @@
         "DRY - reusable task list component"
       ],
       "created": "2025-12-26"
+    },
+    {
+      "id": "WH-021",
+      "title": "Role Config seeding and environment setup",
+      "status": "in_progress",
+      "priority": 1,
+      "description": "Ensure role configurations (agent prompts) are seeded to DB during new environment setup. Reconcile coding_principles with seed script.",
+      "acceptance_criteria": [
+        "scripts/seed_role_configs.py runs during setup",
+        "CLAUDE.md quick start includes seed command",
+        "Alembic migration seeds role_configs as backup",
+        "All 7 roles seeded: director, pm, dev, qa, security, docs, cicd",
+        "coding_principles referenced in seed prompts"
+      ],
+      "created": "2025-12-27"
+    },
+    {
+      "id": "WH-022",
+      "title": "Dashboard bug fixes and task modal (DRY)",
+      "status": "done",
+      "priority": 1,
+      "description": "Fix dashboard bugs: extra closing divs, missing killRun(), add shared task modal partial",
+      "acceptance_criteria": [
+        "partials/task_modal.html created for DRY",
+        "static/js/task-modal.js for shared modal logic",
+        "Dashboard uses shared partial",
+        "killRun() function added",
+        "New task form works"
+      ],
+      "created": "2025-12-27",
+      "completed": "2025-12-27"
     }
   ]
 }

@@ -64,7 +64,8 @@
         <div class="card-body">
             <form id="new-task-form" class="task-input-form">
                 <div class="task-input-row">
-                    <input type="text" id="task-input" class="task-input" placeholder="Enter a feature request or task..." autocomplete="off">
+                    <input type="text" id="task-input" class="task-input"
+                        placeholder="Enter a feature request or task..." autocomplete="off">
                     <select id="project-select" class="project-select">
                         <option value="">Select Project</option>
                         {% for project in projects %}
@@ -72,7 +73,8 @@
                         {% endfor %}
                     </select>
                     <button type="submit" class="btn btn-primary">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
                             <polygon points="5 3 19 12 5 21 5 3"></polygon>
                         </svg>
                         Start Pipeline
@@ -83,9 +85,173 @@
     </div>
 </div>
 
-<!-- Pipeline Kanban Board -->
+<!-- Task Pipeline Kanban Board -->
 <div class="section">
-    <h3 class="section-title">Pipeline</h3>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3 class="section-title" style="margin-bottom: 0;">Task Pipeline</h3>
+        <select id="taskPriorityFilter" class="form-select" style="width: auto;">
+            <option value="all">All Priorities</option>
+            <option value="high">High & Critical</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+        </select>
+    </div>
+    <div class="kanban-board">
+        <!-- Backlog -->
+        <div class="kanban-column pm">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">Backlog</span>
+                <span class="kanban-column-count">{{ task_kanban.backlog|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for task in task_kanban.backlog %}
+                <div class="kanban-card task-card" data-priority="{{ task.priority }}">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
+                    </div>
+                    <div class="kanban-card-meta">
+                        {{ task.project_name }} • <span
+                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
+                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
+                            %}Medium{% else %}Low{% endif %}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Dev -->
+        <div class="kanban-column dev">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">Dev</span>
+                <span class="kanban-column-count">{{ task_kanban.dev|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for task in task_kanban.dev %}
+                <div class="kanban-card task-card" data-priority="{{ task.priority }}">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
+                    </div>
+                    <div class="kanban-card-meta">
+                        {{ task.project_name }} • <span
+                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
+                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
+                            %}Medium{% else %}Low{% endif %}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- QA -->
+        <div class="kanban-column qa">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">QA</span>
+                <span class="kanban-column-count">{{ task_kanban.qa|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for task in task_kanban.qa %}
+                <div class="kanban-card task-card" data-priority="{{ task.priority }}">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
+                    </div>
+                    <div class="kanban-card-meta">
+                        {{ task.project_name }} • <span
+                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
+                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
+                            %}Medium{% else %}Low{% endif %}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Security -->
+        <div class="kanban-column sec">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">Sec</span>
+                <span class="kanban-column-count">{{ task_kanban.sec|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for task in task_kanban.sec %}
+                <div class="kanban-card task-card" data-priority="{{ task.priority }}">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
+                    </div>
+                    <div class="kanban-card-meta">
+                        {{ task.project_name }} • <span
+                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
+                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
+                            %}Medium{% else %}Low{% endif %}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Docs -->
+        <div class="kanban-column docs">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">Docs</span>
+                <span class="kanban-column-count">{{ task_kanban.docs|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for task in task_kanban.docs %}
+                <div class="kanban-card task-card" data-priority="{{ task.priority }}">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
+                    </div>
+                    <div class="kanban-card-meta">
+                        {{ task.project_name }} • <span
+                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
+                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
+                            %}Medium{% else %}Low{% endif %}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Complete -->
+        <div class="kanban-column deploy">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">Complete</span>
+                <span class="kanban-column-count">{{ task_kanban.complete|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for task in task_kanban.complete %}
+                <div class="kanban-card task-card" data-priority="{{ task.priority }}">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
+                    </div>
+                    <div class="kanban-card-meta">
+                        {{ task.project_name }} • <span
+                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
+                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
+                            %}Medium{% else %}Low{% endif %}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Run Pipeline Kanban Board -->
+<div class="section">
+    <h3 class="section-title">Run Pipeline</h3>
     <div class="kanban-board">
         <!-- PM Column -->
         <div class="kanban-column pm">
@@ -99,7 +265,8 @@
                     <div class="kanban-card-header-row">
                         <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
                         <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
@@ -125,7 +292,8 @@
                     <div class="kanban-card-header-row">
                         <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
                         <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
@@ -151,7 +319,8 @@
                     <div class="kanban-card-header-row">
                         <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
                         <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
@@ -177,7 +346,8 @@
                     <div class="kanban-card-header-row">
                         <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
                         <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
@@ -205,7 +375,8 @@
                     <div class="kanban-card-header-row">
                         <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
                         <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
@@ -231,7 +402,8 @@
                     <div class="kanban-card-header-row">
                         <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
                         <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
@@ -257,7 +429,8 @@
                     <div class="kanban-card-header-row">
                         <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
                         <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
@@ -285,7 +458,8 @@
                     <div class="kanban-card-header-row">
                         <div class="kanban-card-title"><a href="/ui/run/{{ run.id }}/">{{ run.name }}</a></div>
                         <button class="kanban-kill-btn" onclick="killRun({{ run.id }})" title="Kill run">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
@@ -313,43 +487,50 @@
                 {% for item in activity %}
                 {% if item.url %}
                 <a href="{{ item.url }}" class="activity-item clickable">
-                {% else %}
-                <div class="activity-item">
-                {% endif %}
-                    <div class="activity-icon {{ item.type }}">
-                        {% if item.type == 'bug' %}
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
-                        {% elif item.type == 'run' %}
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        {% elif item.type == 'task' %}
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polyline points="9 11 12 14 22 4" stroke="currentColor" stroke-width="2" fill="none"/></svg>
-                        {% else %}
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
+                    {% else %}
+                    <div class="activity-item">
                         {% endif %}
-                    </div>
-                    <div class="activity-content">
-                        <div class="activity-title">{{ item.title }}</div>
-                        <div class="activity-meta">{{ item.description }}</div>
-                    </div>
-                    <div class="activity-time">{{ item.time }}</div>
-                {% if item.url %}
+                        <div class="activity-icon {{ item.type }}">
+                            {% if item.type == 'bug' %}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <circle cx="12" cy="12" r="10" />
+                            </svg>
+                            {% elif item.type == 'run' %}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <polygon points="5 3 19 12 5 21 5 3" />
+                            </svg>
+                            {% elif item.type == 'task' %}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <polyline points="9 11 12 14 22 4" stroke="currentColor" stroke-width="2" fill="none" />
+                            </svg>
+                            {% else %}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <circle cx="12" cy="12" r="10" />
+                            </svg>
+                            {% endif %}
+                        </div>
+                        <div class="activity-content">
+                            <div class="activity-title">{{ item.title }}</div>
+                            <div class="activity-meta">{{ item.description }}</div>
+                        </div>
+                        <div class="activity-time">{{ item.time }}</div>
+                        {% if item.url %}
                 </a>
                 {% else %}
-                </div>
-                {% endif %}
-                {% endfor %}
-            </div>
-            {% else %}
-            <div class="empty-state">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="8" x2="12" y2="12"></line>
-                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                </svg>
-                <p>No recent activity</p>
             </div>
             {% endif %}
+            {% endfor %}
         </div>
+        {% else %}
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <p>No recent activity</p>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -387,4 +568,106 @@
         </div>
     </div>
 </div>
+
+<!-- Task Edit Modal (shared partial) -->
+{% include 'partials/task_modal.html' %}
+
+<style>
+.task-card { cursor: pointer; }
+.task-card:hover { background: var(--bg-secondary); }
+</style>
+
+<!-- Shared task modal script -->
+<script src="/static/js/task-modal.js"></script>
+<script>
+// Kill run handler
+function killRun(runId) {
+    if (!confirm('Kill this run? This cannot be undone.')) return;
+
+    fetch(`/api/runs/${runId}/kill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error: ' + data.error);
+        } else {
+            window.location.reload();
+        }
+    })
+    .catch(err => alert('Error killing run'));
+}
+
+// New task form submission
+document.getElementById('new-task-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const title = document.getElementById('task-input').value.trim();
+    const projectId = document.getElementById('project-select').value;
+
+    if (!title) {
+        alert('Please enter a task title');
+        return;
+    }
+    if (!projectId) {
+        alert('Please select a project');
+        return;
+    }
+
+    // Create task and optionally start pipeline
+    fetch(`/api/projects/${projectId}/tasks/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            title: title,
+            priority: 5,
+            pipeline_stage: 'dev'  // Start in DEV stage
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.task || data.success) {
+            window.location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to create task'));
+        }
+    })
+    .catch(err => alert('Error creating task'));
+});
+
+// Make task cards clickable to open modal
+document.querySelectorAll('.task-card').forEach(card => {
+    card.addEventListener('click', function(e) {
+        // Don't trigger if clicking a link
+        if (e.target.tagName === 'A') return;
+
+        const link = this.querySelector('a');
+        if (!link) return;
+
+        // Extract task ID from link href
+        const match = link.href.match(/\/task\/(\d+)\//);
+        if (!match) return;
+
+        const taskId = match[1];
+        // Use shared openTaskModal from task-modal.js
+        openTaskModal(taskId);
+    });
+});
+
+// Priority filter
+document.getElementById('taskPriorityFilter').addEventListener('change', function() {
+    const filter = this.value;
+    document.querySelectorAll('.task-card').forEach(card => {
+        const priority = parseInt(card.dataset.priority) || 1;
+        let show = true;
+
+        if (filter === 'high' && priority < 5) show = false;
+        if (filter === 'medium' && priority !== 3) show = false;
+        if (filter === 'low' && priority > 1) show = false;
+
+        card.style.display = show ? '' : 'none';
+    });
+});
+</script>
 {% endblock %}

@@ -49,6 +49,7 @@ docker compose -f docker/docker-compose.yml up -d
 source venv/bin/activate
 source .env  # CRITICAL: Load database credentials
 alembic upgrade head  # Ensure schema is current
+python scripts/seed_role_configs.py  # Seed agent role prompts (idempotent)
 python manage.py runserver 0.0.0.0:8000
 ```
 

@@ -1,0 +1,111 @@
+<!-- Task Edit Modal Partial - Include with {% include 'partials/task_modal.html' %} -->
+<!-- Requires: task-modal.js to be loaded -->
+
+<div id="task-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3 id="task-modal-title">Edit Task</h3>
+            <button class="modal-close" onclick="closeTaskModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="modal-task-id">
+            <div class="form-group">
+                <label>Title: <span class="required">*</span></label>
+                <input type="text" id="modal-task-title" class="form-input" style="width: 100%;" required>
+            </div>
+            <div class="form-group">
+                <label>Description:</label>
+                <textarea id="modal-task-description" class="form-textarea" rows="4" style="width: 100%;"></textarea>
+            </div>
+            <div class="form-row" style="display: flex; gap: 16px;">
+                <div class="form-group" style="flex: 1;">
+                    <label>Priority (1-10):</label>
+                    <input type="number" id="modal-task-priority" class="form-input" min="1" max="10" value="5">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Pipeline Stage:</label>
+                    <select id="modal-task-stage" class="form-select">
+                        <option value="none">Backlog</option>
+                        <option value="dev">DEV</option>
+                        <option value="qa">QA</option>
+                        <option value="sec">SEC</option>
+                        <option value="docs">DOCS</option>
+                        <option value="complete">Complete</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Status:</label>
+                <select id="modal-task-status" class="form-select">
+                    <option value="backlog">Backlog</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="blocked">Blocked</option>
+                    <option value="done">Done</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeTaskModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveTaskModal()">Save</button>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Task Modal Styles - shared across templates */
+#task-modal.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+#task-modal .modal-content {
+    background: var(--bg-primary);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+#task-modal .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+#task-modal .modal-header h3 { margin: 0; }
+#task-modal .modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-muted);
+}
+#task-modal .modal-body { padding: 20px; }
+#task-modal .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+}
+#task-modal .form-group { margin-bottom: 16px; }
+#task-modal .form-group label { display: block; margin-bottom: 4px; font-weight: 500; }
+#task-modal .form-input,
+#task-modal .form-textarea,
+#task-modal .form-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 14px;
+}
+</style>
