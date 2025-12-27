@@ -523,6 +523,141 @@ def run_pipeline(run_id: int, project_path: str, max_iterations: int = 10):
     print(f"{'='*60}\n")
 
 
+def run_director(run_id: int, project_path: str, poll_interval: int = 10, max_iterations: int = 100):
+    """
+    Run the Director daemon for task-level pipeline orchestration.
+
+    This processes individual tasks through stages:
+    BACKLOG → DEV → QA → SEC → DOCS → COMPLETE
+              ↑______|  (loop back on failures)
+
+    Args:
+        run_id: Run ID to process
+        project_path: Path to project repository
+        poll_interval: Seconds between work queue polls
+        max_iterations: Maximum number of task processing iterations
+    """
+    import time
+
+    print(f"\n{'='*60}")
+    print(f"DIRECTOR - Task Pipeline Orchestrator")
+    print(f"{'='*60}")
+    print(f"Run ID: {run_id}")
+    print(f"Project: {project_path}")
+    print(f"Poll interval: {poll_interval}s")
+    print(f"{'='*60}\n")
+
+    iteration = 0
+    completed_tasks = set()
+
+    while iteration < max_iterations:
+        iteration += 1
+
+        # Get work queue from Director
+        try:
+            resp = requests.post(
+                f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/director/process",
+                timeout=30
+            )
+            if resp.status_code != 200:
+                print(f"Error getting work queue: {resp.text}")
+                time.sleep(poll_interval)
+                continue
+
+            result = resp.json()
+        except Exception as e:
+            print(f"Error contacting Director: {e}")
+            time.sleep(poll_interval)
+            continue
+
+        work_queue = result.get("work_queue", [])
+        progress = result.get("progress", {})
+
+        print(f"\n[Iteration {iteration}] Progress: {progress.get('percent_complete', 0)}% complete")
+        print(f"  Stages: {progress.get('stages', {})}")
+
+        # Check if all done
+        if progress.get("percent_complete", 0) >= 100:
+            print(f"\n✓ All tasks complete!")
+            break
+
+        if not work_queue:
+            print(f"  No tasks in queue, waiting...")
+            time.sleep(poll_interval)
+            continue
+
+        # Process each task in the queue
+        for item in work_queue:
+            task_id = item["task_id"]
+            task_ref = item["task_ref"]
+            agent = item["agent"]
+            stage = item["stage"]
+            title = item["title"][:50]
+
+            # Skip already completed in this session
+            if task_id in completed_tasks:
+                continue
+
+            print(f"\n  [{task_ref}] {title}")
+            print(f"    Stage: {stage.upper()} → Agent: {agent.upper()}")
+
+            # Run the agent for this task
+            report = run_goose(agent, run_id, project_path)
+            status = report.get("status", "unknown")
+            summary = report.get("summary", "No summary")[:100]
+
+            print(f"    Result: {status.upper()} - {summary}")
+
+            # Advance or loop back based on result
+            if status == "pass":
+                # Advance to next stage
+                try:
+                    adv_resp = requests.post(
+                        f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/advance",
+                        json={"report_status": "pass", "report_summary": summary},
+                        timeout=30
+                    )
+                    if adv_resp.status_code == 200:
+                        adv_result = adv_resp.json()
+                        new_stage = adv_result.get("task", {}).get("pipeline_stage", "?")
+                        print(f"    → Advanced to {new_stage.upper()}")
+                        if new_stage == "complete":
+                            completed_tasks.add(task_id)
+                except Exception as e:
+                    print(f"    → Error advancing: {e}")
+            else:
+                # Loop back to DEV
+                try:
+                    loop_resp = requests.post(
+                        f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/loop-back",
+                        json={"reason": summary},
+                        timeout=30
+                    )
+                    if loop_resp.status_code == 200:
+                        print(f"    → Looped back to DEV for fixes")
+                except Exception as e:
+                    print(f"    → Error looping back: {e}")
+
+            # Small delay between tasks
+            time.sleep(1)
+
+        # Delay before next poll
+        time.sleep(poll_interval)
+
+    # Final summary
+    try:
+        final_resp = requests.get(f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/task-progress", timeout=10)
+        final = final_resp.json()
+        print(f"\n{'='*60}")
+        print(f"DIRECTOR COMPLETE")
+        print(f"  Total tasks: {final.get('total_tasks', 0)}")
+        print(f"  Completed: {final.get('completed', 0)}")
+        print(f"  Progress: {final.get('progress_percent', 0)}%")
+        print(f"{'='*60}\n")
+    except:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="Goose Agent Runner for Workflow Hub")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -533,16 +668,23 @@ def main():
 
     # run command - single agent
     run_parser = subparsers.add_parser("run", help="Run an agent directly")
-    run_parser.add_argument("--agent", required=True, choices=["pm", "dev", "qa", "security"])
+    run_parser.add_argument("--agent", required=True, choices=["pm", "dev", "qa", "security", "docs", "director"])
     run_parser.add_argument("--run-id", type=int, required=True, help="Workflow Hub run ID")
     run_parser.add_argument("--project-path", default=".", help="Path to project repository")
     run_parser.add_argument("--submit", action="store_true", help="Submit report to Workflow Hub")
 
-    # pipeline command - automated full pipeline
+    # pipeline command - automated full pipeline (run-level)
     pipeline_parser = subparsers.add_parser("pipeline", help="Run automated pipeline (PM→DEV→QA→SEC)")
     pipeline_parser.add_argument("--run-id", type=int, required=True, help="Workflow Hub run ID")
     pipeline_parser.add_argument("--project-path", required=True, help="Path to project repository")
     pipeline_parser.add_argument("--max-iterations", type=int, default=10, help="Max pipeline iterations")
+
+    # director command - task-level pipeline orchestration
+    director_parser = subparsers.add_parser("director", help="Run Director for task-level pipeline")
+    director_parser.add_argument("--run-id", type=int, required=True, help="Workflow Hub run ID")
+    director_parser.add_argument("--project-path", required=True, help="Path to project repository")
+    director_parser.add_argument("--poll-interval", type=int, default=10, help="Seconds between polls")
+    director_parser.add_argument("--max-iterations", type=int, default=100, help="Max iterations")
 
     args = parser.parse_args()
 
@@ -557,6 +699,8 @@ def main():
             submit_report(args.run_id, args.agent, report)
     elif args.command == "pipeline":
         run_pipeline(args.run_id, args.project_path, args.max_iterations)
+    elif args.command == "director":
+        run_director(args.run_id, args.project_path, args.poll_interval, args.max_iterations)
 
 
 if __name__ == "__main__":

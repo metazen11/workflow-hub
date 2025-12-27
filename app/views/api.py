@@ -1997,3 +1997,184 @@ def run_task_progress(request, run_id):
         })
     finally:
         db.close()
+
+
+# =============================================================================
+# Director / Task Pipeline Endpoints
+# =============================================================================
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def director_process_run(request, run_id):
+    """Process a run's tasks through the pipeline.
+
+    POST /api/runs/{run_id}/director/process
+
+    Triggers the Director to:
+    1. Find tasks needing work
+    2. Start BACKLOG tasks
+    3. Return work queue for agents
+
+    Returns:
+        {
+            "run_id": 432,
+            "tasks_queued": 5,
+            "work_queue": [...],
+            "progress": {...}
+        }
+    """
+    from app.services.director_service import DirectorService
+
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        director = DirectorService(db)
+        result = director.process_run(run_id)
+
+        return JsonResponse(result)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_advance(request, task_id):
+    """Advance a task to the next pipeline stage.
+
+    POST /api/tasks/{task_id}/advance
+
+    Body:
+        {
+            "report_status": "pass" or "fail",  # Optional
+            "report_summary": "..."              # Optional
+        }
+
+    Returns:
+        {
+            "success": true,
+            "message": "Advanced from dev to qa",
+            "task": {...}
+        }
+    """
+    from app.services.director_service import DirectorService
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        data = json.loads(request.body) if request.body else {}
+
+        # Create a mock report if status provided
+        report = None
+        if "report_status" in data:
+            report = AgentReport(
+                run_id=task.run_id or 0,
+                role=AgentRole.DEV,
+                status=ReportStatus.PASS if data["report_status"] == "pass" else ReportStatus.FAIL,
+                summary=data.get("report_summary", "")
+            )
+
+        director = DirectorService(db)
+        success, message = director.advance_task(task, report)
+
+        db.refresh(task)
+
+        return JsonResponse({
+            "success": success,
+            "message": message,
+            "task": task.to_dict()
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_start(request, task_id):
+    """Start a task (move from BACKLOG to DEV).
+
+    POST /api/tasks/{task_id}/start
+
+    Returns:
+        {
+            "success": true,
+            "message": "Started task T001",
+            "task": {...}
+        }
+    """
+    from app.services.director_service import DirectorService
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        director = DirectorService(db)
+        success, message = director.start_task(task)
+
+        db.refresh(task)
+
+        return JsonResponse({
+            "success": success,
+            "message": message,
+            "task": task.to_dict()
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_loop_back(request, task_id):
+    """Loop a task back to DEV stage (e.g., after QA/SEC failure).
+
+    POST /api/tasks/{task_id}/loop-back
+
+    Body:
+        {
+            "reason": "Tests failed - need to fix validation"
+        }
+
+    Returns:
+        {
+            "success": true,
+            "message": "Looped back from qa to DEV",
+            "task": {...}
+        }
+    """
+    from app.services.director_service import DirectorService
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        data = json.loads(request.body) if request.body else {}
+
+        # Create failure report
+        report = AgentReport(
+            run_id=task.run_id or 0,
+            role=AgentRole.QA,
+            status=ReportStatus.FAIL,
+            summary=data.get("reason", "Looped back by user")
+        )
+
+        director = DirectorService(db)
+        success, message = director._loop_back_to_dev(task, report)
+
+        db.refresh(task)
+
+        return JsonResponse({
+            "success": success,
+            "message": message,
+            "task": task.to_dict()
+        })
+    finally:
+        db.close()

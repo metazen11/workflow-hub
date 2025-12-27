@@ -203,7 +203,7 @@
     {
       "id": "WH-014",
       "title": "Implement Director service daemon",
-      "status": "pending",
+      "status": "done",
       "priority": 1,
       "description": "Background service that supervises pipeline, enforces standards, course corrects agents",
       "acceptance_criteria": [
@@ -215,7 +215,8 @@
         "Graceful start/stop"
       ],
       "created": "2025-12-26",
-      "blocked_by": ["WH-013"]
+      "blocked_by": ["WH-013"],
+      "completed": "2025-12-27"
     },
     {
       "id": "WH-015",
