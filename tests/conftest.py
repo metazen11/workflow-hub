@@ -1,46 +1,54 @@
-"""Pytest fixtures for Workflow Hub tests."""
+"""Pytest fixtures for Workflow Hub tests.
+
+Uses the production database (wfhub) directly for simplicity.
+TODO: Add separate test database isolation when needed for CI/CD.
+"""
 import os
 import pytest
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 # Load environment from .env file
 load_dotenv()
 
-# Verify DATABASE_URL is set
-if not os.getenv("DATABASE_URL"):
-    raise ValueError("DATABASE_URL must be set in .env file to run tests")
+# Configure Django settings
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 
-from app.db import Base, engine
+import django
+django.setup()
+
+# Import app modules - uses DATABASE_URL from .env (wfhub)
+from app.db import Base, engine, get_db
 from app.models import Project, Requirement, Task, Run, AgentReport, ThreatIntel, AuditEvent
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_database():
+    """Ensure database tables exist."""
+    Base.metadata.create_all(bind=engine)
+    yield
 
 
 @pytest.fixture(scope="function")
 def db_session():
-    """Create a fresh database session for each test."""
-    # Create all tables
-    Base.metadata.create_all(bind=engine)
+    """Create a database session for tests.
 
+    Uses production database. Tests should clean up their own data
+    or use unique identifiers to avoid conflicts.
+    """
     Session = sessionmaker(bind=engine)
     session = Session()
 
     yield session
 
-    # Cleanup after test
+    # Rollback uncommitted changes only - don't truncate
     session.rollback()
     session.close()
-
-    # Clear test data using TRUNCATE CASCADE for clean slate
-    # Note: In production, use completed flag to preserve history
-    with engine.connect() as conn:
-        conn.execute(text("TRUNCATE agent_reports, task_requirements, tasks, runs, requirements, projects, threat_intel, audit_events, bug_reports CASCADE"))
-        conn.commit()
 
 
 @pytest.fixture
 def sample_project(db_session):
-    """Create a sample project."""
+    """Create a sample project for testing."""
     project = Project(
         name="Test Project",
         description="A test project",
@@ -55,7 +63,7 @@ def sample_project(db_session):
 
 @pytest.fixture
 def sample_requirement(db_session, sample_project):
-    """Create a sample requirement."""
+    """Create a sample requirement for testing."""
     req = Requirement(
         project_id=sample_project.id,
         req_id="R1",
@@ -71,7 +79,7 @@ def sample_requirement(db_session, sample_project):
 
 @pytest.fixture
 def sample_run(db_session, sample_project):
-    """Create a sample run."""
+    """Create a sample run for testing."""
     run = Run(
         project_id=sample_project.id,
         name="Run 2025-01-01_01"

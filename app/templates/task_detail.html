@@ -138,10 +138,26 @@
                 <button class="status-btn done" onclick="updateTaskStatus({{ task.id }}, 'done')">Done</button>
             </div>
         </div>
+
+        <!-- Danger Zone -->
+        <div class="section" style="margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border);">
+            <h4 class="section-title" style="color: var(--danger);">Danger Zone</h4>
+            <button class="btn btn-danger delete-task-btn"
+                data-task-id="{{ task.id }}"
+                data-title="{{ task.title }}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                Delete Task
+            </button>
+        </div>
     </div>
 </div>
 
 <script>
+// Delete button handler is in /static/js/task-actions.js (DRY)
+
 function updateTaskStatus(taskId, status) {
     fetch(`/api/tasks/${taskId}/status`, {
         method: 'POST',

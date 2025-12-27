@@ -418,7 +418,8 @@
         description: description || null,
         screenshot: screenshotData || null,
         url: window.location.href,
-        app_name: CONFIG.appName
+        app_name: CONFIG.appName,
+        project_id: window.BUG_REPORT_PROJECT_ID || null
       };
 
       try {

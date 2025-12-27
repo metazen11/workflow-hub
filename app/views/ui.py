@@ -248,6 +248,45 @@ def bug_detail_view(request, bug_id):
         db.close()
 
 
+def runs_list(request):
+    """All runs list view."""
+    db = next(get_db())
+    try:
+        # Exclude killed runs
+        all_runs = db.query(Run).filter(Run.killed == False).order_by(Run.created_at.desc()).all()
+        open_bugs = _get_open_bugs_count(db)
+
+        # Stats
+        stats = {
+            'total': len(all_runs),
+            'active': sum(1 for r in all_runs if r.state not in [RunState.DEPLOYED, RunState.QA_FAILED, RunState.SEC_FAILED]),
+            'completed': sum(1 for r in all_runs if r.state == RunState.DEPLOYED),
+            'failed': sum(1 for r in all_runs if r.state in [RunState.QA_FAILED, RunState.SEC_FAILED])
+        }
+
+        runs = [{
+            'id': r.id,
+            'name': r.name,
+            'project_name': r.project.name if r.project else 'Unknown',
+            'project_id': r.project_id,
+            'state': r.state.value.upper().replace('_', ' '),
+            'state_raw': r.state.value,
+            'state_class': _get_status_class(r.state.value),
+            'created_at': r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '',
+        } for r in all_runs]
+
+        context = {
+            'active_page': 'runs',
+            'stats': stats,
+            'runs': runs,
+            'open_bugs_count': open_bugs
+        }
+
+        return render(request, 'runs_list.html', context)
+    finally:
+        db.close()
+
+
 def projects_list(request):
     """Projects list view."""
     db = next(get_db())
@@ -380,8 +419,14 @@ def run_view(request, run_id):
         project = db.query(Project).filter(Project.id == run.project_id).first()
         open_bugs = _get_open_bugs_count(db)
 
-        # Get tasks for this run
-        tasks = db.query(Task).filter(Task.run_id == run_id).order_by(Task.priority.desc()).all()
+        # Get tasks for this run (directly linked)
+        run_tasks = db.query(Task).filter(Task.run_id == run_id).order_by(Task.priority.desc()).all()
+
+        # Get ALL tasks for the project (may or may not have run_id set)
+        project_tasks = db.query(Task).filter(Task.project_id == run.project_id).order_by(Task.priority.desc()).all()
+
+        # Combine: show project tasks (which includes run tasks)
+        tasks = project_tasks
 
         # Get audit events for this run
         audit_events = db.query(AuditEvent).filter(
@@ -452,11 +497,17 @@ def run_view(request, run_id):
                 'id': t.id,
                 'task_id': t.task_id,
                 'title': t.title,
-                'description': t.description,
+                'description': t.description or '',
                 'status': t.status.value if t.status else 'backlog',
                 'status_class': _get_status_class(t.status.value if t.status else 'backlog'),
-                'priority': t.priority,
+                'priority': t.priority or 5,
+                'blocked_by': ','.join(t.blocked_by) if t.blocked_by else '',
+                'acceptance_criteria': '\n'.join(t.acceptance_criteria) if t.acceptance_criteria else '',
+                'run_id': t.run_id,
+                'linked_to_run': t.run_id == run_id,
             } for t in tasks],
+            'run_task_count': len(run_tasks),
+            'project_task_count': len(project_tasks),
             'audit_events': [{
                 'timestamp': e.timestamp.strftime('%H:%M:%S') if e.timestamp else '',
                 'actor': e.actor,

@@ -1,0 +1,320 @@
+{
+  "project": "Workflow Hub",
+  "description": "Local-first web app for managing agentic software development cycles",
+  "last_updated": "2025-12-26T23:30:00Z",
+  "tasks": [
+    {
+      "id": "WH-001",
+      "title": "Implement pipeline state monitoring via Playwright",
+      "status": "done",
+      "priority": 1,
+      "description": "E2E tests to verify run states progress, handoffs work, and database fields are populated",
+      "acceptance_criteria": [
+        "Playwright tests check API health",
+        "Tests verify run state transitions",
+        "Tests verify tasks are created and linked",
+        "Tests verify UI renders correctly"
+      ],
+      "created": "2025-12-26",
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-002",
+      "title": "Add auto git repo initialization on run creation",
+      "status": "done",
+      "priority": 1,
+      "description": "Automatically initialize git repository when creating a new run for a project",
+      "acceptance_criteria": [
+        "RunService.create_run() calls _ensure_git_repo()",
+        "Git repo created if repo_path exists and no .git dir",
+        ".gitignore created with common patterns",
+        "Initial commit created automatically"
+      ],
+      "created": "2025-12-26",
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-003",
+      "title": "Fix project_create API to save all fields",
+      "status": "done",
+      "priority": 1,
+      "description": "project_create was only saving name, description, repo_path, stack_tags. Now saves all 20+ Project model fields.",
+      "acceptance_criteria": [
+        "All Project model fields saved on create",
+        "Tests verify all fields persist",
+        "API returns complete project data"
+      ],
+      "created": "2025-12-26",
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-004",
+      "title": "PyCRUD project creation and run setup",
+      "status": "done",
+      "priority": 2,
+      "description": "Created PyCRUD project with comprehensive requirements matching ajaxCRUD, with 16 implementation tasks",
+      "acceptance_criteria": [
+        "Project created with all metadata fields",
+        "Run #432 created in PM state",
+        "16 tasks created with acceptance criteria",
+        "Tasks linked to run"
+      ],
+      "created": "2025-12-26",
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-005",
+      "title": "Agent auto-trigger system",
+      "status": "done",
+      "priority": 1,
+      "description": "When AUTO_TRIGGER_AGENTS=true, automatically trigger next agent when run state changes",
+      "acceptance_criteria": [
+        "PM agent triggered on run creation",
+        "DEV agent triggered after PM passes",
+        "QA agent triggered after DEV passes",
+        "SEC agent triggered after QA passes",
+        "Pipeline advances automatically"
+      ],
+      "created": "2025-12-26",
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-006",
+      "title": "Implement DRY task UI components",
+      "status": "done",
+      "priority": 2,
+      "description": "Shared templates and JS for task operations",
+      "acceptance_criteria": [
+        "task_row.html partial created",
+        "task_delete.html partial created",
+        "task-actions.js shared module",
+        "Event delegation for delete handlers"
+      ],
+      "created": "2025-12-26",
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-007",
+      "title": "Test database isolation",
+      "status": "done",
+      "priority": 1,
+      "description": "Tests use wfhub_test database instead of production",
+      "acceptance_criteria": [
+        "conftest.py overrides DATABASE_URL before Django setup",
+        "Tests run against wfhub_test",
+        "Production data preserved",
+        "load_dotenv(override=False) in app/db"
+      ],
+      "created": "2025-12-26",
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-008",
+      "title": "Create coding principles documentation",
+      "status": "done",
+      "priority": 2,
+      "description": "Document coding standards, TDD requirements, and development workflow",
+      "acceptance_criteria": [
+        "coding_principles.md created",
+        "TDD workflow documented",
+        "DRY principles documented",
+        "Referenced in CLAUDE.md"
+      ],
+      "created": "2025-12-26",
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-009",
+      "title": "Periodic pipeline monitoring",
+      "status": "pending",
+      "priority": 3,
+      "description": "Set up recurring checks every 5 minutes via Playwright",
+      "acceptance_criteria": [
+        "Monitor script runs on schedule",
+        "Alerts on stuck pipelines",
+        "Logs check results"
+      ],
+      "created": "2025-12-26"
+    },
+    {
+      "id": "WH-010",
+      "title": "Create RoleConfig model for agent prompts in DB",
+      "status": "done",
+      "priority": 1,
+      "description": "Store agent roles and prompts in database instead of hardcoding in agent_runner.py. Follow DRY principle.",
+      "acceptance_criteria": [
+        "RoleConfig model with role, name, description, prompt, checks, requires_approval, active fields",
+        "Alembic migration created and applied",
+        "All existing roles seeded: director, pm, dev, qa, security, docs, cicd",
+        "Test: test_all_roles_have_config()"
+      ],
+      "created": "2025-12-26",
+      "blocked_by": ["WH-011"],
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-011",
+      "title": "Write tests for RoleConfig model (TDD)",
+      "status": "done",
+      "priority": 1,
+      "description": "TDD - Write tests first before implementing RoleConfig model",
+      "acceptance_criteria": [
+        "test_role_config_model.py created",
+        "test_all_roles_have_config() - every AgentRole has RoleConfig",
+        "test_prompts_have_required_sections() - prompts are valid",
+        "test_director_checks_are_valid() - enforcement rules valid JSON",
+        "Tests fail initially (Red phase)"
+      ],
+      "created": "2025-12-26",
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-012",
+      "title": "Add DIRECTOR and CICD to AgentRole enum",
+      "status": "done",
+      "priority": 1,
+      "description": "Extend AgentRole enum with new roles",
+      "acceptance_criteria": [
+        "AgentRole.DIRECTOR added",
+        "AgentRole.DOCS added",
+        "AgentRole.CICD added",
+        "Alembic migration for enum update"
+      ],
+      "created": "2025-12-26",
+      "blocked_by": ["WH-011"],
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-013",
+      "title": "Refactor agent_runner.py to load prompts from DB",
+      "status": "done",
+      "priority": 1,
+      "description": "Remove hardcoded ROLE_PROMPTS, load from role_configs table",
+      "acceptance_criteria": [
+        "get_agent_prompt(role, db) function loads from DB",
+        "ROLE_PROMPTS dict removed",
+        "BASE_INSTRUCTIONS moved to DB or shared config",
+        "Tests pass with DB-loaded prompts"
+      ],
+      "created": "2025-12-26",
+      "blocked_by": ["WH-010"],
+      "completed": "2025-12-26"
+    },
+    {
+      "id": "WH-014",
+      "title": "Implement Director service daemon",
+      "status": "pending",
+      "priority": 1,
+      "description": "Background service that supervises pipeline, enforces standards, course corrects agents",
+      "acceptance_criteria": [
+        "Director runs as daemon (agent_runner.py daemon)",
+        "Polls task queue for work",
+        "Reviews agent outputs before stage advancement",
+        "Enforces coding_principles checks",
+        "Sends work back if standards not met",
+        "Graceful start/stop"
+      ],
+      "created": "2025-12-26",
+      "blocked_by": ["WH-013"]
+    },
+    {
+      "id": "WH-015",
+      "title": "Implement CICD agent with approval gate",
+      "status": "pending",
+      "priority": 2,
+      "description": "Deployment agent that requires human approval. After DOCS passes: commit to branch, merge to prod, push.",
+      "acceptance_criteria": [
+        "CICD agent prompt in DB",
+        "requires_approval=True for CICD role",
+        "Human approval UI in dashboard",
+        "CICD only runs after explicit approval",
+        "Commit changes to feature branch",
+        "Merge to production branch (with approval)",
+        "Push to remote repository",
+        "Deployment to dev/staging/production environments"
+      ],
+      "created": "2025-12-26",
+      "blocked_by": ["WH-013"]
+    },
+    {
+      "id": "WH-016",
+      "title": "Add Director GUI controls to dashboard",
+      "status": "pending",
+      "priority": 2,
+      "description": "UI controls to start/stop Director service and view status",
+      "acceptance_criteria": [
+        "Director status indicator (running/stopped)",
+        "Start/Stop buttons",
+        "Settings panel (poll interval, enforcement toggles)",
+        "View logs/activity",
+        "Tasks reviewed count"
+      ],
+      "created": "2025-12-26",
+      "blocked_by": ["WH-014"]
+    },
+    {
+      "id": "WH-017",
+      "title": "Hybrid task/run pipeline flow",
+      "status": "pending",
+      "priority": 2,
+      "description": "Support both full project runs and individual task progression through pipeline",
+      "acceptance_criteria": [
+        "Tasks can flow DEV→QA→SEC→DOCS→COMPLETE individually",
+        "Run-level still works for full project execution",
+        "Director orchestrates both flows",
+        "UI shows task-level pipeline stage"
+      ],
+      "created": "2025-12-26",
+      "blocked_by": ["WH-014"]
+    },
+    {
+      "id": "WH-018",
+      "title": "Test Director with PyCRUD pipeline",
+      "status": "pending",
+      "priority": 2,
+      "description": "End-to-end test of Director supervising PyCRUD project completion",
+      "acceptance_criteria": [
+        "Run 432 resumes with Director oversight",
+        "Director enforces standards on each stage",
+        "Security issues get fixed before advancing",
+        "Tasks progress through all stages",
+        "Project reaches DEPLOYED state"
+      ],
+      "created": "2025-12-26",
+      "blocked_by": ["WH-017"]
+    },
+    {
+      "id": "WH-019",
+      "title": "Agent-to-agent communication via MCP (FUTURE)",
+      "status": "pending",
+      "priority": 3,
+      "description": "Agents can resolve problems themselves and ask Director questions before escalating to human. MCP tools for inter-agent communication.",
+      "acceptance_criteria": [
+        "Agents can call each other via MCP tools",
+        "Task ID passed to build context (task info, project info, history)",
+        "WH provides context to LLM via MCP",
+        "Agents ask Director for clarification before escalating to human",
+        "Question/answer flow tracked in task history"
+      ],
+      "created": "2025-12-26",
+      "notes": "DESIGN PHASE - Still figuring out architecture. Do not implement yet."
+    },
+    {
+      "id": "WH-020",
+      "title": "Enhanced task list with filtering and selection",
+      "status": "pending",
+      "priority": 2,
+      "description": "Task lists should be DRY, queryable by project with status/priority filtering. Users can select tasks to run them through the pipeline.",
+      "acceptance_criteria": [
+        "Task list shows status and priority",
+        "Tasks queryable by project_id",
+        "Filter by status (backlog, in_progress, done)",
+        "Filter by priority",
+        "Multi-select tasks in UI",
+        "Run selected tasks (delegates to pipeline)",
+        "DRY - reusable task list component"
+      ],
+      "created": "2025-12-26"
+    }
+  ]
+}

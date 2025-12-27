@@ -7,11 +7,24 @@ from app.db import Base
 
 
 class AgentRole(enum.Enum):
-    """Agent roles."""
+    """Agent roles.
+
+    Roles:
+        DIRECTOR - Supervisory agent that enforces standards and course corrects
+        PM - Project Manager, breaks down requirements into tasks
+        DEV - Developer, implements code to satisfy tests
+        QA - Quality Assurance, writes tests before implementation (TDD)
+        SECURITY - Security review and vulnerability scanning
+        DOCS - Documentation generation and updates
+        CICD - Deployment agent (requires human approval)
+    """
+    DIRECTOR = "director"
     PM = "pm"
     DEV = "dev"
     QA = "qa"
     SECURITY = "security"
+    DOCS = "docs"
+    CICD = "cicd"
 
 
 class ReportStatus(enum.Enum):

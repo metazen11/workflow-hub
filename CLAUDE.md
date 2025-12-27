@@ -10,6 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 1. `_spec/SESSION_CONTEXT.md` - Current task and what we're building
 2. `_spec/HANDOFF.md` - What's been done and current state
 3. `_spec/BRIEF.md` - Project goals
+4. `coding_principles.md` - TDD/DRY standards and development workflow
+5. `todo.json` - Current task status and priorities
 
 ---
 
@@ -40,25 +42,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+### Quick Start (ALWAYS use this)
 ```bash
-# Start PostgreSQL
+# Start everything (order matters!)
 docker compose -f docker/docker-compose.yml up -d
-
-# Set up environment
 source venv/bin/activate
-pip install -r requirements.txt
-
-# Run migrations
-alembic upgrade head
-
-# Start server
+source .env  # CRITICAL: Load database credentials
+alembic upgrade head  # Ensure schema is current
 python manage.py runserver 0.0.0.0:8000
+```
 
+### Other Commands
+```bash
 # Run tests
-pytest tests/ -v
+source .env && pytest tests/ -v
 
 # Create new migration
-alembic revision --autogenerate -m "description"
+source .env && alembic revision --autogenerate -m "description"
+source .env && alembic upgrade head
+```
+
+### Database Warnings
+- **NEVER run `docker compose down -v`** - the `-v` flag deletes the data volume!
+- Safe shutdown: `docker compose -f docker/docker-compose.yml down` (no -v)
+- Data persists in Docker volume `docker_pgdata`
+- If data is lost, check volume: `docker volume ls | grep pgdata`
+
+### Database Backup/Restore
+```bash
+# Backup (run periodically!)
+source .env && docker exec docker-db-1 pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore from backup
+source .env && docker exec -i docker-db-1 psql -U "$POSTGRES_USER" "$POSTGRES_DB" < backup_YYYYMMDD_HHMMSS.sql
+
+# Quick data check
+source .env && docker exec docker-db-1 psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 'projects', COUNT(*) FROM projects UNION ALL SELECT 'runs', COUNT(*) FROM runs UNION ALL SELECT 'tasks', COUNT(*) FROM tasks;"
 ```
 
 ## Architecture
@@ -112,6 +131,44 @@ Always read before starting work:
 
 ## Database
 
-PostgreSQL 16 on localhost:5432 (user/pass/db: app)
+PostgreSQL 16 on localhost:5432 (credentials in `.env` file - user/db: wfhub)
 
-Models: Project, Requirement, Task, Run, AgentReport, ThreatIntel, AuditEvent
+Models: Project, Requirement, Task, Run, AgentReport, ThreatIntel, AuditEvent, Credential, Environment, BugReport
+
+## Task Tracking
+
+### todo.json
+Project tasks are tracked in `todo.json`:
+```json
+{
+  "id": "WH-001",
+  "title": "Task description",
+  "status": "pending|in_progress|done",
+  "priority": 1-10,
+  "acceptance_criteria": ["list of requirements"]
+}
+```
+
+### Git Auto-Initialization
+When a run is created:
+- Checks if project has `repo_path`
+- Creates git repo if not exists
+- Extracts git info (branch, remote)
+- Updates project with git details
+
+## Monitoring
+
+Pipeline health monitoring via Playwright:
+```bash
+# Run manual check
+python tests/e2e/test_pipeline_monitoring.py
+
+# Run Playwright tests
+pytest tests/e2e/test_pipeline_monitoring.py -v
+```
+
+Checks:
+- Run states progressing
+- Database fields populated
+- UI renders correctly
+- Agent handoffs working

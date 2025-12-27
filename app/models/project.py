@@ -59,6 +59,7 @@ class Project(Base):
     credentials = relationship("Credential", back_populates="project", foreign_keys="Credential.project_id", cascade="all, delete-orphan")
     environments = relationship("Environment", back_populates="project", cascade="all, delete-orphan")
     git_credential = relationship("Credential", foreign_keys=[git_credential_id], uselist=False)
+    bugs = relationship("BugReport", back_populates="project", lazy="dynamic")
 
     def to_dict(self, include_children=False):
         result = {

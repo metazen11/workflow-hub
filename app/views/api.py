@@ -16,12 +16,39 @@ from app.models import (
     validate_file_security, AttachmentSecurityError,
     Credential, CredentialType, Environment, EnvironmentType
 )
+from app.models.task import TaskPipelineStage
 from app.models.report import AgentRole, ReportStatus
 from app.models.audit import log_event
 from app.services.run_service import RunService
 
 # Upload directory
 UPLOAD_DIR = os.path.join(settings.BASE_DIR, 'uploads', 'attachments')
+
+# Workspaces directory - where project repositories are created
+WORKSPACES_DIR = os.getenv("WORKSPACES_DIR", os.path.join(settings.BASE_DIR, 'workspaces'))
+
+
+def _slugify(name: str) -> str:
+    """Convert name to filesystem-safe slug."""
+    import re
+    # Convert to lowercase, replace spaces/special chars with hyphens
+    slug = re.sub(r'[^\w\s-]', '', name.lower())
+    slug = re.sub(r'[-\s]+', '-', slug).strip('-')
+    return slug or 'project'
+
+
+def _generate_workspace_path(name: str) -> str:
+    """Generate a unique workspace path for a project."""
+    base_slug = _slugify(name)
+    workspace_path = os.path.join(WORKSPACES_DIR, base_slug)
+
+    # Ensure uniqueness by appending number if needed
+    counter = 1
+    while os.path.exists(workspace_path):
+        workspace_path = os.path.join(WORKSPACES_DIR, f"{base_slug}-{counter}")
+        counter += 1
+
+    return workspace_path
 
 
 def _get_json_body(request):
@@ -62,7 +89,7 @@ def projects_list(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def project_create(request):
-    """Create a new project."""
+    """Create a new project with all supported fields."""
     data = _get_json_body(request)
     if not data:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
@@ -73,11 +100,44 @@ def project_create(request):
 
     db = next(get_db())
     try:
+        # Auto-generate workspace path if not provided
+        repo_path = data.get("repo_path")
+        if not repo_path:
+            repo_path = _generate_workspace_path(name)
+
+        # Create project with all supported fields
         project = Project(
             name=name,
             description=data.get("description"),
-            repo_path=data.get("repo_path"),
-            stack_tags=data.get("stack_tags", [])
+            # Repository & Location
+            repo_path=repo_path,
+            repository_url=data.get("repository_url"),
+            repository_ssh_url=data.get("repository_ssh_url"),
+            primary_branch=data.get("primary_branch", "main"),
+            documentation_url=data.get("documentation_url"),
+            git_credential_id=data.get("git_credential_id"),
+            git_auth_method=data.get("git_auth_method"),
+            # Tech Stack (JSON arrays)
+            stack_tags=data.get("stack_tags", []),
+            languages=data.get("languages", []),
+            frameworks=data.get("frameworks", []),
+            databases=data.get("databases", []),
+            # Key Files & Structure (JSON arrays)
+            key_files=data.get("key_files", []),
+            entry_point=data.get("entry_point"),
+            config_files=data.get("config_files", []),
+            # Build & Deploy Commands
+            build_command=data.get("build_command"),
+            test_command=data.get("test_command"),
+            run_command=data.get("run_command"),
+            deploy_command=data.get("deploy_command"),
+            # Development Settings
+            default_port=data.get("default_port"),
+            python_version=data.get("python_version"),
+            node_version=data.get("node_version"),
+            # Status
+            is_active=data.get("is_active", True),
+            is_archived=data.get("is_archived", False),
         )
         db.add(project)
         db.commit()
@@ -257,13 +317,28 @@ def task_create(request, project_id):
     if not data:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
 
+    title = data.get("title")
+    if not title:
+        return JsonResponse({"error": "title is required"}, status=400)
+
     db = next(get_db())
     try:
+        # Auto-generate task_id if not provided
+        task_id = data.get("task_id")
+        if not task_id:
+            # Get next task number for this project
+            max_task = db.query(Task).filter(Task.project_id == project_id).count()
+            task_id = f"T{max_task + 1:03d}"
+
         task = Task(
             project_id=project_id,
-            task_id=data.get("task_id"),
-            title=data.get("title"),
+            task_id=task_id,
+            title=title,
             description=data.get("description"),
+            priority=data.get("priority", 5),
+            blocked_by=data.get("blocked_by", []),
+            acceptance_criteria=data.get("acceptance_criteria", []),
+            run_id=data.get("run_id"),
             status=TaskStatus.BACKLOG
         )
         db.add(task)
@@ -349,6 +424,25 @@ def task_update(request, task_id):
         db.refresh(task)
         log_event(db, "human", "update", "task", task_id, {"updated_fields": updated_fields})
         return JsonResponse({"success": True, "task": task.to_dict()})
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["DELETE", "POST"])
+def task_delete(request, task_id):
+    """Delete a task."""
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        task_info = {"task_id": task.task_id, "title": task.title}
+        db.delete(task)
+        db.commit()
+        log_event(db, "human", "delete", "task", task_id, task_info)
+        return JsonResponse({"success": True, "message": f"Task {task_id} deleted"})
     finally:
         db.close()
 
@@ -762,6 +856,45 @@ def run_approve_deploy(request, run_id):
         return JsonResponse({"state": new_state.value, "message": "Deployment approved"})
     finally:
         db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def run_trigger_agent(request, run_id):
+    """Trigger an agent for a run (runs in background)."""
+    from app.services.agent_service import AgentService
+
+    data = _get_json_body(request) or {}
+    agent_type = data.get("agent")  # Optional override
+    custom_prompt = data.get("prompt")
+    async_mode = data.get("async", True)
+
+    service = AgentService()
+    result = service.trigger_agent(
+        run_id=run_id,
+        agent_type=agent_type,
+        async_mode=async_mode,
+        custom_prompt=custom_prompt
+    )
+
+    status_code = 200 if result.get("status") in ("started", "pass") else 400
+    return JsonResponse(result, status=status_code)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def run_trigger_pipeline(request, run_id):
+    """Trigger the full pipeline for a run (PM → DEV → QA → SEC → ...)."""
+    from app.services.agent_service import AgentService
+
+    data = _get_json_body(request) or {}
+    max_iterations = data.get("max_iterations", 10)
+
+    service = AgentService()
+    result = service.trigger_pipeline(run_id=run_id, max_iterations=max_iterations)
+
+    status_code = 200 if result.get("status") == "started" else 400
+    return JsonResponse(result, status=status_code)
 
 
 # --- Threat Intel ---
@@ -1439,13 +1572,22 @@ def bug_create(request):
 
     db = next(get_db())
     try:
+        # Get project_id if provided (auto-captured from UI)
+        project_id = data.get("project_id")
+        if project_id:
+            try:
+                project_id = int(project_id)
+            except (ValueError, TypeError):
+                project_id = None
+
         report = BugReport(
             title=title,
             description=data.get("description"),
             screenshot=data.get("screenshot"),
             url=data.get("url"),
             user_agent=request.headers.get("User-Agent"),
-            app_name=data.get("app_name")
+            app_name=data.get("app_name"),
+            project_id=project_id
         )
         db.add(report)
         db.commit()
@@ -1628,5 +1770,230 @@ def run_kill(request, run_id):
 
         log_event(db, "human", "kill", "run", run_id, {"name": run.name})
         return JsonResponse({"success": True, "run": run.to_dict()})
+    finally:
+        db.close()
+
+
+# =============================================================================
+# Task Pipeline API - Individual task workflow tracking
+# =============================================================================
+
+# Stage progression map: which stage follows which
+STAGE_PROGRESSION = {
+    TaskPipelineStage.NONE: TaskPipelineStage.DEV,
+    TaskPipelineStage.DEV: TaskPipelineStage.QA,
+    TaskPipelineStage.QA: TaskPipelineStage.SEC,
+    TaskPipelineStage.SEC: TaskPipelineStage.DOCS,
+    TaskPipelineStage.DOCS: TaskPipelineStage.COMPLETE,
+}
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def task_queue(request):
+    """
+    Get next task(s) for an agent to work on.
+
+    Query params:
+        - run_id: Filter by specific run (required)
+        - stage: Filter by pipeline stage (dev, qa, sec, docs)
+        - limit: Max tasks to return (default 1)
+
+    Returns tasks that need work at the specified stage.
+    """
+    run_id = request.GET.get("run_id")
+    stage = request.GET.get("stage", "dev").lower()
+    limit = int(request.GET.get("limit", 1))
+
+    if not run_id:
+        return JsonResponse({"error": "run_id required"}, status=400)
+
+    # Map stage string to enum
+    stage_map = {
+        "none": TaskPipelineStage.NONE,
+        "dev": TaskPipelineStage.DEV,
+        "qa": TaskPipelineStage.QA,
+        "sec": TaskPipelineStage.SEC,
+        "docs": TaskPipelineStage.DOCS,
+    }
+
+    target_stage = stage_map.get(stage)
+    if not target_stage:
+        return JsonResponse({"error": f"Invalid stage: {stage}"}, status=400)
+
+    db = next(get_db())
+    try:
+        # Find tasks at this stage that aren't done
+        tasks = db.query(Task).filter(
+            Task.run_id == int(run_id),
+            Task.pipeline_stage == target_stage,
+            Task.status != TaskStatus.DONE
+        ).order_by(Task.priority.desc()).limit(limit).all()
+
+        return JsonResponse({
+            "tasks": [t.to_dict() for t in tasks],
+            "count": len(tasks),
+            "stage": stage
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_advance_stage(request, task_id):
+    """
+    Advance a task to the next pipeline stage.
+
+    Body (optional):
+        - result: "pass" or "fail" (default: pass)
+        - notes: Agent notes about the work done
+        - actor: Who is advancing (default: agent)
+
+    On pass: Task advances to next stage
+    On fail: Task goes back to DEV stage
+    """
+    data = _get_json_body(request) or {}
+    result = data.get("result", "pass").lower()
+    notes = data.get("notes", "")
+    actor = data.get("actor", "agent")
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        current_stage = task.pipeline_stage or TaskPipelineStage.NONE
+
+        if result == "pass":
+            # Advance to next stage
+            next_stage = STAGE_PROGRESSION.get(current_stage, TaskPipelineStage.COMPLETE)
+            task.pipeline_stage = next_stage
+
+            if next_stage == TaskPipelineStage.COMPLETE:
+                task.status = TaskStatus.DONE
+                task.completed = True
+                from datetime import datetime, timezone
+                task.completed_at = datetime.now(timezone.utc)
+        else:
+            # Failed - loop back to DEV
+            task.pipeline_stage = TaskPipelineStage.DEV
+            task.status = TaskStatus.IN_PROGRESS
+
+        db.commit()
+        db.refresh(task)
+
+        log_event(db, actor, "advance_stage", "task", task_id, {
+            "from_stage": current_stage.value,
+            "to_stage": task.pipeline_stage.value,
+            "result": result,
+            "notes": notes
+        })
+
+        return JsonResponse({
+            "success": True,
+            "task": task.to_dict(),
+            "from_stage": current_stage.value,
+            "to_stage": task.pipeline_stage.value
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_set_stage(request, task_id):
+    """
+    Set a task's pipeline stage directly.
+
+    Body:
+        - stage: Target stage (none, dev, qa, sec, docs, complete)
+        - actor: Who is setting (default: agent)
+    """
+    data = _get_json_body(request) or {}
+    stage_str = data.get("stage", "").lower()
+    actor = data.get("actor", "agent")
+
+    stage_map = {
+        "none": TaskPipelineStage.NONE,
+        "dev": TaskPipelineStage.DEV,
+        "qa": TaskPipelineStage.QA,
+        "sec": TaskPipelineStage.SEC,
+        "docs": TaskPipelineStage.DOCS,
+        "complete": TaskPipelineStage.COMPLETE,
+    }
+
+    if stage_str not in stage_map:
+        return JsonResponse({"error": f"Invalid stage: {stage_str}"}, status=400)
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        old_stage = task.pipeline_stage
+        task.pipeline_stage = stage_map[stage_str]
+
+        if stage_map[stage_str] == TaskPipelineStage.COMPLETE:
+            task.status = TaskStatus.DONE
+            task.completed = True
+            from datetime import datetime, timezone
+            task.completed_at = datetime.now(timezone.utc)
+        elif stage_map[stage_str] in (TaskPipelineStage.DEV, TaskPipelineStage.QA, TaskPipelineStage.SEC):
+            task.status = TaskStatus.IN_PROGRESS
+
+        db.commit()
+        db.refresh(task)
+
+        log_event(db, actor, "set_stage", "task", task_id, {
+            "from_stage": old_stage.value if old_stage else "none",
+            "to_stage": task.pipeline_stage.value
+        })
+
+        return JsonResponse({
+            "success": True,
+            "task": task.to_dict()
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def run_task_progress(request, run_id):
+    """
+    Get task pipeline progress for a run.
+
+    Returns count of tasks at each pipeline stage.
+    """
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        tasks = db.query(Task).filter(Task.run_id == run_id).all()
+
+        # Count by stage
+        stage_counts = {stage.value: 0 for stage in TaskPipelineStage}
+        for task in tasks:
+            stage = task.pipeline_stage or TaskPipelineStage.NONE
+            stage_counts[stage.value] += 1
+
+        # Calculate progress percentage
+        total = len(tasks)
+        completed = stage_counts.get("complete", 0)
+        progress_pct = (completed / total * 100) if total > 0 else 0
+
+        return JsonResponse({
+            "run_id": run_id,
+            "total_tasks": total,
+            "stage_counts": stage_counts,
+            "completed": completed,
+            "progress_percent": round(progress_pct, 1),
+            "tasks": [t.to_dict() for t in tasks]
+        })
     finally:
         db.close()

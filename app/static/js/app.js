@@ -7,9 +7,13 @@
   'use strict';
 
   // Configuration
-  const REFRESH_INTERVAL = 5000; // 5 seconds
-  let refreshTimer = null;
-  let countdown = 5;
+  const REFRESH_INTERVAL = 30000; // 30 seconds
+  const COUNTDOWN_SECONDS = 30;
+  let countdown = COUNTDOWN_SECONDS;
+  let isPaused = false;
+  let lastDataHash = null;
+  let isUpdatingDOM = false; // Flag to prevent observer feedback loop
+  let refreshIntervalId = null;
 
   // ============================================
   // Theme Management
@@ -44,18 +48,37 @@
   }
 
   // ============================================
-  // Auto-Refresh
+  // Auto-Refresh (Smarter, Less Aggressive)
   // ============================================
   const countdownEl = document.querySelector('.refresh-countdown');
   const mainContent = document.getElementById('main-content');
 
   function updateCountdown() {
     if (countdownEl) {
-      countdownEl.textContent = countdown;
+      if (isPaused) {
+        countdownEl.textContent = '⏸';
+        countdownEl.title = 'Auto-refresh paused (modal open or user active)';
+      } else {
+        countdownEl.textContent = countdown;
+        countdownEl.title = `Auto-refresh in ${countdown}s`;
+      }
     }
   }
 
+  // Simple hash for change detection
+  function hashContent(content) {
+    let hash = 0;
+    for (let i = 0; i < content.length; i++) {
+      const char = content.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return hash;
+  }
+
   function refreshContent() {
+    if (isPaused || isUpdatingDOM) return;
+
     fetch(window.location.href, {
       headers: {
         'X-Requested-With': 'XMLHttpRequest'
@@ -63,44 +86,208 @@
     })
     .then(response => response.text())
     .then(html => {
+      // Re-check pause state after async fetch
+      if (isPaused) {
+        countdown = COUNTDOWN_SECONDS;
+        updateCountdown();
+        return;
+      }
+
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
       const newContent = doc.getElementById('main-content');
 
       if (newContent && mainContent) {
-        // Smooth transition
-        mainContent.style.opacity = '0.5';
+        // Check if content actually changed
+        const newHash = hashContent(newContent.innerHTML);
+        if (newHash === lastDataHash) {
+          // No changes, skip update
+          countdown = COUNTDOWN_SECONDS;
+          updateCountdown();
+          return;
+        }
+        lastDataHash = newHash;
+
+        // Set flag to prevent observer feedback loop
+        isUpdatingDOM = true;
+
+        // Smooth transition only if there are changes
+        mainContent.style.opacity = '0.7';
         setTimeout(() => {
           mainContent.innerHTML = newContent.innerHTML;
           mainContent.style.opacity = '1';
+          // Clear flag after DOM update settles
+          setTimeout(() => {
+            isUpdatingDOM = false;
+          }, 50);
         }, 100);
       }
 
       // Reset countdown
-      countdown = 5;
+      countdown = COUNTDOWN_SECONDS;
       updateCountdown();
     })
     .catch(err => {
       console.warn('Refresh failed:', err);
-      countdown = 5;
+      countdown = COUNTDOWN_SECONDS;
       updateCountdown();
     });
   }
 
   function startAutoRefresh() {
-    // Countdown timer
-    setInterval(() => {
-      countdown--;
-      updateCountdown();
+    // Prevent multiple intervals
+    if (refreshIntervalId) {
+      clearInterval(refreshIntervalId);
+    }
 
-      if (countdown <= 0) {
-        refreshContent();
+    // Countdown timer - every second
+    refreshIntervalId = setInterval(() => {
+      if (!isPaused && !isUpdatingDOM) {
+        countdown--;
+        updateCountdown();
+
+        if (countdown <= 0) {
+          refreshContent();
+        }
       }
     }, 1000);
   }
 
+  // Pause refresh when user is interacting
+  let interactionTimer = null;
+  const RESUME_DELAY = 5000; // Resume 5 seconds after last interaction
+
+  function pauseRefresh() {
+    isPaused = true;
+    updateCountdown();
+  }
+
+  function resumeRefresh() {
+    isPaused = false;
+    countdown = COUNTDOWN_SECONDS; // Reset countdown when resuming
+    updateCountdown();
+  }
+
+  // Check if any modal/overlay is visible
+  function isModalOpen() {
+    // Check for any visible modal using class-based detection (no getComputedStyle)
+    const modals = document.querySelectorAll('.modal');
+    for (const modal of modals) {
+      // Check for common "open" patterns: active class or inline style
+      if (modal.classList.contains('active') ||
+          modal.classList.contains('show') ||
+          modal.classList.contains('open') ||
+          modal.style.display === 'flex' ||
+          modal.style.display === 'block') {
+        return true;
+      }
+    }
+    // Check for keyboard help overlay
+    if (document.getElementById('keyboard-help')) {
+      return true;
+    }
+    return false;
+  }
+
+  // Check if user is editing (any editable element has focus)
+  function isEditing() {
+    const active = document.activeElement;
+    if (!active) return false;
+
+    const editableTags = ['INPUT', 'TEXTAREA', 'SELECT'];
+    if (editableTags.includes(active.tagName)) return true;
+
+    // Check for contenteditable elements
+    if (active.isContentEditable) return true;
+
+    return false;
+  }
+
+  // Universal interaction handler - pause on any form activity
+  function handleInteraction() {
+    // Clear any pending resume
+    if (interactionTimer) {
+      clearTimeout(interactionTimer);
+      interactionTimer = null;
+    }
+
+    // Pause if editing or modal open
+    if (isEditing() || isModalOpen()) {
+      pauseRefresh();
+      return;
+    }
+  }
+
+  // Schedule resume after interaction stops
+  function scheduleResume() {
+    if (interactionTimer) clearTimeout(interactionTimer);
+
+    interactionTimer = setTimeout(() => {
+      // Only resume if not editing and no modals open
+      if (!isEditing() && !isModalOpen()) {
+        resumeRefresh();
+      }
+    }, RESUME_DELAY);
+  }
+
+  // Watch for DOM changes (modals opening/closing)
+  // Use debounced observer to prevent feedback loops
+  let observerTimeout = null;
+  const observer = new MutationObserver(() => {
+    // Skip if we're in the middle of a refresh update
+    if (isUpdatingDOM) return;
+
+    // Debounce observer callbacks
+    if (observerTimeout) clearTimeout(observerTimeout);
+    observerTimeout = setTimeout(() => {
+      if (isUpdatingDOM) return; // Double-check after timeout
+      if (isModalOpen() || isEditing()) {
+        pauseRefresh();
+      } else if (isPaused) {
+        scheduleResume();
+      }
+    }, 100);
+  });
+  // Only observe modals container and form elements, not the entire body
+  observer.observe(document.body, { childList: true, subtree: false, attributes: true, attributeFilter: ['class'] });
+
+  // Pause immediately when user focuses any editable element
+  document.addEventListener('focus', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
+        e.target.tagName === 'SELECT' || e.target.isContentEditable) {
+      pauseRefresh();
+    }
+  }, true);
+
+  // Schedule resume when focus leaves editable element
+  document.addEventListener('blur', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
+        e.target.tagName === 'SELECT' || e.target.isContentEditable) {
+      scheduleResume();
+    }
+  }, true);
+
+  // Pause on any click inside a modal
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.modal')) {
+      pauseRefresh();
+    }
+  }, true);
+
+  // Pause while typing anywhere
+  document.addEventListener('keydown', (e) => {
+    // Only pause for actual typing keys, not navigation
+    if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
+      if (isEditing() || isModalOpen()) {
+        pauseRefresh();
+      }
+    }
+  }, true);
+
   // Start auto-refresh on page load
   if (mainContent) {
+    // Initialize hash
+    lastDataHash = hashContent(mainContent.innerHTML);
     startAutoRefresh();
   }
 
@@ -139,6 +326,16 @@
         window.location.href = '/ui/';
         break;
 
+      case 'p':
+        // Toggle pause
+        e.preventDefault();
+        if (isPaused) {
+          resumeRefresh();
+        } else {
+          pauseRefresh();
+        }
+        break;
+
       case '?':
         // Show help
         e.preventDefault();
@@ -173,6 +370,7 @@
       <h3 style="margin-bottom: 16px; font-size: 1.1rem;">Keyboard Shortcuts</h3>
       <table style="width: 100%;">
         <tr><td style="padding: 4px 0;"><kbd style="background: var(--bg-secondary); padding: 2px 8px; border-radius: 4px;">r</kbd></td><td>Refresh now</td></tr>
+        <tr><td style="padding: 4px 0;"><kbd style="background: var(--bg-secondary); padding: 2px 8px; border-radius: 4px;">p</kbd></td><td>Pause/resume auto-refresh</td></tr>
         <tr><td style="padding: 4px 0;"><kbd style="background: var(--bg-secondary); padding: 2px 8px; border-radius: 4px;">t</kbd></td><td>Toggle theme</td></tr>
         <tr><td style="padding: 4px 0;"><kbd style="background: var(--bg-secondary); padding: 2px 8px; border-radius: 4px;">d</kbd></td><td>Dashboard</td></tr>
         <tr><td style="padding: 4px 0;"><kbd style="background: var(--bg-secondary); padding: 2px 8px; border-radius: 4px;">b</kbd></td><td>Bug reports</td></tr>

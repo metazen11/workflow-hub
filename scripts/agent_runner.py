@@ -24,288 +24,153 @@ import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
 
+# Add project root for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dotenv import load_dotenv
+load_dotenv()
+
 
 WORKFLOW_HUB_URL = os.getenv("WORKFLOW_HUB_URL", "http://localhost:8000")
 
+# LLM Provider configuration - supports multiple backends
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "goose")  # goose, claude, openai, ollama
 
-# Shared base instructions for ALL agents (DRY principle)
-BASE_INSTRUCTIONS = """
-## Context & Principles (READ FIRST)
+# Timeout configuration - local LLMs can be slow
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "600"))  # 10 minutes default for local LLMs
 
-Before starting any work, read ALL markdown files in the project for context:
-- README.md - Project requirements and goals
-- Any other *.md files - Additional context and documentation
+# Find Goose executable (may not be in subprocess PATH)
+def find_goose_executable():
+    """Find the goose executable, checking common locations."""
+    # Check if explicitly set
+    explicit_path = os.getenv("GOOSE_PATH")
+    if explicit_path and os.path.exists(explicit_path):
+        return explicit_path
+
+    # Common installation locations
+    common_paths = [
+        "/opt/homebrew/bin/goose",  # Homebrew on Apple Silicon
+        "/usr/local/bin/goose",     # Homebrew on Intel Mac
+        os.path.expanduser("~/.local/bin/goose"),  # pipx
+        "/usr/bin/goose",           # System install
+    ]
+
+    for path in common_paths:
+        if os.path.exists(path):
+            return path
+
+    # Try which command
+    try:
+        result = subprocess.run(["which", "goose"], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+
+    return "goose"  # Fallback to PATH lookup
+
+GOOSE_EXECUTABLE = find_goose_executable()
+
+
+def get_agent_prompt(role: str, run_id: int, project_path: str) -> str:
+    """
+    Load agent prompt from database and format with context.
+
+    Prompts are stored in the role_configs table (see WH-010).
+    This replaces the hardcoded ROLE_PROMPTS dict (DRY principle).
+    """
+    try:
+        from app.db import get_db
+        from app.models.role_config import RoleConfig
+
+        db = next(get_db())
+        config = db.query(RoleConfig).filter(
+            RoleConfig.role == role,
+            RoleConfig.active == True
+        ).first()
+
+        if config and config.prompt:
+            # Format the prompt with context variables
+            prompt = config.prompt.format(
+                project_path=project_path,
+                run_id=run_id
+            )
+            db.close()
+            return prompt
+
+        db.close()
+
+    except Exception as e:
+        print(f"Warning: Could not load prompt from DB for role '{role}': {e}")
+
+    # Fallback: return minimal prompt if DB unavailable
+    return f"""
+## Your Role: {role.upper()}
 
 Project path: {project_path}
 Run ID: {run_id}
 
-## Coding Principles (NON-NEGOTIABLE)
-
-### Code Quality
-- Write clean, readable code over clever code
-- Follow existing patterns in the codebase
-- One function = one responsibility
-- Meaningful names for variables and functions
-
-### Security
-- Never hardcode secrets/credentials
-- Validate all user input
-- Use parameterized queries (no string concatenation for SQL)
-- Check OWASP Top 10 vulnerabilities
-
-### Testing
-- Tests define truth - if it's not tested, it doesn't work
-- Write tests that can fail meaningfully
-- Test edge cases, not just happy paths
-
-### Git
-- Small, focused commits
-- Clear commit messages: "T001: Add feature X"
-- Don't commit secrets, large binaries, or generated files
-
-### Documentation
-- Update docs when behavior changes
-- Document non-obvious decisions with comments
-
-### Error Handling
-- Handle errors gracefully with actionable messages
-- Log enough context to debug, but not sensitive data
-
-### Performance
-- Measure before optimizing
-- Don't over-engineer - start simple, iterate
+Execute your role's responsibilities and output a JSON status report.
 """
 
 
-# Role-specific prompts that extend BASE_INSTRUCTIONS
-ROLE_PROMPTS = {
-    "pm": """
-## Your Role: Product Manager
+def get_role_config(role: str) -> dict:
+    """
+    Load full role configuration from database.
 
-Your task is to:
-1. Read the project README.md to understand the goal
-2. Break down the project into small, testable development tasks
-3. Write tasks to `tasks.json` in the project root
-4. Each task must have clear acceptance criteria
+    Returns the RoleConfig as a dict including checks and approval requirements.
+    """
+    try:
+        from app.db import get_db
+        from app.models.role_config import RoleConfig
 
-## Required Output File: tasks.json
+        db = next(get_db())
+        config = db.query(RoleConfig).filter(
+            RoleConfig.role == role,
+            RoleConfig.active == True
+        ).first()
 
-Create or UPDATE `tasks.json` in the project root. If the file exists, add new tasks to it (upsert pattern - don't overwrite existing tasks).
+        if config:
+            result = config.to_dict()
+            db.close()
+            return result
 
-Structure:
+        db.close()
 
-```json
-{{
-  "project": "Project Name",
-  "tasks": [
-    {{
-      "id": "T001",
-      "title": "Short title",
-      "description": "What needs to be done",
-      "acceptance_criteria": [
-        "Specific testable criterion 1",
-        "Specific testable criterion 2"
-      ],
-      "priority": 1,
-      "blocked_by": []
-    }}
-  ]
-}}
-```
+    except Exception as e:
+        print(f"Warning: Could not load config from DB for role '{role}': {e}")
 
-## Guidelines
-- Tasks should be small (completable in one session)
-- Each task should be independently testable
-- Use blocked_by to set dependencies (e.g., "T002" blocked_by ["T001"])
-- Priority 1 = highest, 10 = lowest
-
-## Final Output
-After creating tasks.json, output a JSON summary:
-```json
-{{
-  "status": "pass",
-  "summary": "Created X tasks for project",
-  "details": {{
-    "tasks_file": "tasks.json",
-    "task_count": X,
-    "task_ids": ["T001", "T002", ...]
-  }}
-}}
-```
-""",
-
-    "dev": """
-## Your Role: Developer
-
-Your task is to:
-1. Read `tasks.json` to find the next task to implement
-2. Read the task's acceptance criteria carefully
-3. Write code that satisfies ALL acceptance criteria
-4. Commit your changes with a clear message
-
-## Workflow
-1. Read tasks.json - find task with status "pending" or "in_progress"
-2. Update task status to "in_progress" in tasks.json
-3. Implement the feature following the acceptance criteria
-4. Write clean, simple code (DRY principle)
-5. Commit changes: `git add . && git commit -m "T001: Description"`
-6. Update task status to "done" in tasks.json
-
-## Code Principles
-- Keep it simple - minimum code to satisfy requirements
-- No over-engineering
-- Check existing patterns before creating new ones
-- One function/class = one responsibility
-
-## Final Output
-```json
-{{
-  "status": "pass",
-  "summary": "Implemented T001: Task title",
-  "details": {{
-    "task_id": "T001",
-    "files_changed": ["file1.py", "file2.py"],
-    "commit_hash": "abc123"
-  }}
-}}
-```
-""",
-
-    "qa": """
-## Your Role: QA Engineer
-
-Your task is to:
-1. Read the task from `tasks.json` that DEV just completed
-2. Read the acceptance criteria for that task
-3. Write tests that verify EACH acceptance criterion
-4. Run all tests and report results
-
-## Input Files
-- `tasks.json` - Find task with status "done" that needs testing
-- `README.md` - Understand the project requirements
-- Source code files - What DEV implemented
-
-## Output Files
-- `tests/test_*.py` - Pytest test files
-- Update `tasks.json` - Set task status to "tested" or create bug entry
-
-## Workflow
-1. Read tasks.json, find task marked "done"
-2. Read the acceptance criteria for that task
-3. Write pytest tests in tests/ directory
-4. Run: `pytest tests/ -v`
-5. If tests pass: update task status to "tested"
-6. If tests fail: create bug in `bugs.json`
-
-## bugs.json format (if tests fail - UPSERT, don't overwrite existing bugs)
-```json
-{{
-  "bugs": [
-    {{
-      "id": "B001",
-      "task_id": "T001",
-      "title": "What failed",
-      "steps_to_reproduce": ["Step 1", "Step 2"],
-      "expected": "What should happen",
-      "actual": "What actually happened"
-    }}
-  ]
-}}
-```
-
-## Final Output
-```json
-{{
-  "status": "pass" or "fail",
-  "summary": "All 5 tests passed" or "2/5 tests failed",
-  "details": {{
-    "tests_run": 5,
-    "tests_passed": 5,
-    "tests_failed": 0,
-    "bugs_created": []
-  }}
-}}
-```
-""",
-
-    "security": """
-## Your Role: Security Engineer
-
-Your task is to:
-1. Scan all source code for security vulnerabilities
-2. Check for OWASP Top 10 issues
-3. Review any dependencies for known vulnerabilities
-4. Document findings in security_report.json
-
-## Input Files
-- All source code files (*.py, *.js, *.html)
-- `requirements.txt` - Check for vulnerable packages
-- `package.json` - If exists, check npm packages
-
-## Output File: security_report.json
-```json
-{{
-  "scan_date": "2025-12-24",
-  "status": "pass" or "fail",
-  "vulnerabilities": [
-    {{
-      "id": "SEC001",
-      "severity": "high|medium|low",
-      "file": "app.py",
-      "line": 42,
-      "issue": "SQL Injection vulnerability",
-      "recommendation": "Use parameterized queries"
-    }}
-  ],
-  "dependency_issues": [],
-  "summary": "No critical vulnerabilities found"
-}}
-```
-
-## Security Checks
-1. SQL Injection - Look for string concatenation in queries
-2. XSS - Look for unescaped user input in HTML
-3. CSRF - Check forms have protection
-4. Secrets - No hardcoded passwords/API keys
-5. Input validation - User input is sanitized
-
-## Final Output
-```json
-{{
-  "status": "pass" or "fail",
-  "summary": "No vulnerabilities found" or "Found 2 issues",
-  "details": {{
-    "critical": 0,
-    "high": 0,
-    "medium": 1,
-    "low": 1,
-    "report_file": "security_report.json"
-  }}
-}}
-```
-""",
-}
+    return {"role": role, "requires_approval": False, "checks": {}}
 
 
 def run_goose(agent_type: str, run_id: int, project_path: str) -> dict:
     """Run Goose with the appropriate prompt for the agent type."""
-    role_prompt = ROLE_PROMPTS.get(agent_type)
-    if not role_prompt:
-        return {"status": "fail", "summary": f"Unknown agent type: {agent_type}"}
-
-    # Combine BASE_INSTRUCTIONS with role-specific prompt (DRY)
-    full_prompt = BASE_INSTRUCTIONS + role_prompt
-    prompt = full_prompt.format(project_path=project_path, run_id=run_id)
+    # Load prompt from database (DRY - prompts stored in role_configs table)
+    prompt = get_agent_prompt(agent_type, run_id, project_path)
+    if not prompt or len(prompt) < 50:
+        return {"status": "fail", "summary": f"Could not load prompt for agent: {agent_type}"}
 
     try:
-        # Run goose with the prompt
-        # Note: Adjust this command based on your Goose installation
+        # Check if Goose is available
+        if not GOOSE_EXECUTABLE or GOOSE_EXECUTABLE == "goose":
+            # Verify goose is in PATH
+            try:
+                subprocess.run(["which", "goose"], capture_output=True, check=True)
+            except subprocess.CalledProcessError:
+                return {
+                    "status": "fail",
+                    "summary": f"Goose not found. Searched: /opt/homebrew/bin/goose, ~/.local/bin/goose, PATH",
+                    "details": {"goose_path": GOOSE_EXECUTABLE, "error": "executable_not_found"}
+                }
+
+        # Run goose with the prompt (use configurable timeout for local LLMs)
+        print(f"  Running Goose with {LLM_TIMEOUT}s timeout...")
         result = subprocess.run(
-            ["goose", "run", "--text", prompt],
+            [GOOSE_EXECUTABLE, "run", "--text", prompt],
             cwd=project_path,
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=LLM_TIMEOUT
         )
 
         output = result.stdout
@@ -330,6 +195,73 @@ def run_goose(agent_type: str, run_id: int, project_path: str) -> dict:
         except json.JSONDecodeError:
             pass
 
+        # For QA agent, check bugs.json file
+        if agent_type == "qa":
+            bugs_path = os.path.join(project_path, "bugs.json")
+            if os.path.exists(bugs_path):
+                try:
+                    with open(bugs_path) as f:
+                        bugs_data = json.load(f)
+
+                    bugs = bugs_data.get("bugs", [])
+                    if bugs:
+                        return {
+                            "status": "fail",
+                            "summary": f"QA found {len(bugs)} bugs",
+                            "details": {
+                                "bugs": bugs,
+                                "bugs_count": len(bugs),
+                                "bugs_file": "bugs.json"
+                            }
+                        }
+                except Exception as e:
+                    print(f"Warning: Could not read bugs.json: {e}")
+
+        # For security agent, check the security_report.json file
+        if agent_type == "security":
+            security_report_path = os.path.join(project_path, "security_report.json")
+            if os.path.exists(security_report_path):
+                try:
+                    with open(security_report_path) as f:
+                        sec_report = json.load(f)
+
+                    vulnerabilities = sec_report.get("vulnerabilities", [])
+                    # Count by severity
+                    high_count = len([v for v in vulnerabilities if v.get("severity") in ("critical", "high")])
+                    medium_count = len([v for v in vulnerabilities if v.get("severity") == "medium"])
+                    low_count = len([v for v in vulnerabilities if v.get("severity") == "low"])
+
+                    # Fail if any high/critical vulnerabilities found
+                    if high_count > 0:
+                        return {
+                            "status": "fail",
+                            "summary": f"Security scan found {high_count} high/critical vulnerabilities",
+                            "details": {
+                                "vulnerabilities": vulnerabilities,
+                                "critical": len([v for v in vulnerabilities if v.get("severity") == "critical"]),
+                                "high": high_count,
+                                "medium": medium_count,
+                                "low": low_count,
+                                "report_file": "security_report.json"
+                            }
+                        }
+                    else:
+                        # Pass if only medium/low issues
+                        return {
+                            "status": "pass",
+                            "summary": f"Security scan complete - {medium_count} medium, {low_count} low issues",
+                            "details": {
+                                "vulnerabilities": vulnerabilities,
+                                "critical": 0,
+                                "high": 0,
+                                "medium": medium_count,
+                                "low": low_count,
+                                "report_file": "security_report.json"
+                            }
+                        }
+                except Exception as e:
+                    print(f"Warning: Could not read security_report.json: {e}")
+
         # Fallback: assume success if goose completed
         return {
             "status": "pass" if result.returncode == 0 else "fail",
@@ -338,11 +270,32 @@ def run_goose(agent_type: str, run_id: int, project_path: str) -> dict:
         }
 
     except subprocess.TimeoutExpired:
-        return {"status": "fail", "summary": "Agent timed out"}
-    except FileNotFoundError:
-        return {"status": "fail", "summary": "Goose not found. Install with: pipx install goose-ai"}
+        return {
+            "status": "fail",
+            "summary": f"Agent timed out after {LLM_TIMEOUT}s. Increase LLM_TIMEOUT env var for slower models.",
+            "details": {"timeout_seconds": LLM_TIMEOUT}
+        }
+    except FileNotFoundError as e:
+        return {
+            "status": "fail",
+            "summary": f"Goose executable not found at: {GOOSE_EXECUTABLE}",
+            "details": {
+                "error": str(e),
+                "searched_paths": [
+                    "/opt/homebrew/bin/goose",
+                    "/usr/local/bin/goose",
+                    "~/.local/bin/goose",
+                    "/usr/bin/goose"
+                ],
+                "suggestion": "Install with: brew install goose-ai OR pipx install goose-ai"
+            }
+        }
     except Exception as e:
-        return {"status": "fail", "summary": f"Error: {str(e)}"}
+        return {
+            "status": "fail",
+            "summary": f"Error running Goose: {str(e)}",
+            "details": {"error_type": type(e).__name__, "error": str(e)}
+        }
 
 
 def submit_report(run_id: int, agent_type: str, report: dict):
@@ -369,17 +322,19 @@ def submit_report(run_id: int, agent_type: str, report: dict):
 
         print(f"Report submitted for run {run_id}, agent {agent_type}")
 
-        # If passed, try to advance the state
-        if report.get("status") == "pass":
-            advance_response = requests.post(
-                f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/advance",
-                json={"actor": f"goose-{agent_type}"},
-                timeout=30
-            )
-            if advance_response.status_code == 200:
-                print(f"Run {run_id} advanced to next state")
-            else:
-                print(f"Could not advance: {advance_response.text}")
+        # Always try to advance the state - the state machine handles pass/fail transitions
+        # For QA/SEC: pass → next stage, fail → QA_FAILED/SEC_FAILED
+        advance_response = requests.post(
+            f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/advance",
+            json={"actor": f"goose-{agent_type}"},
+            timeout=30
+        )
+        if advance_response.status_code == 200:
+            result = advance_response.json()
+            new_state = result.get("state", "unknown")
+            print(f"Run {run_id} advanced to: {new_state}")
+        else:
+            print(f"Could not advance: {advance_response.text}")
 
         return True
 

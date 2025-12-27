@@ -1,8 +1,11 @@
 """Run state machine and gate enforcement service."""
+import os
+import subprocess
 from typing import Optional, Tuple, List
 from app.models.run import Run, RunState, VALID_TRANSITIONS
+from app.models.project import Project
 from app.models.report import AgentReport, AgentRole, ReportStatus
-from app.models.task import Task, TaskStatus
+from app.models.task import Task, TaskStatus, TaskPipelineStage
 from app.models.audit import log_event
 from app.services.webhook_service import (
     dispatch_webhook, EVENT_STATE_CHANGE, EVENT_REPORT_SUBMITTED,
@@ -17,7 +20,20 @@ class RunService:
         self.db = db
 
     def create_run(self, project_id: int, name: str, actor: str = "human") -> Run:
-        """Create a new run for a project."""
+        """Create a new run for a project.
+
+        Automatically:
+        - Initializes git repo in project workspace if not exists
+        - Creates initial commit if repo is empty
+        """
+        # Get project to check/init git repo
+        project = self.db.query(Project).filter(Project.id == project_id).first()
+
+        # Auto-initialize git repo if project has repo_path
+        git_info = {"initialized": False}
+        if project and project.repo_path:
+            git_info = self._ensure_git_repo(project.repo_path, project)
+
         run = Run(project_id=project_id, name=name, state=RunState.PM)
         self.db.add(run)
         self.db.commit()
@@ -29,7 +45,13 @@ class RunService:
             action="create",
             entity_type="run",
             entity_id=run.id,
-            details={"name": name, "initial_state": "pm"}
+            details={
+                "name": name,
+                "initial_state": "pm",
+                "git_initialized": git_info.get("initialized", False),
+                "git_branch": git_info.get("branch"),
+                "git_remote": git_info.get("remote_url")
+            }
         )
 
         # Dispatch webhook - new run created, PM agent should start
@@ -38,10 +60,186 @@ class RunService:
             "project_id": project_id,
             "name": name,
             "state": "pm",
-            "next_agent": "pm"
+            "next_agent": "pm",
+            "git_info": git_info
         })
 
         return run
+
+    def _ensure_git_repo(self, repo_path: str, project: Project = None) -> dict:
+        """Ensure a git repository exists at the given path.
+
+        Creates the directory and initializes git if needed.
+        Extracts git info and updates project if provided.
+
+        Returns dict with:
+            - initialized: True if newly initialized, False if already existed
+            - remote_url: Git remote URL if found
+            - branch: Current branch name
+            - error: Error message if any
+        """
+        result = {
+            "initialized": False,
+            "remote_url": None,
+            "branch": None,
+            "error": None
+        }
+
+        if not repo_path:
+            return result
+
+        try:
+            # Create directory if it doesn't exist
+            if not os.path.exists(repo_path):
+                os.makedirs(repo_path, exist_ok=True)
+
+            git_dir = os.path.join(repo_path, ".git")
+
+            # Check if git repo already exists
+            if os.path.exists(git_dir):
+                # Repo exists - extract info
+                result["initialized"] = False
+                result = self._extract_git_info(repo_path, result)
+            else:
+                # Initialize new git repository
+                subprocess.run(
+                    ["git", "init"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    check=True
+                )
+
+                # Create .gitignore with common patterns
+                gitignore_path = os.path.join(repo_path, ".gitignore")
+                if not os.path.exists(gitignore_path):
+                    with open(gitignore_path, "w") as f:
+                        f.write("""# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets - NEVER commit these
+*.pem
+*.key
+credentials.json
+secrets.yaml
+""")
+
+                # Create initial commit
+                subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=repo_path,
+                    capture_output=True
+                )
+                subprocess.run(
+                    ["git", "commit", "-m", "Initial commit - Project initialized by Workflow Hub"],
+                    cwd=repo_path,
+                    capture_output=True
+                )
+
+                result["initialized"] = True
+                result = self._extract_git_info(repo_path, result)
+
+            # Update project with git info if provided
+            if project:
+                self._update_project_git_info(project, result)
+
+        except Exception as e:
+            result["error"] = str(e)
+            print(f"Git initialization warning: {e}")
+
+        return result
+
+    def _extract_git_info(self, repo_path: str, result: dict) -> dict:
+        """Extract git information from an existing repository."""
+        try:
+            # Get current branch
+            branch_result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True
+            )
+            if branch_result.returncode == 0:
+                result["branch"] = branch_result.stdout.strip() or "main"
+
+            # Get remote URL (origin)
+            remote_result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True
+            )
+            if remote_result.returncode == 0:
+                result["remote_url"] = remote_result.stdout.strip()
+
+        except Exception as e:
+            print(f"Git info extraction warning: {e}")
+
+        return result
+
+    def _update_project_git_info(self, project: Project, git_info: dict):
+        """Update project with extracted git information."""
+        try:
+            changed = False
+
+            # Update branch if not already set
+            if git_info.get("branch") and not project.primary_branch:
+                project.primary_branch = git_info["branch"]
+                changed = True
+
+            # Update remote URL based on format
+            remote_url = git_info.get("remote_url")
+            if remote_url:
+                if remote_url.startswith("git@"):
+                    # SSH URL format: git@github.com:user/repo.git
+                    if not project.repository_ssh_url:
+                        project.repository_ssh_url = remote_url
+                        project.git_auth_method = "ssh"
+                        changed = True
+                elif remote_url.startswith("http"):
+                    # HTTPS URL format: https://github.com/user/repo.git
+                    if not project.repository_url:
+                        project.repository_url = remote_url
+                        # Determine auth method - if URL has token, use https_token
+                        if "@" in remote_url and "github.com" in remote_url:
+                            project.git_auth_method = "https_token"
+                        else:
+                            project.git_auth_method = "https_basic"
+                        changed = True
+
+            if changed:
+                self.db.commit()
+
+        except Exception as e:
+            print(f"Project git update warning: {e}")
 
     def submit_report(
         self,
@@ -173,6 +371,10 @@ class RunService:
 
         log_event(self.db, actor, "state_change", "run", run_id,
                  {"from": old_state, "to": next_state.value})
+
+        # Initialize task pipeline stages when entering DEV
+        if next_state == RunState.DEV:
+            self._initialize_task_stages(run, TaskPipelineStage.DEV)
 
         # Dispatch webhook - state changed
         next_agent = self._get_agent_for_state(next_state)
@@ -364,9 +566,10 @@ class RunService:
                 task_id=task_id,
                 title=finding["title"],
                 description=finding.get("description", ""),
-                status=TaskStatus.BACKLOG,
+                status=TaskStatus.IN_PROGRESS,  # Ready for DEV work
                 priority=finding.get("priority", 5),
                 run_id=run_id,
+                pipeline_stage=TaskPipelineStage.DEV,  # Start in DEV stage
                 acceptance_criteria=finding.get("acceptance_criteria", [])
             )
             self.db.add(task)
@@ -451,16 +654,27 @@ class RunService:
                     severity = item.get("severity", "medium").lower()
                     priority = severity_priority.get(severity, 7)
 
-                    title = item.get("title", item.get("name", item.get("type", "Security issue")))
+                    # Build title from available fields
+                    title = item.get("title", item.get("name", item.get("issue", item.get("type", "Security issue"))))
                     if severity in ("critical", "high"):
                         title = f"[{severity.upper()}] {title}"
 
+                    # Build description from issue details
+                    desc_parts = []
+                    if item.get("issue"):
+                        desc_parts.append(f"Issue: {item['issue']}")
+                    if item.get("file"):
+                        desc_parts.append(f"File: {item['file']}:{item.get('line', '?')}")
+                    if item.get("recommendation"):
+                        desc_parts.append(f"Fix: {item['recommendation']}")
+                    description = item.get("description", item.get("message", "\n".join(desc_parts) if desc_parts else ""))
+
                     findings.append({
                         "title": title,
-                        "description": item.get("description", item.get("message", item.get("details", ""))),
+                        "description": description,
                         "priority": priority,
                         "acceptance_criteria": [
-                            item.get("remediation", item.get("fix", f"Address {severity} security issue"))
+                            item.get("recommendation", item.get("remediation", item.get("fix", f"Address {severity} security issue")))
                         ]
                     })
 
@@ -492,3 +706,99 @@ class RunService:
             RunState.SEC: "security",
         }
         return agent_map.get(state)
+
+    def _initialize_task_stages(self, run: Run, stage: TaskPipelineStage) -> int:
+        """Initialize all run tasks to a pipeline stage.
+
+        Sets tasks that are at NONE stage to the specified stage.
+        Returns count of tasks updated.
+        """
+        tasks = self.db.query(Task).filter(
+            Task.run_id == run.id,
+            Task.pipeline_stage == TaskPipelineStage.NONE
+        ).all()
+
+        for task in tasks:
+            task.pipeline_stage = stage
+            task.status = TaskStatus.IN_PROGRESS
+
+        self.db.commit()
+        return len(tasks)
+
+    def get_task_progress(self, run_id: int) -> dict:
+        """Get task pipeline progress summary for a run.
+
+        Returns dict with:
+            - total_tasks: Total number of tasks
+            - stage_counts: Count per pipeline stage
+            - completed: Number of completed tasks
+            - progress_percent: Overall completion percentage
+            - ready_to_advance: True if all tasks passed current stage
+        """
+        run = self.db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return {"error": "Run not found"}
+
+        tasks = self.db.query(Task).filter(Task.run_id == run_id).all()
+
+        # Count by stage
+        stage_counts = {stage.value: 0 for stage in TaskPipelineStage}
+        for task in tasks:
+            stage = task.pipeline_stage or TaskPipelineStage.NONE
+            stage_counts[stage.value] += 1
+
+        total = len(tasks)
+        completed = stage_counts.get("complete", 0)
+        progress_pct = (completed / total * 100) if total > 0 else 0
+
+        # Check if ready to advance based on current run state
+        ready_to_advance = self._check_tasks_ready_for_advance(run, tasks)
+
+        return {
+            "run_id": run_id,
+            "total_tasks": total,
+            "stage_counts": stage_counts,
+            "completed": completed,
+            "progress_percent": round(progress_pct, 1),
+            "ready_to_advance": ready_to_advance
+        }
+
+    def _check_tasks_ready_for_advance(self, run: Run, tasks: list) -> bool:
+        """Check if all tasks have completed the current run stage.
+
+        For run at DEV: All tasks should be at QA or beyond
+        For run at QA: All tasks should be at SEC or beyond
+        For run at SEC: All tasks should be at DOCS or beyond
+        """
+        if not tasks:
+            return True  # No tasks = no blockers
+
+        # Map run state to minimum required task stage
+        run_to_min_stage = {
+            RunState.DEV: TaskPipelineStage.QA,
+            RunState.QA: TaskPipelineStage.SEC,
+            RunState.SEC: TaskPipelineStage.DOCS,
+            RunState.DOCS: TaskPipelineStage.COMPLETE,
+        }
+
+        min_stage = run_to_min_stage.get(run.state)
+        if not min_stage:
+            return True  # Other states don't need task checks
+
+        # Stage ordering for comparison
+        stage_order = [
+            TaskPipelineStage.NONE,
+            TaskPipelineStage.DEV,
+            TaskPipelineStage.QA,
+            TaskPipelineStage.SEC,
+            TaskPipelineStage.DOCS,
+            TaskPipelineStage.COMPLETE
+        ]
+        min_index = stage_order.index(min_stage)
+
+        for task in tasks:
+            task_stage = task.pipeline_stage or TaskPipelineStage.NONE
+            if stage_order.index(task_stage) < min_index:
+                return False  # Task hasn't reached minimum stage
+
+        return True

@@ -74,12 +74,12 @@
                     <h2>{% block page_title %}Dashboard{% endblock %}</h2>
                 </div>
                 <div class="top-bar-actions">
-                    <div class="refresh-indicator" id="refresh-indicator" title="Auto-refreshing every 5s">
+                    <div class="refresh-indicator" id="refresh-indicator" title="Auto-refreshing every 30s">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M23 4v6h-6M1 20v-6h6"></path>
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
                         </svg>
-                        <span class="refresh-countdown">5</span>
+                        <span class="refresh-countdown">30</span>
                     </div>
                     <button class="icon-btn" id="theme-toggle" title="Toggle theme">
                         <svg class="sun-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -106,6 +106,21 @@
         </main>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=3"></script>
+    <script src="/static/js/task-actions.js?v=1"></script>
+
+    <!-- Bug Report Widget - auto-captures current project from URL -->
+    <script>
+        window.BUG_REPORT_API = '/api/bugs/create';
+        window.BUG_REPORT_APP = 'Workflow Hub';
+        // Auto-detect project from URL if on project/run page
+        (function() {
+            const match = window.location.pathname.match(/\/ui\/(?:project|run)\/(\d+)/);
+            if (match) {
+                window.BUG_REPORT_PROJECT_ID = match[1];
+            }
+        })();
+    </script>
+    <script src="/static/bug-widget.js"></script>
 </body>
 </html>

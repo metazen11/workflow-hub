@@ -16,6 +16,16 @@ class TaskStatus(enum.Enum):
     FAILED = "failed"  # Added for workflow queue
 
 
+class TaskPipelineStage(enum.Enum):
+    """Pipeline stage a task is currently in."""
+    NONE = "none"  # Not in pipeline yet
+    DEV = "dev"  # Being implemented by DEV agent
+    QA = "qa"  # Being tested by QA agent
+    SEC = "sec"  # Being reviewed by Security agent
+    DOCS = "docs"  # Documentation stage
+    COMPLETE = "complete"  # Passed all stages
+
+
 # Association table for Task <-> Requirement many-to-many
 task_requirements = Table(
     "task_requirements",
@@ -43,6 +53,7 @@ class Task(Base):
     priority = Column(Integer, default=5)  # 1-10, higher = more important
     blocked_by = Column(JSON, default=list)  # List of task_ids that must complete first
     run_id = Column(Integer, ForeignKey("runs.id"), nullable=True)  # Link to workflow run
+    pipeline_stage = Column(Enum(TaskPipelineStage), default=TaskPipelineStage.NONE)  # Current pipeline stage
     completed = Column(Boolean, default=False)  # Explicit completion flag for memory/history
     completed_at = Column(DateTime(timezone=True), nullable=True)  # When task was completed
 
@@ -81,6 +92,7 @@ class Task(Base):
             "title": self.title,
             "description": self.description,
             "status": self.status.value if self.status else None,
+            "pipeline_stage": self.pipeline_stage.value if self.pipeline_stage else "none",
             "priority": self.priority,
             "blocked_by": self.blocked_by or [],
             "run_id": self.run_id,

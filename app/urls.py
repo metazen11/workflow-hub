@@ -7,6 +7,7 @@ urlpatterns = [
     path('ui/', ui.dashboard, name='dashboard'),
     path('ui/projects/', ui.projects_list, name='projects_list'),
     path('ui/project/<int:project_id>/', ui.project_view, name='project_view'),
+    path('ui/runs/', ui.runs_list, name='runs_list'),
     path('ui/run/<int:run_id>/', ui.run_view, name='run_view'),
     path('ui/task/<int:task_id>/', ui.task_view, name='task_view'),
     path('ui/bugs/', ui.bugs_list, name='bugs_list'),
@@ -47,11 +48,17 @@ urlpatterns = [
     path('api/projects/<int:project_id>/tasks/create', api.task_create, name='task_create'),
     path('api/tasks/<int:task_id>/status', api.task_update_status, name='task_update_status'),
     path('api/tasks/<int:task_id>/update', api.task_update, name='task_update'),
+    path('api/tasks/<int:task_id>/delete', api.task_delete, name='task_delete'),
     path('api/tasks/<int:task_id>/execute', api.task_execute, name='task_execute'),
     path('api/tasks/<int:task_id>/context', api.task_context, name='task_context'),
     path('api/tasks/<int:task_id>/attachments', api.task_attachments_list, name='task_attachments_list'),
     path('api/tasks/<int:task_id>/attachments/upload', api.task_attachment_upload, name='task_attachment_upload'),
     path('api/tasks/<int:task_id>/attachments/<int:attachment_id>/download', api.task_attachment_download, name='task_attachment_download'),
+
+    # Task Pipeline (individual task workflow)
+    path('api/tasks/queue', api.task_queue, name='task_queue'),
+    path('api/tasks/<int:task_id>/advance-stage', api.task_advance_stage, name='task_advance_stage'),
+    path('api/tasks/<int:task_id>/set-stage', api.task_set_stage, name='task_set_stage'),
 
     # Runs
     path('api/projects/<int:project_id>/runs', api.runs_list, name='runs_list'),
@@ -64,6 +71,10 @@ urlpatterns = [
     path('api/runs/<int:run_id>/reset-to-dev', api.run_reset_to_dev, name='run_reset_to_dev'),
     path('api/runs/<int:run_id>/create-tasks-from-findings', api.run_create_tasks_from_findings, name='run_create_tasks_from_findings'),
     path('api/runs/<int:run_id>/approve-deploy', api.run_approve_deploy, name='run_approve_deploy'),
+    path('api/runs/<int:run_id>/trigger-agent', api.run_trigger_agent, name='run_trigger_agent'),
+    path('api/runs/<int:run_id>/trigger-pipeline', api.run_trigger_pipeline, name='run_trigger_pipeline'),
+    path('api/runs/<int:run_id>/task-progress', api.run_task_progress, name='run_task_progress'),
+    path('api/runs/<int:run_id>/kill', api.run_kill, name='run_kill'),
 
     # Threat Intel
     path('api/threat-intel', api.threat_intel_list, name='threat_intel_list'),
