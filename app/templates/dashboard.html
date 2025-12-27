@@ -110,10 +110,7 @@
                         <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
                     </div>
                     <div class="kanban-card-meta">
-                        {{ task.project_name }} • <span
-                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
-                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
-                            %}Medium{% else %}Low{% endif %}</span>
+                        {{ task.project_name }} • <span class="badge {% if task.priority >= 8 %}badge-danger{% elif task.priority >= 5 %}badge-warning{% elif task.priority >= 3 %}badge-info{% else %}badge-secondary{% endif %}">{% if task.priority >= 8 %}Critical{% elif task.priority >= 5 %}High{% elif task.priority >= 3 %}Medium{% else %}Low{% endif %}</span>
                     </div>
                 </div>
                 {% empty %}
@@ -135,10 +132,7 @@
                         <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
                     </div>
                     <div class="kanban-card-meta">
-                        {{ task.project_name }} • <span
-                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
-                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
-                            %}Medium{% else %}Low{% endif %}</span>
+                        {{ task.project_name }} • <span class="badge {% if task.priority >= 8 %}badge-danger{% elif task.priority >= 5 %}badge-warning{% elif task.priority >= 3 %}badge-info{% else %}badge-secondary{% endif %}">{% if task.priority >= 8 %}Critical{% elif task.priority >= 5 %}High{% elif task.priority >= 3 %}Medium{% else %}Low{% endif %}</span>
                     </div>
                 </div>
                 {% empty %}
@@ -160,10 +154,7 @@
                         <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
                     </div>
                     <div class="kanban-card-meta">
-                        {{ task.project_name }} • <span
-                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
-                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
-                            %}Medium{% else %}Low{% endif %}</span>
+                        {{ task.project_name }} • <span class="badge {% if task.priority >= 8 %}badge-danger{% elif task.priority >= 5 %}badge-warning{% elif task.priority >= 3 %}badge-info{% else %}badge-secondary{% endif %}">{% if task.priority >= 8 %}Critical{% elif task.priority >= 5 %}High{% elif task.priority >= 3 %}Medium{% else %}Low{% endif %}</span>
                     </div>
                 </div>
                 {% empty %}
@@ -185,10 +176,7 @@
                         <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
                     </div>
                     <div class="kanban-card-meta">
-                        {{ task.project_name }} • <span
-                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
-                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
-                            %}Medium{% else %}Low{% endif %}</span>
+                        {{ task.project_name }} • <span class="badge {% if task.priority >= 8 %}badge-danger{% elif task.priority >= 5 %}badge-warning{% elif task.priority >= 3 %}badge-info{% else %}badge-secondary{% endif %}">{% if task.priority >= 8 %}Critical{% elif task.priority >= 5 %}High{% elif task.priority >= 3 %}Medium{% else %}Low{% endif %}</span>
                     </div>
                 </div>
                 {% empty %}
@@ -210,10 +198,7 @@
                         <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
                     </div>
                     <div class="kanban-card-meta">
-                        {{ task.project_name }} • <span
-                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
-                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
-                            %}Medium{% else %}Low{% endif %}</span>
+                        {{ task.project_name }} • <span class="badge {% if task.priority >= 8 %}badge-danger{% elif task.priority >= 5 %}badge-warning{% elif task.priority >= 3 %}badge-info{% else %}badge-secondary{% endif %}">{% if task.priority >= 8 %}Critical{% elif task.priority >= 5 %}High{% elif task.priority >= 3 %}Medium{% else %}Low{% endif %}</span>
                     </div>
                 </div>
                 {% empty %}
@@ -235,10 +220,7 @@
                         <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
                     </div>
                     <div class="kanban-card-meta">
-                        {{ task.project_name }} • <span
-                            class="badge {% if task.priority == 8 %}badge-danger{% elif task.priority == 5 %}badge-warning{% elif task.priority == 3 %}badge-info{% else %}badge-secondary{% endif %}">{%
-                            if task.priority == 8 %}Critical{% elif task.priority == 5 %}High{% elif task.priority == 3
-                            %}Medium{% else %}Low{% endif %}</span>
+                        {{ task.project_name }} • <span class="badge {% if task.priority >= 8 %}badge-danger{% elif task.priority >= 5 %}badge-warning{% elif task.priority >= 3 %}badge-info{% else %}badge-secondary{% endif %}">{% if task.priority >= 8 %}Critical{% elif task.priority >= 5 %}High{% elif task.priority >= 3 %}Medium{% else %}Low{% endif %}</span>
                     </div>
                 </div>
                 {% empty %}
