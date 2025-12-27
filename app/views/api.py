@@ -2178,3 +2178,192 @@ def task_loop_back(request, task_id):
         })
     finally:
         db.close()
+
+
+# --- Task Details ---
+
+def task_details(request, task_id):
+    """Get full task details for editing.
+
+    GET /api/tasks/{task_id}/details
+    """
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+        return JsonResponse({"task": task.to_dict()})
+    finally:
+        db.close()
+
+
+# --- Director Control Panel ---
+
+# Global variable to track director daemon state
+_director_daemon_thread = None
+_director_daemon_running = False
+_director_settings = {
+    "poll_interval": 30,
+    "auto_start": False,
+    "enforce_tdd": True,
+    "enforce_dry": True,
+    "enforce_security": True,
+}
+
+
+def director_status(request):
+    """Get Director daemon status and statistics.
+
+    GET /api/director/status
+    """
+    global _director_daemon_running, _director_settings
+
+    db = next(get_db())
+    try:
+        # Count director actions from audit log
+        from app.models.audit import AuditEvent
+        from datetime import datetime, timedelta
+
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        one_day_ago = datetime.utcnow() - timedelta(days=1)
+
+        tasks_reviewed_hour = db.query(AuditEvent).filter(
+            AuditEvent.actor == "director",
+            AuditEvent.timestamp >= one_hour_ago
+        ).count()
+
+        tasks_reviewed_day = db.query(AuditEvent).filter(
+            AuditEvent.actor == "director",
+            AuditEvent.timestamp >= one_day_ago
+        ).count()
+
+        total_actions = db.query(AuditEvent).filter(
+            AuditEvent.actor == "director"
+        ).count()
+
+        # Get recent activity
+        recent_activity = db.query(AuditEvent).filter(
+            AuditEvent.actor == "director"
+        ).order_by(AuditEvent.timestamp.desc()).limit(10).all()
+
+        return JsonResponse({
+            "running": _director_daemon_running,
+            "settings": _director_settings,
+            "stats": {
+                "tasks_reviewed_hour": tasks_reviewed_hour,
+                "tasks_reviewed_day": tasks_reviewed_day,
+                "total_actions": total_actions
+            },
+            "recent_activity": [e.to_dict() for e in recent_activity]
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def director_start(request):
+    """Start the Director daemon.
+
+    POST /api/director/start
+    """
+    global _director_daemon_thread, _director_daemon_running, _director_settings
+
+    if _director_daemon_running:
+        return JsonResponse({"status": "already_running", "message": "Director is already running"})
+
+    data = _get_json_body(request) or {}
+    run_id = data.get("run_id")
+    poll_interval = data.get("poll_interval", _director_settings["poll_interval"])
+
+    from app.services.director_service import run_director_daemon
+
+    def daemon_wrapper():
+        global _director_daemon_running
+        _director_daemon_running = True
+        try:
+            run_director_daemon(get_db, run_id=run_id, poll_interval=poll_interval)
+        finally:
+            _director_daemon_running = False
+
+    _director_daemon_thread = threading.Thread(target=daemon_wrapper, daemon=True)
+    _director_daemon_thread.start()
+
+    return JsonResponse({
+        "status": "started",
+        "message": f"Director started with poll interval {poll_interval}s",
+        "run_id": run_id
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def director_stop(request):
+    """Stop the Director daemon.
+
+    POST /api/director/stop
+
+    Note: This sets a flag - the daemon will stop on next poll cycle.
+    """
+    global _director_daemon_running
+
+    if not _director_daemon_running:
+        return JsonResponse({"status": "not_running", "message": "Director is not running"})
+
+    # Signal stop (daemon checks this and exits)
+    _director_daemon_running = False
+
+    return JsonResponse({
+        "status": "stopping",
+        "message": "Director will stop on next poll cycle"
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def director_settings_update(request):
+    """Update Director settings.
+
+    POST /api/director/settings
+    """
+    global _director_settings
+
+    data = _get_json_body(request) or {}
+
+    if "poll_interval" in data:
+        _director_settings["poll_interval"] = int(data["poll_interval"])
+    if "auto_start" in data:
+        _director_settings["auto_start"] = bool(data["auto_start"])
+    if "enforce_tdd" in data:
+        _director_settings["enforce_tdd"] = bool(data["enforce_tdd"])
+    if "enforce_dry" in data:
+        _director_settings["enforce_dry"] = bool(data["enforce_dry"])
+    if "enforce_security" in data:
+        _director_settings["enforce_security"] = bool(data["enforce_security"])
+
+    return JsonResponse({
+        "status": "updated",
+        "settings": _director_settings
+    })
+
+
+def director_activity(request):
+    """Get recent Director activity.
+
+    GET /api/director/activity
+    """
+    db = next(get_db())
+    try:
+        from app.models.audit import AuditEvent
+
+        limit = int(request.GET.get("limit", 50))
+        activity = db.query(AuditEvent).filter(
+            AuditEvent.actor == "director"
+        ).order_by(AuditEvent.timestamp.desc()).limit(limit).all()
+
+        return JsonResponse({
+            "activity": [e.to_dict() for e in activity],
+            "count": len(activity)
+        })
+    finally:
+        db.close()

@@ -58,6 +58,72 @@
     </div>
 </div>
 
+<!-- Director Control Panel -->
+<div class="section">
+    <div class="card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer;" onclick="toggleDirectorPanel()">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <h3 style="margin: 0; font-size: 1rem;">Director Control Panel</h3>
+                <span id="director-status-badge" class="badge badge-secondary">Loading...</span>
+            </div>
+            <svg id="director-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition: transform 0.2s;">
+                <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+        </div>
+        <div id="director-panel" class="card-body" style="display: none;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                <!-- Status & Controls -->
+                <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px;">
+                    <h4 style="margin: 0 0 12px 0; font-size: 0.9rem; color: var(--text-muted);">Status</h4>
+                    <div id="director-status-text" style="font-size: 1.2rem; font-weight: 600; margin-bottom: 12px;">Stopped</div>
+                    <div style="display: flex; gap: 8px;">
+                        <button id="director-start-btn" class="btn btn-success btn-sm" onclick="startDirector()">Start</button>
+                        <button id="director-stop-btn" class="btn btn-danger btn-sm" onclick="stopDirector()" disabled>Stop</button>
+                    </div>
+                </div>
+                <!-- Stats -->
+                <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px;">
+                    <h4 style="margin: 0 0 12px 0; font-size: 0.9rem; color: var(--text-muted);">Tasks Processed</h4>
+                    <div style="display: flex; gap: 16px;">
+                        <div>
+                            <div id="director-tasks-hour" style="font-size: 1.5rem; font-weight: 600;">0</div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">Last Hour</div>
+                        </div>
+                        <div>
+                            <div id="director-tasks-day" style="font-size: 1.5rem; font-weight: 600;">0</div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">Last 24h</div>
+                        </div>
+                        <div>
+                            <div id="director-tasks-total" style="font-size: 1.5rem; font-weight: 600;">0</div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">Total</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Settings -->
+                <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px;">
+                    <h4 style="margin: 0 0 12px 0; font-size: 0.9rem; color: var(--text-muted);">Settings</h4>
+                    <div style="margin-bottom: 8px;">
+                        <label style="font-size: 0.85rem;">Poll Interval: <input type="number" id="director-poll-interval" value="30" min="5" max="300" style="width: 60px;"> sec</label>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.85rem;">
+                        <label><input type="checkbox" id="enforce-tdd" checked> TDD</label>
+                        <label><input type="checkbox" id="enforce-dry" checked> DRY</label>
+                        <label><input type="checkbox" id="enforce-security" checked> Security</label>
+                    </div>
+                    <button class="btn btn-sm" style="margin-top: 8px;" onclick="saveDirectorSettings()">Save Settings</button>
+                </div>
+            </div>
+            <!-- Recent Activity -->
+            <div>
+                <h4 style="margin: 0 0 8px 0; font-size: 0.9rem; color: var(--text-muted);">Recent Activity</h4>
+                <div id="director-activity" style="max-height: 200px; overflow-y: auto; background: var(--bg-secondary); border-radius: 8px; padding: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.85rem;">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- New Task Input -->
 <div class="section">
     <div class="card">
@@ -651,5 +717,143 @@ document.getElementById('taskPriorityFilter').addEventListener('change', functio
         card.style.display = show ? '' : 'none';
     });
 });
+
+// ===== Director Control Panel =====
+let directorPanelOpen = false;
+
+function toggleDirectorPanel() {
+    directorPanelOpen = !directorPanelOpen;
+    const panel = document.getElementById('director-panel');
+    const chevron = document.getElementById('director-chevron');
+    panel.style.display = directorPanelOpen ? 'block' : 'none';
+    chevron.style.transform = directorPanelOpen ? 'rotate(180deg)' : '';
+    if (directorPanelOpen) {
+        loadDirectorStatus();
+    }
+}
+
+function loadDirectorStatus() {
+    fetch('/api/director/status')
+        .then(r => r.json())
+        .then(data => {
+            // Update status badge
+            const badge = document.getElementById('director-status-badge');
+            const statusText = document.getElementById('director-status-text');
+            const startBtn = document.getElementById('director-start-btn');
+            const stopBtn = document.getElementById('director-stop-btn');
+
+            if (data.running) {
+                badge.className = 'badge badge-success';
+                badge.textContent = 'Running';
+                statusText.textContent = 'Running';
+                statusText.style.color = 'var(--success)';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            } else {
+                badge.className = 'badge badge-secondary';
+                badge.textContent = 'Stopped';
+                statusText.textContent = 'Stopped';
+                statusText.style.color = 'var(--text-muted)';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+
+            // Update stats
+            document.getElementById('director-tasks-hour').textContent = data.stats.tasks_reviewed_hour;
+            document.getElementById('director-tasks-day').textContent = data.stats.tasks_reviewed_day;
+            document.getElementById('director-tasks-total').textContent = data.stats.total_actions;
+
+            // Update settings
+            document.getElementById('director-poll-interval').value = data.settings.poll_interval;
+            document.getElementById('enforce-tdd').checked = data.settings.enforce_tdd;
+            document.getElementById('enforce-dry').checked = data.settings.enforce_dry;
+            document.getElementById('enforce-security').checked = data.settings.enforce_security;
+
+            // Update activity
+            const activityDiv = document.getElementById('director-activity');
+            if (data.recent_activity && data.recent_activity.length > 0) {
+                activityDiv.innerHTML = data.recent_activity.map(a => {
+                    const time = new Date(a.timestamp).toLocaleTimeString();
+                    const actionClass = a.action === 'loop_back' ? 'color: var(--warning)' : 'color: var(--success)';
+                    return `<div style="padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 0.85rem;">
+                        <span style="color: var(--text-muted)">${time}</span>
+                        <span style="${actionClass}">${a.action}</span>
+                        ${a.details ? `<span>${a.details.task_id || ''}: ${a.details.from_stage || ''} → ${a.details.to_stage || a.details.reason || ''}</span>` : ''}
+                    </div>`;
+                }).join('');
+            } else {
+                activityDiv.innerHTML = '<div style="color: var(--text-muted); font-size: 0.85rem; padding: 8px;">No recent activity</div>';
+            }
+        })
+        .catch(err => {
+            console.error('Error loading director status:', err);
+            document.getElementById('director-status-badge').textContent = 'Error';
+            document.getElementById('director-status-badge').className = 'badge badge-danger';
+        });
+}
+
+function startDirector() {
+    const pollInterval = parseInt(document.getElementById('director-poll-interval').value) || 30;
+
+    fetch('/api/director/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ poll_interval: pollInterval })
+    })
+    .then(r => r.json())
+    .then(data => {
+        alert(data.message);
+        loadDirectorStatus();
+    })
+    .catch(err => alert('Error starting director'));
+}
+
+function stopDirector() {
+    fetch('/api/director/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(r => r.json())
+    .then(data => {
+        alert(data.message);
+        loadDirectorStatus();
+    })
+    .catch(err => alert('Error stopping director'));
+}
+
+function saveDirectorSettings() {
+    const settings = {
+        poll_interval: parseInt(document.getElementById('director-poll-interval').value) || 30,
+        enforce_tdd: document.getElementById('enforce-tdd').checked,
+        enforce_dry: document.getElementById('enforce-dry').checked,
+        enforce_security: document.getElementById('enforce-security').checked
+    };
+
+    fetch('/api/director/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+    })
+    .then(r => r.json())
+    .then(data => {
+        alert('Settings saved');
+    })
+    .catch(err => alert('Error saving settings'));
+}
+
+// Load director status on page load (just the badge)
+fetch('/api/director/status')
+    .then(r => r.json())
+    .then(data => {
+        const badge = document.getElementById('director-status-badge');
+        if (data.running) {
+            badge.className = 'badge badge-success';
+            badge.textContent = 'Running';
+        } else {
+            badge.className = 'badge badge-secondary';
+            badge.textContent = 'Stopped';
+        }
+    })
+    .catch(() => {});
 </script>
 {% endblock %}

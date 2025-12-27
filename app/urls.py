@@ -6,6 +6,7 @@ urlpatterns = [
     # UI
     path('ui/', ui.dashboard, name='dashboard'),
     path('ui/projects/', ui.projects_list, name='projects_list'),
+    path('ui/projects/<int:project_id>/board', ui.task_board_view, name='task_board_view'),
     path('ui/project/<int:project_id>/', ui.project_view, name='project_view'),
     path('ui/runs/', ui.runs_list, name='runs_list'),
     path('ui/run/<int:run_id>/', ui.run_view, name='run_view'),
@@ -51,6 +52,7 @@ urlpatterns = [
     path('api/tasks/<int:task_id>/delete', api.task_delete, name='task_delete'),
     path('api/tasks/<int:task_id>/execute', api.task_execute, name='task_execute'),
     path('api/tasks/<int:task_id>/context', api.task_context, name='task_context'),
+    path('api/tasks/<int:task_id>/details', api.task_details, name='task_details'),
     path('api/tasks/<int:task_id>/attachments', api.task_attachments_list, name='task_attachments_list'),
     path('api/tasks/<int:task_id>/attachments/upload', api.task_attachment_upload, name='task_attachment_upload'),
     path('api/tasks/<int:task_id>/attachments/<int:attachment_id>/download', api.task_attachment_download, name='task_attachment_download'),
@@ -83,6 +85,13 @@ urlpatterns = [
     # Threat Intel
     path('api/threat-intel', api.threat_intel_list, name='threat_intel_list'),
     path('api/threat-intel/create', api.threat_intel_create, name='threat_intel_create'),
+
+    # Director Control Panel
+    path('api/director/status', api.director_status, name='director_status'),
+    path('api/director/start', api.director_start, name='director_start'),
+    path('api/director/stop', api.director_stop, name='director_stop'),
+    path('api/director/settings', api.director_settings_update, name='director_settings'),
+    path('api/director/activity', api.director_activity, name='director_activity'),
 
     # Audit
     path('api/audit', api.audit_log, name='audit_log'),
