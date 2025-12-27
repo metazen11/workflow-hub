@@ -47,14 +47,37 @@
             </div>
         </div>
 
-        <!-- Description -->
+        <!-- Editable Details Form -->
         <div class="section">
-            <h4 class="section-title">Description</h4>
-            {% if task.description %}
-            <div class="description-box">{{ task.description }}</div>
-            {% else %}
-            <p style="color: var(--text-muted); font-style: italic;">No description provided</p>
-            {% endif %}
+            <h4 class="section-title">Task Details</h4>
+            <form id="task-details-form">
+                <div style="margin-bottom: 15px;">
+                    <label class="form-label">Title</label>
+                    <input type="text" id="task-title" class="form-control" value="{{ task.title }}"
+                        style="width: 100%;">
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label class="form-label">Priority</label>
+                    <select id="task-priority" class="form-select" style="width: 200px;">
+                        <option value="1" {% if task.priority == 1 %}selected{% endif %}>1 - Low</option>
+                        <option value="3" {% if task.priority == 3 %}selected{% endif %}>3 - Medium</option>
+                        <option value="5" {% if task.priority == 5 %}selected{% endif %}>5 - High</option>
+                        <option value="8" {% if task.priority == 8 %}selected{% endif %}>8 - Critical</option>
+                    </select>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label class="form-label">Description</label>
+                    <textarea id="task-description" class="form-control" rows="6"
+                        style="width: 100%;">{{ task.description|default:'' }}</textarea>
+                </div>
+
+                <div style="text-align: right;">
+                    <button type="button" class="btn btn-primary" onclick="saveTaskDetails({{ task.id }})">Save
+                        Changes</button>
+                </div>
+            </form>
         </div>
 
         <!-- Blocked By -->
@@ -82,7 +105,8 @@
                     </div>
                     {% else %}
                     <div class="attachment-icon">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                             <polyline points="14 2 14 8 20 8"></polyline>
                             <line x1="16" y1="13" x2="8" y2="13"></line>
@@ -96,7 +120,8 @@
                         <span class="attachment-size">{{ att.file_size|filesizeformat }}</span>
                     </div>
                     <a href="/api/tasks/{{ task.id }}/attachments/{{ att.id }}/download" class="btn btn-sm" download>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="7 10 12 15 17 10"></polyline>
                             <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -114,9 +139,11 @@
             <div class="upload-section">
                 <h5>Add Attachment</h5>
                 <form id="upload-form" enctype="multipart/form-data">
-                    <input type="file" id="file-input" name="file" accept=".txt,.md,.json,.xml,.csv,.png,.jpg,.jpeg,.gif,.webp">
+                    <input type="file" id="file-input" name="file"
+                        accept=".txt,.md,.json,.xml,.csv,.png,.jpg,.jpeg,.gif,.webp">
                     <button type="submit" class="btn btn-primary">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="17 8 12 3 7 8"></polyline>
                             <line x1="12" y1="3" x2="12" y2="15"></line>
@@ -124,7 +151,8 @@
                         Upload
                     </button>
                 </form>
-                <p class="upload-hint">Allowed: Images (PNG, JPG, GIF, WebP up to 10MB) and text files (TXT, MD, JSON, XML, CSV up to 1MB)</p>
+                <p class="upload-hint">Allowed: Images (PNG, JPG, GIF, WebP up to 10MB) and text files (TXT, MD, JSON,
+                    XML, CSV up to 1MB)</p>
             </div>
         </div>
 
@@ -133,18 +161,54 @@
             <h4 class="section-title">Update Status</h4>
             <div class="status-buttons">
                 <button class="status-btn backlog" onclick="updateTaskStatus({{ task.id }}, 'backlog')">Backlog</button>
-                <button class="status-btn in_progress" onclick="updateTaskStatus({{ task.id }}, 'in_progress')">In Progress</button>
+                <button class="status-btn in_progress" onclick="updateTaskStatus({{ task.id }}, 'in_progress')">In
+                    Progress</button>
                 <button class="status-btn blocked" onclick="updateTaskStatus({{ task.id }}, 'blocked')">Blocked</button>
                 <button class="status-btn done" onclick="updateTaskStatus({{ task.id }}, 'done')">Done</button>
+            </div>
+        </div>
+
+
+        <!-- Pipeline & Agent Control -->
+        <div class="section">
+            <h4 class="section-title">Agent Pipeline</h4>
+            <div class="pipeline-controls"
+                style="display: flex; gap: 10px; align-items: center; background: var(--bg-secondary); padding: 15px; border-radius: 8px;">
+                <div style="flex-grow: 1;">
+                    <label
+                        style="display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">Current
+                        Stage: <strong>{{ task.pipeline_stage|upper }}</strong></label>
+                    <select id="stage-select" class="form-select" style="width: 100%;">
+                        <option value="none" {% if task.pipeline_stage == 'none' %}selected{% endif %}>Backlog (None)
+                        </option>
+                        <option value="dev" {% if task.pipeline_stage == 'dev' %}selected{% endif %}>Development</option>
+                        <option value="qa" {% if task.pipeline_stage == 'qa' %}selected{% endif %}>QA</option>
+                        <option value="sec" {% if task.pipeline_stage == 'sec' %}selected{% endif %}>Security</option>
+                        <option value="docs" {% if task.pipeline_stage == 'docs' %}selected{% endif %}>Documentation
+                        </option>
+                        <option value="complete" {% if task.pipeline_stage == 'complete' %}selected{% endif %}>Complete
+                        </option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: flex-end;">
+                    <button class="btn btn-secondary" onclick="setTaskStage({{ task.id }})">
+                        Move to Stage
+                    </button>
+                    <button class="btn btn-primary" onclick="executeTaskAgent({{ task.id }})">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" style="margin-right: 6px;">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        Run Agent
+                    </button>
+                </div>
             </div>
         </div>
 
         <!-- Danger Zone -->
         <div class="section" style="margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border);">
             <h4 class="section-title" style="color: var(--danger);">Danger Zone</h4>
-            <button class="btn btn-danger delete-task-btn"
-                data-task-id="{{ task.id }}"
-                data-title="{{ task.title }}">
+            <button class="btn btn-danger delete-task-btn" data-task-id="{{ task.id }}" data-title="{{ task.title }}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="3 6 5 6 21 6"></polyline>
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -156,49 +220,124 @@
 </div>
 
 <script>
-// Delete button handler is in /static/js/task-actions.js (DRY)
+    // Delete button handler is in /static/js/task-actions.js (DRY)
 
-function updateTaskStatus(taskId, status) {
-    fetch(`/api/tasks/${taskId}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: status })
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.success) {
-            window.location.reload();
-        } else {
-            alert('Error: ' + (data.error || 'Failed to update status'));
-        }
-    })
-    .catch(err => alert('Error updating status'));
-}
-
-document.getElementById('upload-form').addEventListener('submit', function(e) {
-    e.preventDefault();
-    const fileInput = document.getElementById('file-input');
-    if (!fileInput.files.length) {
-        alert('Please select a file');
-        return;
+    function updateTaskStatus(taskId, status) {
+        fetch(`/api/tasks/${taskId}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: status })
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to update status'));
+                }
+            })
+            .catch(err => alert('Error updating status'));
     }
 
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
+    function setTaskStage(taskId) {
+        const stage = document.getElementById('stage-select').value;
+        fetch(`/api/tasks/${taskId}/set-stage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage: stage })
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to sets stage'));
+                }
+            })
+            .catch(err => alert('Error setting stage'));
+    }
 
-    fetch(`/api/tasks/{{ task.id }}/attachments/upload`, {
-        method: 'POST',
-        body: formData
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.success) {
-            window.location.reload();
-        } else {
-            alert('Error: ' + (data.error || 'Failed to upload file'));
+    function executeTaskAgent(taskId) {
+        if (!confirm('Are you sure you want to trigger the agent for the current stage?')) return;
+
+        // Show loading state or toast
+        const btn = event.target.closest('button');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = 'Starting...';
+        btn.disabled = true;
+
+        fetch(`/api/tasks/${taskId}/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.run_id || data.success) {
+                    alert('Agent started! Run ID: ' + data.run_id);
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to start agent'));
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
+            })
+            .catch(err => {
+                alert('Error starting agent');
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            });
+    }
+
+    function saveTaskDetails(taskId) {
+        const title = document.getElementById('task-title').value;
+        const description = document.getElementById('task-description').value;
+        const priority = parseInt(document.getElementById('task-priority').value);
+
+        fetch(`/api/tasks/${taskId}/update`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: title,
+                description: description,
+                priority: priority
+            })
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    // Optional: Show a subtle toast instead of reload, but reload ensures consistency
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to update task'));
+                }
+            })
+            .catch(err => alert('Error updating task'));
+    }
+
+    document.getElementById('upload-form').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const fileInput = document.getElementById('file-input');
+        if (!fileInput.files.length) {
+            alert('Please select a file');
+            return;
         }
-    })
-    .catch(err => alert('Error uploading file'));
-});
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        fetch(`/api/tasks/{{ task.id }}/attachments/upload`, {
+            method: 'POST',
+            body: formData
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to upload file'));
+                }
+            })
+            .catch(err => alert('Error uploading file'));
+    });
 </script>
 {% endblock %}
