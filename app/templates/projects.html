@@ -140,7 +140,7 @@ async function createProject() {
     });
     const result = await response.json();
 
-    if (result.status === 'success') {
+    if (result.project) {
         window.location.href = '/ui/project/' + result.project.id + '/';
     } else {
         alert('Error: ' + (result.error || 'Unknown error'));
@@ -156,8 +156,9 @@ async function executeProject(projectId) {
     });
     const result = await response.json();
 
-    if (result.status === 'success') {
+    if (result.run_id) {
         alert('Pipeline started! Run ID: ' + result.run_id);
+        window.location.href = '/ui/run/' + result.run_id + '/';
     } else {
         alert('Error: ' + (result.error || 'Unknown error'));
     }

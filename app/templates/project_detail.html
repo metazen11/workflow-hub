@@ -15,6 +15,15 @@
                 </svg>
                 Refresh
             </button>
+            <a href="/ui/projects/{{ project.id }}/board" class="btn btn-secondary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="14" width="7" height="7"></rect>
+                    <rect x="3" y="14" width="7" height="7"></rect>
+                </svg>
+                Task Board
+            </a>
             <button class="btn btn-primary" onclick="executeProject({{ project.id }})">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polygon points="5 3 19 12 5 21 5 3"></polygon>
@@ -69,15 +78,18 @@
             <form class="card-body edit-form" id="project-details-edit" style="display: none;">
                 <div class="form-group">
                     <label>Repository Path</label>
-                    <input type="text" name="repo_path" value="{{ project.repo_path|default:'' }}" placeholder="/path/to/repo">
+                    <input type="text" name="repo_path" value="{{ project.repo_path|default:'' }}"
+                        placeholder="/path/to/repo">
                 </div>
                 <div class="form-group">
                     <label>Repository URL (HTTPS)</label>
-                    <input type="url" name="repository_url" value="{{ project.repository_url|default:'' }}" placeholder="https://github.com/...">
+                    <input type="url" name="repository_url" value="{{ project.repository_url|default:'' }}"
+                        placeholder="https://github.com/...">
                 </div>
                 <div class="form-group">
                     <label>Repository URL (SSH)</label>
-                    <input type="text" name="repository_ssh_url" value="{{ project.repository_ssh_url|default:'' }}" placeholder="git@github.com:...">
+                    <input type="text" name="repository_ssh_url" value="{{ project.repository_ssh_url|default:'' }}"
+                        placeholder="git@github.com:...">
                 </div>
                 <div class="form-group">
                     <label>Primary Branch</label>
@@ -85,15 +97,18 @@
                 </div>
                 <div class="form-group">
                     <label>Entry Point</label>
-                    <input type="text" name="entry_point" value="{{ project.entry_point|default:'' }}" placeholder="app/main.py">
+                    <input type="text" name="entry_point" value="{{ project.entry_point|default:'' }}"
+                        placeholder="app/main.py">
                 </div>
                 <div class="form-group">
                     <label>Documentation URL</label>
                     <input type="url" name="documentation_url" value="{{ project.documentation_url|default:'' }}">
                 </div>
                 <div class="form-actions">
-                    <button type="button" class="btn btn-secondary" onclick="toggleEdit('project-details')">Cancel</button>
-                    <button type="button" class="btn btn-primary" onclick="saveProjectDetails({{ project.id }})">Save</button>
+                    <button type="button" class="btn btn-secondary"
+                        onclick="toggleEdit('project-details')">Cancel</button>
+                    <button type="button" class="btn btn-primary"
+                        onclick="saveProjectDetails({{ project.id }})">Save</button>
                 </div>
             </form>
         </div>
@@ -141,29 +156,35 @@
             <form class="card-body edit-form" id="tech-stack-edit" style="display: none;">
                 <div class="form-group">
                     <label>Languages (comma separated)</label>
-                    <input type="text" name="languages" value="{{ project.languages|join:', ' }}" placeholder="Python, TypeScript">
+                    <input type="text" name="languages" value="{{ project.languages|join:', ' }}"
+                        placeholder="Python, TypeScript">
                 </div>
                 <div class="form-group">
                     <label>Frameworks (comma separated)</label>
-                    <input type="text" name="frameworks" value="{{ project.frameworks|join:', ' }}" placeholder="Django, React">
+                    <input type="text" name="frameworks" value="{{ project.frameworks|join:', ' }}"
+                        placeholder="Django, React">
                 </div>
                 <div class="form-group">
                     <label>Databases (comma separated)</label>
-                    <input type="text" name="databases" value="{{ project.databases|join:', ' }}" placeholder="PostgreSQL, Redis">
+                    <input type="text" name="databases" value="{{ project.databases|join:', ' }}"
+                        placeholder="PostgreSQL, Redis">
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label>Python Version</label>
-                        <input type="text" name="python_version" value="{{ project.python_version|default:'' }}" placeholder="3.11">
+                        <input type="text" name="python_version" value="{{ project.python_version|default:'' }}"
+                            placeholder="3.11">
                     </div>
                     <div class="form-group">
                         <label>Node Version</label>
-                        <input type="text" name="node_version" value="{{ project.node_version|default:'' }}" placeholder="20">
+                        <input type="text" name="node_version" value="{{ project.node_version|default:'' }}"
+                            placeholder="20">
                     </div>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="toggleEdit('tech-stack')">Cancel</button>
-                    <button type="button" class="btn btn-primary" onclick="saveTechStack({{ project.id }})">Save</button>
+                    <button type="button" class="btn btn-primary"
+                        onclick="saveTechStack({{ project.id }})">Save</button>
                 </div>
             </form>
         </div>
@@ -201,23 +222,28 @@
             <form class="card-body edit-form" id="commands-edit" style="display: none;">
                 <div class="form-group">
                     <label>Build Command</label>
-                    <input type="text" name="build_command" value="{{ project.build_command|default:'' }}" placeholder="npm run build">
+                    <input type="text" name="build_command" value="{{ project.build_command|default:'' }}"
+                        placeholder="npm run build">
                 </div>
                 <div class="form-group">
                     <label>Test Command</label>
-                    <input type="text" name="test_command" value="{{ project.test_command|default:'' }}" placeholder="pytest">
+                    <input type="text" name="test_command" value="{{ project.test_command|default:'' }}"
+                        placeholder="pytest">
                 </div>
                 <div class="form-group">
                     <label>Run Command</label>
-                    <input type="text" name="run_command" value="{{ project.run_command|default:'' }}" placeholder="python manage.py runserver">
+                    <input type="text" name="run_command" value="{{ project.run_command|default:'' }}"
+                        placeholder="python manage.py runserver">
                 </div>
                 <div class="form-group">
                     <label>Deploy Command</label>
-                    <input type="text" name="deploy_command" value="{{ project.deploy_command|default:'' }}" placeholder="./deploy.sh">
+                    <input type="text" name="deploy_command" value="{{ project.deploy_command|default:'' }}"
+                        placeholder="./deploy.sh">
                 </div>
                 <div class="form-group">
                     <label>Default Port</label>
-                    <input type="number" name="default_port" value="{{ project.default_port|default:'' }}" placeholder="8000">
+                    <input type="number" name="default_port" value="{{ project.default_port|default:'' }}"
+                        placeholder="8000">
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="toggleEdit('commands')">Cancel</button>
@@ -249,7 +275,9 @@
                 <div class="file-item">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3"></circle>
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
                     </svg>
                     <span>{{ file }}</span>
                 </div>
@@ -260,11 +288,13 @@
             <form class="card-body edit-form" id="key-files-edit" style="display: none;">
                 <div class="form-group">
                     <label>Key Files (one per line)</label>
-                    <textarea name="key_files" rows="4" placeholder="app/main.py&#10;src/index.ts">{{ project.key_files|join:'\n' }}</textarea>
+                    <textarea name="key_files" rows="4"
+                        placeholder="app/main.py&#10;src/index.ts">{{ project.key_files|join:'\n' }}</textarea>
                 </div>
                 <div class="form-group">
                     <label>Config Files (one per line)</label>
-                    <textarea name="config_files" rows="4" placeholder="pyproject.toml&#10;package.json">{{ project.config_files|join:'\n' }}</textarea>
+                    <textarea name="config_files" rows="4"
+                        placeholder="pyproject.toml&#10;package.json">{{ project.config_files|join:'\n' }}</textarea>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="toggleEdit('key-files')">Cancel</button>
@@ -302,7 +332,8 @@
                         <td>{{ task.priority }}</td>
                         <td>
                             <button class="btn btn-sm" onclick="executeTask({{ task.id }})" title="Execute">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
                                     <polygon points="5 3 19 12 5 21 5 3"></polygon>
                                 </svg>
                             </button>
@@ -354,15 +385,20 @@
                         </td>
                         <td>
                             <button class="btn btn-sm" onclick="editCredential({{ cred.id }})" title="Edit">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
                                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                                 </svg>
                             </button>
-                            <button class="btn btn-sm btn-danger" onclick="deleteCredential({{ cred.id }})" title="Delete">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <button class="btn btn-sm btn-danger" onclick="deleteCredential({{ cred.id }})"
+                                title="Delete">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
                                     <polyline points="3 6 5 6 21 6"></polyline>
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    <path
+                                        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                    </path>
                                 </svg>
                             </button>
                         </td>
@@ -383,7 +419,8 @@
     <div class="card">
         <div class="card-header">
             <h3>Environments</h3>
-            <button class="btn btn-primary btn-sm" onclick="showModal('add-environment-modal')">+ Add Environment</button>
+            <button class="btn btn-primary btn-sm" onclick="showModal('add-environment-modal')">+ Add
+                Environment</button>
         </div>
         <div class="card-body">
             <div class="env-grid">
@@ -466,7 +503,8 @@
                     </div>
                 </div>
                 <div class="form-actions">
-                    <button type="button" class="btn btn-primary" onclick="saveProjectSettings({{ project.id }})">Save Settings</button>
+                    <button type="button" class="btn btn-primary" onclick="saveProjectSettings({{ project.id }})">Save
+                        Settings</button>
                 </div>
             </form>
         </div>
@@ -539,8 +577,10 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="hideModal('add-credential-modal')">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="saveCredential({{ project.id }})">Save Credential</button>
+                <button type="button" class="btn btn-secondary"
+                    onclick="hideModal('add-credential-modal')">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveCredential({{ project.id }})">Save
+                    Credential</button>
             </div>
         </form>
     </div>
@@ -612,8 +652,10 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="hideModal('add-environment-modal')">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="saveEnvironment({{ project.id }})">Save Environment</button>
+                <button type="button" class="btn btn-secondary"
+                    onclick="hideModal('add-environment-modal')">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveEnvironment({{ project.id }})">Save
+                    Environment</button>
             </div>
         </form>
     </div>
@@ -656,253 +698,255 @@
 </div>
 
 <script>
-// Tab switching
-function showTab(tabName) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    event.target.classList.add('active');
-    document.getElementById('tab-' + tabName).classList.add('active');
-}
-
-// Toggle edit mode
-function toggleEdit(section) {
-    const view = document.getElementById(section + '-view');
-    const edit = document.getElementById(section + '-edit');
-    if (view.style.display === 'none') {
-        view.style.display = 'block';
-        edit.style.display = 'none';
-    } else {
-        view.style.display = 'none';
-        edit.style.display = 'block';
+    // Tab switching
+    function showTab(tabName) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        event.target.classList.add('active');
+        document.getElementById('tab-' + tabName).classList.add('active');
     }
-}
 
-// Modal functions
-function showModal(id) {
-    document.getElementById(id).classList.add('active');
-}
-
-function hideModal(id) {
-    document.getElementById(id).classList.remove('active');
-}
-
-// API helper
-async function apiCall(url, method, data) {
-    const response = await fetch(url, {
-        method: method,
-        headers: { 'Content-Type': 'application/json' },
-        body: data ? JSON.stringify(data) : undefined
-    });
-    return response.json();
-}
-
-// Project actions
-async function refreshProject(projectId) {
-    const result = await apiCall('/api/projects/' + projectId + '/refresh', 'POST');
-    if (result.status === 'success') {
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-async function executeProject(projectId) {
-    if (!confirm('Start pipeline execution for this project?')) return;
-    const result = await apiCall('/api/projects/' + projectId + '/execute', 'POST');
-    if (result.status === 'success') {
-        alert('Pipeline started! Run ID: ' + result.run_id);
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-async function executeTask(taskId) {
-    if (!confirm('Execute this task through the pipeline?')) return;
-    const result = await apiCall('/api/tasks/' + taskId + '/execute', 'POST');
-    if (result.status === 'success') {
-        alert('Task execution started! Run ID: ' + result.run_id);
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-// Save project sections
-async function saveProjectDetails(projectId) {
-    const form = document.getElementById('project-details-edit');
-    const data = Object.fromEntries(new FormData(form));
-    const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
-    if (result.status === 'success') {
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-async function saveTechStack(projectId) {
-    const form = document.getElementById('tech-stack-edit');
-    const formData = new FormData(form);
-    const data = {
-        languages: formData.get('languages').split(',').map(s => s.trim()).filter(s => s),
-        frameworks: formData.get('frameworks').split(',').map(s => s.trim()).filter(s => s),
-        databases: formData.get('databases').split(',').map(s => s.trim()).filter(s => s),
-        python_version: formData.get('python_version'),
-        node_version: formData.get('node_version')
-    };
-    const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
-    if (result.status === 'success') {
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-async function saveCommands(projectId) {
-    const form = document.getElementById('commands-edit');
-    const data = Object.fromEntries(new FormData(form));
-    if (data.default_port) data.default_port = parseInt(data.default_port);
-    const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
-    if (result.status === 'success') {
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-async function saveKeyFiles(projectId) {
-    const form = document.getElementById('key-files-edit');
-    const formData = new FormData(form);
-    const data = {
-        key_files: formData.get('key_files').split('\n').map(s => s.trim()).filter(s => s),
-        config_files: formData.get('config_files').split('\n').map(s => s.trim()).filter(s => s)
-    };
-    const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
-    if (result.status === 'success') {
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-async function saveProjectSettings(projectId) {
-    const form = document.getElementById('project-settings-form');
-    const formData = new FormData(form);
-    const data = {
-        name: formData.get('name'),
-        description: formData.get('description'),
-        is_active: form.querySelector('[name="is_active"]').checked,
-        is_archived: form.querySelector('[name="is_archived"]').checked
-    };
-    const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
-    if (result.status === 'success') {
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-// Credential functions
-async function saveCredential(projectId) {
-    const form = document.getElementById('add-credential-form');
-    const formData = new FormData(form);
-    const data = {
-        name: formData.get('name'),
-        credential_type: formData.get('credential_type'),
-        service: formData.get('service'),
-        environment: formData.get('environment'),
-        description: formData.get('description'),
-        username: formData.get('username'),
-        api_key_encrypted: formData.get('secret')  // Will be encrypted server-side
-    };
-    const result = await apiCall('/api/projects/' + projectId + '/credentials/create', 'POST', data);
-    if (result.status === 'success') {
-        hideModal('add-credential-modal');
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-async function deleteCredential(credentialId) {
-    if (!confirm('Delete this credential?')) return;
-    const result = await apiCall('/api/credentials/' + credentialId + '/delete', 'DELETE');
-    if (result.status === 'success') {
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-function editCredential(credentialId) {
-    // TODO: Implement edit modal
-    alert('Edit credential ' + credentialId);
-}
-
-// Environment functions
-async function saveEnvironment(projectId) {
-    const form = document.getElementById('add-environment-form');
-    const formData = new FormData(form);
-    const data = {
-        name: formData.get('name'),
-        env_type: formData.get('env_type'),
-        description: formData.get('description'),
-        url: formData.get('url'),
-        health_check_url: formData.get('health_check_url'),
-        ssh_host: formData.get('ssh_host'),
-        ssh_port: parseInt(formData.get('ssh_port')) || 22,
-        ssh_user: formData.get('ssh_user'),
-        path: formData.get('path'),
-        deploy_command: formData.get('deploy_command')
-    };
-    const result = await apiCall('/api/projects/' + projectId + '/environments/create', 'POST', data);
-    if (result.status === 'success') {
-        hideModal('add-environment-modal');
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-async function deleteEnvironment(environmentId) {
-    if (!confirm('Delete this environment?')) return;
-    const result = await apiCall('/api/environments/' + environmentId + '/delete', 'DELETE');
-    if (result.status === 'success') {
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-function editEnvironment(environmentId) {
-    // TODO: Implement edit modal
-    alert('Edit environment ' + environmentId);
-}
-
-// Task functions
-async function saveTask(projectId) {
-    const form = document.getElementById('add-task-form');
-    const formData = new FormData(form);
-    const data = {
-        task_id: formData.get('task_id'),
-        title: formData.get('title'),
-        description: formData.get('description'),
-        priority: parseInt(formData.get('priority')) || 5
-    };
-    const result = await apiCall('/api/projects/' + projectId + '/tasks/create', 'POST', data);
-    if (result.status === 'success') {
-        hideModal('add-task-modal');
-        location.reload();
-    } else {
-        alert('Error: ' + (result.error || 'Unknown error'));
-    }
-}
-
-// Close modals on outside click
-document.querySelectorAll('.modal').forEach(modal => {
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            modal.classList.remove('active');
+    // Toggle edit mode
+    function toggleEdit(section) {
+        const view = document.getElementById(section + '-view');
+        const edit = document.getElementById(section + '-edit');
+        if (view.style.display === 'none') {
+            view.style.display = 'block';
+            edit.style.display = 'none';
+        } else {
+            view.style.display = 'none';
+            edit.style.display = 'block';
         }
+    }
+
+    // Modal functions
+    function showModal(id) {
+        document.getElementById(id).classList.add('active');
+    }
+
+    function hideModal(id) {
+        document.getElementById(id).classList.remove('active');
+    }
+
+    // API helper
+    async function apiCall(url, method, data) {
+        const response = await fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: data ? JSON.stringify(data) : undefined
+        });
+        return response.json();
+    }
+
+    // Project actions
+    async function refreshProject(projectId) {
+        const result = await apiCall('/api/projects/' + projectId + '/refresh', 'POST');
+        if (result.project || !result.error) {
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    async function executeProject(projectId) {
+        if (!confirm('Start pipeline execution for this project?')) return;
+        const result = await apiCall('/api/projects/' + projectId + '/execute', 'POST');
+        if (result.run_id) {
+            alert('Pipeline started! Run ID: ' + result.run_id);
+            location.href = '/ui/run/' + result.run_id + '/';
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    async function executeTask(taskId) {
+        if (!confirm('Execute this task through the pipeline?')) return;
+        const result = await apiCall('/api/tasks/' + taskId + '/execute', 'POST');
+        if (result.run_id) {
+            alert('Task execution started! Run ID: ' + result.run_id);
+            location.href = '/ui/run/' + result.run_id + '/';
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    // Save project sections
+    async function saveProjectDetails(projectId) {
+        const form = document.getElementById('project-details-edit');
+        const data = Object.fromEntries(new FormData(form));
+        const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
+        if (result.project || result.status === 'success') {
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    async function saveTechStack(projectId) {
+        const form = document.getElementById('tech-stack-edit');
+        const formData = new FormData(form);
+        const data = {
+            languages: formData.get('languages').split(',').map(s => s.trim()).filter(s => s),
+            frameworks: formData.get('frameworks').split(',').map(s => s.trim()).filter(s => s),
+            databases: formData.get('databases').split(',').map(s => s.trim()).filter(s => s),
+            python_version: formData.get('python_version'),
+            node_version: formData.get('node_version')
+        };
+        const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
+        if (result.project || result.status === 'success') {
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    async function saveCommands(projectId) {
+        const form = document.getElementById('commands-edit');
+        const data = Object.fromEntries(new FormData(form));
+        if (data.default_port) data.default_port = parseInt(data.default_port);
+        const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
+        if (result.project || result.status === 'success') {
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    async function saveKeyFiles(projectId) {
+        const form = document.getElementById('key-files-edit');
+        const formData = new FormData(form);
+        const data = {
+            key_files: formData.get('key_files').split('\n').map(s => s.trim()).filter(s => s),
+            config_files: formData.get('config_files').split('\n').map(s => s.trim()).filter(s => s)
+        };
+        const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
+        if (result.project || result.status === 'success') {
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    async function saveProjectSettings(projectId) {
+        const form = document.getElementById('project-settings-form');
+        const formData = new FormData(form);
+        const data = {
+            name: formData.get('name'),
+            description: formData.get('description'),
+            is_active: form.querySelector('[name="is_active"]').checked,
+            is_archived: form.querySelector('[name="is_archived"]').checked
+        };
+        const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
+        if (result.project || result.status === 'success') {
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    // Credential functions
+    async function saveCredential(projectId) {
+        const form = document.getElementById('add-credential-form');
+        const formData = new FormData(form);
+        const data = {
+            name: formData.get('name'),
+            credential_type: formData.get('credential_type'),
+            service: formData.get('service'),
+            environment: formData.get('environment'),
+            description: formData.get('description'),
+            username: formData.get('username'),
+            api_key_encrypted: formData.get('secret')  // Will be encrypted server-side
+        };
+        const result = await apiCall('/api/projects/' + projectId + '/credentials/create', 'POST', data);
+        if (result.credential || result.status === 'success') {
+            hideModal('add-credential-modal');
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    async function deleteCredential(credentialId) {
+        if (!confirm('Delete this credential?')) return;
+        const result = await apiCall('/api/credentials/' + credentialId + '/delete', 'DELETE');
+        if (!result.error) {
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    function editCredential(credentialId) {
+        // TODO: Implement edit modal
+        alert('Edit credential ' + credentialId);
+    }
+
+    // Environment functions
+    async function saveEnvironment(projectId) {
+        const form = document.getElementById('add-environment-form');
+        const formData = new FormData(form);
+        const data = {
+            name: formData.get('name'),
+            env_type: formData.get('env_type'),
+            description: formData.get('description'),
+            url: formData.get('url'),
+            health_check_url: formData.get('health_check_url'),
+            ssh_host: formData.get('ssh_host'),
+            ssh_port: parseInt(formData.get('ssh_port')) || 22,
+            ssh_user: formData.get('ssh_user'),
+            path: formData.get('path'),
+            deploy_command: formData.get('deploy_command')
+        };
+        const result = await apiCall('/api/projects/' + projectId + '/environments/create', 'POST', data);
+        if (result.environment || result.status === 'success') {
+            hideModal('add-environment-modal');
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    async function deleteEnvironment(environmentId) {
+        if (!confirm('Delete this environment?')) return;
+        const result = await apiCall('/api/environments/' + environmentId + '/delete', 'DELETE');
+        if (!result.error) {
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    function editEnvironment(environmentId) {
+        // TODO: Implement edit modal
+        alert('Edit environment ' + environmentId);
+    }
+
+    // Task functions
+    async function saveTask(projectId) {
+        const form = document.getElementById('add-task-form');
+        const formData = new FormData(form);
+        const data = {
+            task_id: formData.get('task_id'),
+            title: formData.get('title'),
+            description: formData.get('description'),
+            priority: parseInt(formData.get('priority')) || 5
+        };
+        const result = await apiCall('/api/projects/' + projectId + '/tasks/create', 'POST', data);
+        if (result.task || result.status === 'success') {
+            hideModal('add-task-modal');
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    }
+
+    // Close modals on outside click
+    document.querySelectorAll('.modal').forEach(modal => {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.classList.remove('active');
+            }
+        });
     });
-});
 </script>
 {% endblock %}
