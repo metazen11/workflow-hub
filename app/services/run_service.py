@@ -248,7 +248,8 @@ secrets.yaml
         status: ReportStatus,
         summary: str = None,
         details: dict = None,
-        actor: str = None
+        actor: str = None,
+        raw_output: str = None
     ) -> Tuple[AgentReport, Optional[str]]:
         """
         Submit an agent report for a run.
@@ -264,7 +265,8 @@ secrets.yaml
             role=role,
             status=status,
             summary=summary,
-            details=details
+            details=details,
+            raw_output=raw_output
         )
         self.db.add(report)
 
@@ -372,9 +374,8 @@ secrets.yaml
         log_event(self.db, actor, "state_change", "run", run_id,
                  {"from": old_state, "to": next_state.value})
 
-        # Initialize task pipeline stages when entering DEV
-        if next_state == RunState.DEV:
-            self._initialize_task_stages(run, TaskPipelineStage.DEV)
+        # Sync task pipeline stages with run state
+        self._sync_task_stages_with_run(run, next_state)
 
         # Dispatch webhook - state changed
         next_agent = self._get_agent_for_state(next_state)
@@ -724,6 +725,75 @@ secrets.yaml
 
         self.db.commit()
         return len(tasks)
+
+    def _sync_task_stages_with_run(self, run: Run, run_state: RunState) -> int:
+        """Sync task pipeline stages when run state changes.
+
+        Maps run states to task pipeline stages and advances tasks accordingly:
+        - DEV run state → DEV task stage (initialize)
+        - QA run state → QA task stage
+        - SEC run state → SEC task stage
+        - DOCS run state → DOCS task stage
+        - DEPLOYED run state → COMPLETE task stage
+
+        Only advances tasks that are behind the target stage.
+        Returns count of tasks updated.
+        """
+        # Map run state to target task stage
+        state_to_stage = {
+            RunState.PM: None,  # No task stage for PM
+            RunState.DEV: TaskPipelineStage.DEV,
+            RunState.QA: TaskPipelineStage.QA,
+            RunState.SEC: TaskPipelineStage.SEC,
+            RunState.DOCS: TaskPipelineStage.DOCS,
+            RunState.READY_FOR_COMMIT: TaskPipelineStage.DOCS,
+            RunState.MERGED: TaskPipelineStage.DOCS,
+            RunState.READY_FOR_DEPLOY: TaskPipelineStage.DOCS,
+            RunState.TESTING: TaskPipelineStage.DOCS,
+            RunState.DEPLOYED: TaskPipelineStage.COMPLETE,
+        }
+
+        target_stage = state_to_stage.get(run_state)
+        if not target_stage:
+            return 0  # No task stage update for this run state
+
+        # Stage ordering for comparison
+        stage_order = [
+            TaskPipelineStage.NONE,
+            TaskPipelineStage.DEV,
+            TaskPipelineStage.QA,
+            TaskPipelineStage.SEC,
+            TaskPipelineStage.DOCS,
+            TaskPipelineStage.COMPLETE
+        ]
+        target_index = stage_order.index(target_stage)
+
+        # Get all tasks linked to this run
+        tasks = self.db.query(Task).filter(Task.run_id == run.id).all()
+
+        updated = 0
+        for task in tasks:
+            current_stage = task.pipeline_stage or TaskPipelineStage.NONE
+            current_index = stage_order.index(current_stage)
+
+            # Only advance if behind target
+            if current_index < target_index:
+                task.pipeline_stage = target_stage
+
+                # Update task status
+                if target_stage == TaskPipelineStage.COMPLETE:
+                    task.status = TaskStatus.DONE
+                    task.completed = True
+                    task.completed_at = datetime.utcnow()
+                else:
+                    task.status = TaskStatus.IN_PROGRESS
+
+                updated += 1
+
+        if updated > 0:
+            self.db.commit()
+
+        return updated
 
     def get_task_progress(self, run_id: int) -> dict:
         """Get task pipeline progress summary for a run.
