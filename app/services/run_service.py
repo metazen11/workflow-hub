@@ -362,6 +362,22 @@ secrets.yaml
                 })
                 return RunState.SEC_FAILED, "Security gate failed"
 
+        if current_state == RunState.DOCS:
+            docs_report = self._get_latest_report(run_id, AgentRole.DOCS)
+            if not docs_report:
+                return None, "Documentation report required before advancing"
+            if docs_report.status != ReportStatus.PASS:
+                run.state = RunState.DOCS_FAILED
+                self.db.commit()
+                log_event(self.db, actor, "state_change", "run", run_id,
+                         {"from": current_state.value, "to": "docs_failed", "reason": "Docs failed"})
+                dispatch_webhook(EVENT_GATE_FAILED, {
+                    "run_id": run_id,
+                    "gate": "docs",
+                    "reason": "Documentation check failed"
+                })
+                return RunState.DOCS_FAILED, "Documentation gate failed"
+
         # Human approval required for deploy
         if current_state == RunState.READY_FOR_DEPLOY and actor != "human":
             return None, "Human approval required for deployment"
@@ -705,6 +721,7 @@ secrets.yaml
             RunState.DEV: "dev",
             RunState.QA: "qa",
             RunState.SEC: "security",
+            RunState.DOCS: "docs",
         }
         return agent_map.get(state)
 
