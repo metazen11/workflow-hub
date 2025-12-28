@@ -105,6 +105,7 @@ def build_handoff_context(
     db: Session,
     run_id: int,
     role: str,
+    task_id: Optional[str] = None,
     include_raw_output: bool = False,
     max_report_chars: int = 2000
 ) -> str:
@@ -114,6 +115,7 @@ def build_handoff_context(
         db: SQLAlchemy session
         run_id: Current run ID
         role: Agent role about to execute
+        task_id: Optional specific task ID for task-focused context
         include_raw_output: Include full raw output from previous agents
         max_report_chars: Max chars per report summary
 
@@ -129,8 +131,15 @@ def build_handoff_context(
     if not project:
         return f"# Handoff Context\nProject not found for run {run_id}."
 
-    # Get tasks for this run
-    tasks = db.query(Task).filter(Task.run_id == run_id).all()
+    # Get specific task or all tasks for this run
+    if task_id:
+        task = db.query(Task).filter(
+            Task.run_id == run_id,
+            Task.task_id == task_id
+        ).first()
+        tasks = [task] if task else []
+    else:
+        tasks = db.query(Task).filter(Task.run_id == run_id).all()
 
     # Get all agent reports for this run, ordered by creation
     reports = db.query(AgentReport).filter(
@@ -146,9 +155,10 @@ def build_handoff_context(
     sections = []
 
     # Header
+    task_label = f" | Task: {task_id}" if task_id else ""
     sections.append(f"""# Handoff Context
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-Run ID: {run_id} | Project: {project.name}
+Run ID: {run_id} | Project: {project.name}{task_label}
 """)
 
     # Extract goal from pm_result if available
@@ -164,14 +174,41 @@ Run ID: {run_id} | Project: {project.name}
 - **Goal**: {goal}
 """)
 
-    # Tasks section
+    # Tasks section - detailed for specific task, summary for all
     if tasks:
-        sections.append("## Tasks in This Run")
-        for task in tasks:
+        if task_id and len(tasks) == 1:
+            # Detailed view for specific task
+            task = tasks[0]
             status = task.status.value if task.status else "unknown"
             stage = task.pipeline_stage.value if task.pipeline_stage else "none"
-            sections.append(f"- **{task.task_id}**: {task.title} [{status}] (stage: {stage})")
-        sections.append("")
+            sections.append(f"""## Current Task: {task.task_id}
+**Title**: {task.title}
+**Status**: {status}
+**Pipeline Stage**: {stage}
+**Priority**: {task.priority or 'Not set'}
+
+### Description
+{task.description or 'No description provided.'}
+
+### Acceptance Criteria""")
+            if task.acceptance_criteria:
+                for i, criteria in enumerate(task.acceptance_criteria, 1):
+                    sections.append(f"{i}. {criteria}")
+            else:
+                sections.append("No acceptance criteria defined.")
+
+            # Show blocking dependencies
+            if task.blocked_by:
+                sections.append(f"\n**Blocked By**: {', '.join(task.blocked_by)}")
+            sections.append("")
+        else:
+            # Summary view for multiple tasks
+            sections.append("## Tasks in This Run")
+            for task in tasks:
+                status = task.status.value if task.status else "unknown"
+                stage = task.pipeline_stage.value if task.pipeline_stage else "none"
+                sections.append(f"- **{task.task_id}**: {task.title} [{status}] (stage: {stage})")
+            sections.append("")
 
     # Previous agent reports - the key handoff data
     if reports:
@@ -254,26 +291,38 @@ def write_handoff_file(
     run_id: int,
     role: str,
     project_path: str,
+    task_id: Optional[str] = None,
     include_raw_output: bool = False
 ) -> str:
-    """Write handoff context to _spec/HANDOFF.md file.
+    """Write handoff context to task-specific file (READ-ONLY for agents).
+
+    Creates: _spec/HANDOFF_{run_id}_{task_id}.md
+    This file is generated fresh before each agent run and should NOT
+    be modified by agents. Agents output via the report API instead.
 
     Args:
         db: SQLAlchemy session
         run_id: Current run ID
         role: Agent role about to execute
         project_path: Path to project repository
+        task_id: Optional task ID for task-specific handoff
         include_raw_output: Include full raw output
 
     Returns:
         Path to written file
     """
-    context = build_handoff_context(db, run_id, role, include_raw_output)
+    context = build_handoff_context(db, run_id, role, task_id=task_id, include_raw_output=include_raw_output)
 
     spec_dir = Path(project_path) / "_spec"
     spec_dir.mkdir(exist_ok=True)
 
-    handoff_path = spec_dir / "HANDOFF.md"
+    # Task-specific filename to avoid conflicts
+    if task_id:
+        filename = f"HANDOFF_{run_id}_{task_id}.md"
+    else:
+        filename = f"HANDOFF_{run_id}.md"
+
+    handoff_path = spec_dir / filename
     handoff_path.write_text(context)
 
     return str(handoff_path)
@@ -284,28 +333,35 @@ def get_handoff_for_prompt(
     run_id: int,
     role: str,
     project_path: str,
+    task_id: Optional[str] = None,
     write_file: bool = True
 ) -> str:
-    """Get handoff context and optionally write to file.
+    """Get handoff context and optionally write to task-specific file.
 
     This is the main entry point for agent_runner integration.
+    Creates READ-ONLY handoff files that agents should not modify.
 
     Args:
         db: SQLAlchemy session
         run_id: Current run ID
         role: Agent role about to execute
         project_path: Path to project
-        write_file: Whether to write HANDOFF.md
+        task_id: Optional task ID for task-specific context
+        write_file: Whether to write handoff file
 
     Returns:
         Context string for agent prompt
     """
-    context = build_handoff_context(db, run_id, role, include_raw_output=False)
+    context = build_handoff_context(db, run_id, role, task_id=task_id, include_raw_output=False)
 
     if write_file:
         try:
-            write_handoff_file(db, run_id, role, project_path, include_raw_output=True)
+            filepath = write_handoff_file(
+                db, run_id, role, project_path,
+                task_id=task_id, include_raw_output=True
+            )
+            print(f"Wrote handoff file: {filepath}")
         except Exception as e:
-            print(f"Warning: Could not write HANDOFF.md: {e}")
+            print(f"Warning: Could not write handoff file: {e}")
 
     return context

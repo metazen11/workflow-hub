@@ -119,6 +119,7 @@ Execute your role's responsibilities and output a JSON status report.
             from app.db import get_db
             from app.models.project import Project
             from app.models.run import Run
+            from app.models.task import Task
             from app.services.handoff_service import get_handoff_for_prompt
 
             db = next(get_db())
@@ -134,12 +135,17 @@ Execute your role's responsibilities and output a JSON status report.
                 db.close()
                 return f"# Project Context\nProject Path: {project_path}\nRun ID: {run_id}"
 
-            # Get handoff context (writes HANDOFF.md and returns context string)
+            # Get primary task for this run (for task-specific handoff file)
+            task = db.query(Task).filter(Task.run_id == run_id).first()
+            task_id = task.task_id if task else None
+
+            # Get handoff context (writes HANDOFF_{run_id}_{task_id}.md)
             handoff_context = get_handoff_for_prompt(
                 db=db,
                 run_id=run_id,
                 role=role,
                 project_path=project.repo_path or project_path,
+                task_id=task_id,
                 write_file=True
             )
 
