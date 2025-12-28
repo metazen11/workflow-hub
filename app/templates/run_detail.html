@@ -101,6 +101,23 @@
                             Approve Deploy
                         </button>
                         {% endif %}
+                        {% if run.can_deploy %}
+                        <button class="btn btn-primary" onclick="startDeployment()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                            </svg>
+                            Start Deployment
+                        </button>
+                        {% endif %}
+                        {% if run.can_rollback %}
+                        <button class="btn btn-warning" onclick="rollbackDeployment()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="1 4 1 10 7 10"></polyline>
+                                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                            </svg>
+                            Rollback
+                        </button>
+                        {% endif %}
                         {% if not run.killed %}
                         <button class="btn btn-danger" onclick="killRun()">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -284,6 +301,40 @@
                     </svg>
                     Add Task
                 </button>
+            </div>
+        </div>
+
+        <!-- Proof-of-Work Artifacts -->
+        <div class="section">
+            <h4 class="section-title">Proof-of-Work Artifacts</h4>
+            <div id="proofs-container">
+                <p style="color: var(--text-muted); font-style: italic;">Loading proofs...</p>
+            </div>
+            <div class="upload-section" style="margin-top: 16px;">
+                <h5>Upload Proof</h5>
+                <form id="proof-upload-form" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end;">
+                    <div>
+                        <label style="font-size: 0.8rem; color: var(--text-muted);">Stage</label>
+                        <select id="proof-stage" class="form-select" style="width: 120px;">
+                            <option value="dev">DEV</option>
+                            <option value="qa">QA</option>
+                            <option value="sec">SEC</option>
+                            <option value="docs">DOCS</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8rem; color: var(--text-muted);">Type</label>
+                        <select id="proof-type" class="form-select" style="width: 120px;">
+                            <option value="screenshot">Screenshot</option>
+                            <option value="log">Log</option>
+                            <option value="report">Report</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <input type="file" id="proof-file" name="file" accept=".png,.jpg,.jpeg,.gif,.txt,.log,.md,.json,.xml,.csv" style="min-width: 200px;">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Upload</button>
+                </form>
             </div>
         </div>
 
@@ -737,6 +788,59 @@ function approveDeploy() {
     .catch(err => alert('Error approving deploy'));
 }
 
+function startDeployment() {
+    const envId = prompt('Enter Environment ID to deploy to:');
+    if (!envId) return;
+
+    const approver = prompt('Your name (for audit trail):');
+
+    if (!confirm(`Start deployment to environment ${envId}?`)) return;
+
+    fetch(`/api/runs/${runId}/deploy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            environment_id: parseInt(envId),
+            approved_by: approver || 'human'
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error: ' + data.error);
+        } else {
+            alert('Deployment started! It will run health checks and tests automatically.');
+            window.location.reload();
+        }
+    })
+    .catch(err => alert('Error starting deployment: ' + err));
+}
+
+function rollbackDeployment() {
+    const reason = prompt('Reason for rollback:', 'Manual rollback requested');
+    if (reason === null) return;  // User cancelled
+
+    if (!confirm('Are you sure you want to rollback to the previous deployment?')) return;
+
+    fetch(`/api/runs/${runId}/rollback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            reason: reason
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error: ' + data.error);
+        } else {
+            alert('Rollback started! The system will revert to the previous deployment.');
+            window.location.reload();
+        }
+    })
+    .catch(err => alert('Error rolling back: ' + err));
+}
+
 function killRun() {
     if (!confirm('Kill this run? This cannot be undone.')) return;
 
@@ -1032,5 +1136,73 @@ document.addEventListener('click', function(e) {
         btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
     });
 });
+
+// ============================================
+// Proof-of-Work Functions
+// ============================================
+function loadProofs() {
+    fetch(`/api/runs/${runId}/proofs`)
+        .then(r => r.json())
+        .then(data => {
+            const container = document.getElementById('proofs-container');
+            if (data.proofs && data.proofs.length > 0) {
+                let html = '<div class="proofs-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">';
+                data.proofs.forEach(proof => {
+                    const isImage = proof.filename.match(/\.(png|jpg|jpeg|gif|webp)$/i);
+                    const icon = proof.proof_type === 'screenshot' ? '📸' : proof.proof_type === 'log' ? '📄' : '📋';
+                    html += `
+                        <div class="proof-card" style="background: var(--bg-secondary); border-radius: 8px; padding: 12px; border: 1px solid var(--border);">
+                            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                                <span class="badge badge-secondary">${proof.stage || 'N/A'}</span>
+                                <span style="font-size: 1.2rem;">${icon}</span>
+                            </div>
+                            ${isImage ? `<img src="/api/runs/${runId}/proofs/${proof.stage}/${proof.filename}" style="width: 100%; border-radius: 4px; margin-bottom: 8px; cursor: pointer;" onclick="window.open(this.src)">` : ''}
+                            <div style="font-size: 0.8rem; color: var(--text-muted); word-break: break-all;">${proof.filename}</div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">${proof.proof_type} · ${Math.round(proof.size/1024)}KB</div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                container.innerHTML = html;
+            } else {
+                container.innerHTML = '<p style="color: var(--text-muted); font-style: italic;">No proofs uploaded yet.</p>';
+            }
+        })
+        .catch(err => {
+            document.getElementById('proofs-container').innerHTML = '<p style="color: var(--text-muted);">Error loading proofs</p>';
+        });
+}
+
+document.getElementById('proof-upload-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const fileInput = document.getElementById('proof-file');
+    if (!fileInput.files.length) {
+        alert('Please select a file');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('stage', document.getElementById('proof-stage').value);
+    formData.append('proof_type', document.getElementById('proof-type').value);
+
+    fetch(`/api/runs/${runId}/proofs/upload`, {
+        method: 'POST',
+        body: formData
+    })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                fileInput.value = '';
+                loadProofs();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to upload proof'));
+            }
+        })
+        .catch(err => alert('Error uploading proof'));
+});
+
+// Load proofs on page load
+loadProofs();
 </script>
 {% endblock %}

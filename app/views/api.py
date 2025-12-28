@@ -438,11 +438,15 @@ def task_delete(request, task_id):
         if not task:
             return JsonResponse({"error": "Task not found"}, status=404)
 
-        task_info = {"task_id": task.task_id, "title": task.title}
-        db.delete(task)
-        db.commit()
-        log_event(db, "human", "delete", "task", task_id, task_info)
-        return JsonResponse({"success": True, "message": f"Task {task_id} deleted"})
+        try:
+            task_info = {"task_id": task.task_id, "title": task.title}
+            db.delete(task)
+            db.commit()
+            log_event(db, "human", "delete", "task", task_id, task_info)
+            return JsonResponse({"success": True, "message": f"Task {task_id} deleted"})
+        except Exception as e:
+            db.rollback()
+            return JsonResponse({"error": str(e)}, status=500)
     finally:
         db.close()
 
@@ -477,15 +481,25 @@ def task_execute(request, task_id):
         # Link the task to this run
         task.run_id = run.id
         task.status = TaskStatus.IN_PROGRESS
+
+        # Capture values before commit (SQLAlchemy expires objects after commit)
+        run_id = run.id
+        task_id_str = task.task_id
+        task_dict = task.to_dict()
+        state_value = run.state.value
+        project_repo_path = project.repo_path
+
+        # Log event and commit
+        log_event(db, "human", "execute", "task", task_id, {"run_id": run_id})
         db.commit()
 
-        # Trigger pipeline in background thread
+        # Trigger pipeline in background thread (use captured values, not ORM objects)
         def run_pipeline():
             try:
                 subprocess.run(
                     ["python3", "scripts/agent_runner.py", "pipeline",
-                     "--run-id", str(run.id),
-                     "--project-path", project.repo_path,
+                     "--run-id", str(run_id),
+                     "--project-path", project_repo_path,
                      "--max-iterations", str(max_iterations)],
                     cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
                     timeout=1800  # 30 min timeout
@@ -496,13 +510,11 @@ def task_execute(request, task_id):
         thread = threading.Thread(target=run_pipeline, daemon=True)
         thread.start()
 
-        log_event(db, "human", "execute", "task", task_id, {"run_id": run.id})
-
         return JsonResponse({
-            "message": f"Pipeline started for task {task.task_id}",
-            "task": task.to_dict(),
-            "run_id": run.id,
-            "state": run.state.value
+            "message": f"Pipeline started for task {task_id_str}",
+            "task": task_dict,
+            "run_id": run_id,
+            "state": state_value
         }, status=202)
     finally:
         db.close()
@@ -676,8 +688,11 @@ def run_submit_report(request, run_id):
         return JsonResponse({"error": "Invalid JSON"}, status=400)
 
     try:
-        role = AgentRole(data.get("role"))
-        status = ReportStatus(data.get("status"))
+        # Convert to lowercase for enum lookup (standardized on lowercase)
+        role_str = data.get("role", "").lower()
+        status_str = data.get("status", "").lower()
+        role = AgentRole(role_str)
+        status = ReportStatus(status_str)
     except ValueError as e:
         return JsonResponse({"error": str(e)}, status=400)
 
@@ -690,7 +705,8 @@ def run_submit_report(request, run_id):
             status=status,
             summary=data.get("summary"),
             details=data.get("details"),
-            actor=data.get("actor", role.value)
+            actor=data.get("actor", role.value),
+            raw_output=data.get("raw_output")
         )
         if error:
             return JsonResponse({"error": error}, status=400)
@@ -2365,5 +2381,498 @@ def director_activity(request):
             "activity": [e.to_dict() for e in activity],
             "count": len(activity)
         })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def director_run_cycle(request):
+    """Run a single Director orchestration cycle.
+
+    POST /api/director/run-cycle
+
+    This runs the algorithmic orchestration without needing the daemon:
+    - Auto-starts BACKLOG tasks if there's bandwidth
+    - Advances tasks that have passing reports
+    - Tracks/retries stuck tasks
+
+    Returns:
+        {
+            "started": [...],
+            "advanced": [...],
+            "retried": [...],
+            "blocked": [...]
+        }
+    """
+    from app.services.director_service import TaskOrchestrator
+
+    db = next(get_db())
+    try:
+        orchestrator = TaskOrchestrator(db)
+        result = orchestrator.run_cycle()
+
+        # Add summary counts
+        result["summary"] = {
+            "started_count": len(result["started"]),
+            "advanced_count": len(result["advanced"]),
+            "retried_count": len(result["retried"]),
+            "blocked_count": len(result["blocked"]),
+            "total_actions": (len(result["started"]) + len(result["advanced"]) +
+                            len(result["retried"]) + len(result["blocked"]))
+        }
+
+        return JsonResponse(result)
+    finally:
+        db.close()
+
+
+# =============================================================================
+# Proof-of-Work Endpoints
+# =============================================================================
+
+def proof_list(request, entity_type, entity_id):
+    """List proof artifacts for a run or task.
+
+    GET /api/runs/{run_id}/proofs
+    GET /api/tasks/{task_id}/proofs
+
+    Query params:
+        - stage: Filter by stage (dev, qa, sec, docs)
+    """
+    from app.services.proof_service import ProofService
+
+    if entity_type not in ("runs", "tasks"):
+        return JsonResponse({"error": "Invalid entity type"}, status=400)
+
+    # Map URL path to entity type
+    etype = "run" if entity_type == "runs" else "task"
+    stage = request.GET.get("stage")
+
+    db = next(get_db())
+    try:
+        service = ProofService(db)
+        proofs = service.list_proofs(etype, entity_id, stage)
+
+        return JsonResponse({
+            "entity_type": etype,
+            "entity_id": entity_id,
+            "proofs": proofs,
+            "count": len(proofs)
+        })
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=404)
+    finally:
+        db.close()
+
+
+def proof_summary(request, entity_type, entity_id):
+    """Get proof summary for a run or task.
+
+    GET /api/runs/{run_id}/proofs/summary
+    GET /api/tasks/{task_id}/proofs/summary
+    """
+    from app.services.proof_service import ProofService
+
+    if entity_type not in ("runs", "tasks"):
+        return JsonResponse({"error": "Invalid entity type"}, status=400)
+
+    etype = "run" if entity_type == "runs" else "task"
+
+    db = next(get_db())
+    try:
+        service = ProofService(db)
+        summary = service.get_proof_summary(etype, entity_id)
+
+        return JsonResponse({
+            "entity_type": etype,
+            "entity_id": entity_id,
+            "summary": summary
+        })
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=404)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def proof_upload(request, entity_type, entity_id):
+    """Upload a proof artifact.
+
+    POST /api/runs/{run_id}/proofs/upload
+    POST /api/tasks/{task_id}/proofs/upload
+
+    Body (multipart/form-data or JSON):
+        - stage: Pipeline stage (dev, qa, sec, docs)
+        - proof_type: Type of proof (screenshot, log, report)
+        - description: Optional description
+        - file: File data (for multipart)
+        - content: Base64 encoded content (for JSON)
+    """
+    from app.services.proof_service import ProofService
+    import base64
+
+    if entity_type not in ("runs", "tasks"):
+        return JsonResponse({"error": "Invalid entity type"}, status=400)
+
+    etype = "run" if entity_type == "runs" else "task"
+
+    db = next(get_db())
+    try:
+        service = ProofService(db)
+
+        # Handle multipart form data
+        if request.content_type and "multipart/form-data" in request.content_type:
+            stage = request.POST.get("stage", "dev")
+            proof_type = request.POST.get("proof_type", "screenshot")
+            description = request.POST.get("description", "")
+
+            if "file" not in request.FILES:
+                return JsonResponse({"error": "No file provided"}, status=400)
+
+            uploaded_file = request.FILES["file"]
+            content = uploaded_file.read()
+            ext = os.path.splitext(uploaded_file.name)[1].lower() or ".bin"
+            
+            # Auto-detect proof type from extension if user left it as default 'screenshot'
+            # but uploaded a non-image file
+            if proof_type == "screenshot" and ext not in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]:
+                if ext in [".csv", ".json", ".xml", ".html", ".md", ".txt", ".log"]:
+                    proof_type = "log"
+                elif ext in [".pdf", ".docx"]:
+                    proof_type = "report"
+            
+        else:
+            # Handle JSON with base64 content
+            data = _get_json_body(request)
+            if not data:
+                return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+            stage = data.get("stage", "dev")
+            proof_type = data.get("proof_type", "screenshot")
+            description = data.get("description", "")
+            content_b64 = data.get("content")
+
+            if not content_b64:
+                return JsonResponse({"error": "content (base64) required"}, status=400)
+
+            try:
+                content = base64.b64decode(content_b64)
+            except Exception:
+                return JsonResponse({"error": "Invalid base64 content"}, status=400)
+
+            ext = data.get("extension", ".png")
+
+        result = service.save_proof(
+            entity_type=etype,
+            entity_id=entity_id,
+            stage=stage,
+            proof_type=proof_type,
+            content=content,
+            extension=ext,
+            description=description
+        )
+
+        log_event(db, "agent", "upload_proof", etype, entity_id, {
+            "stage": stage,
+            "proof_type": proof_type,
+            "size": result["size"]
+        })
+
+        return JsonResponse({"success": True, "proof": result}, status=201)
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=404)
+    finally:
+        db.close()
+
+
+def proof_view(request, entity_type, entity_id, filename):
+    """View/download a proof artifact.
+
+    GET /api/runs/{run_id}/proofs/{stage}/{filename}
+    GET /api/tasks/{task_id}/proofs/{stage}/{filename}
+    """
+    from app.services.proof_service import ProofService
+    import mimetypes
+
+    if entity_type not in ("runs", "tasks"):
+        return JsonResponse({"error": "Invalid entity type"}, status=400)
+
+    etype = "run" if entity_type == "runs" else "task"
+
+    # Extract stage from filename path
+    parts = filename.split("/")
+    if len(parts) == 2:
+        stage, fname = parts
+    else:
+        stage = None
+        fname = filename
+
+    db = next(get_db())
+    try:
+        service = ProofService(db)
+
+        if etype == "run":
+            proof_dir = service.get_run_proof_dir(entity_id, stage)
+        else:
+            proof_dir = service.get_task_proof_dir(entity_id, stage)
+
+        filepath = proof_dir / fname
+
+        if not filepath.exists():
+            return JsonResponse({"error": "Proof not found"}, status=404)
+
+        # Security: ensure path is within proof directory
+        try:
+            filepath.resolve().relative_to(proof_dir.resolve())
+        except ValueError:
+            return JsonResponse({"error": "Invalid path"}, status=400)
+
+        content_type, _ = mimetypes.guess_type(str(filepath))
+        content_type = content_type or "application/octet-stream"
+
+        with open(filepath, "rb") as f:
+            response = HttpResponse(f.read(), content_type=content_type)
+            response["Content-Disposition"] = f'inline; filename="{fname}"'
+            return response
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=404)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["DELETE", "POST"])
+def proof_clear(request, entity_type, entity_id):
+    """Clear proof artifacts.
+
+    DELETE /api/runs/{run_id}/proofs
+    DELETE /api/tasks/{task_id}/proofs
+
+    Query params:
+        - stage: Optional - only clear specific stage
+    """
+    from app.services.proof_service import ProofService
+
+    if entity_type not in ("runs", "tasks"):
+        return JsonResponse({"error": "Invalid entity type"}, status=400)
+
+    etype = "run" if entity_type == "runs" else "task"
+    stage = request.GET.get("stage")
+
+    db = next(get_db())
+    try:
+        service = ProofService(db)
+        count = service.clear_proofs(etype, entity_id, stage)
+
+        log_event(db, "human", "clear_proofs", etype, entity_id, {
+            "stage": stage,
+            "files_removed": count
+        })
+
+        return JsonResponse({
+            "success": True,
+            "files_removed": count
+        })
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=404)
+    finally:
+        db.close()
+
+
+# =============================================================================
+# Deployment Endpoints
+# =============================================================================
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def run_deploy(request, run_id):
+    """Start deployment for a run.
+
+    POST /api/runs/{run_id}/deploy
+
+    Body:
+        - environment_id: ID of environment to deploy to
+        - approved_by: Name of approver (optional)
+
+    Returns deployment record and initiates deployment in background.
+    """
+    from app.services.deployment_service import DeploymentService
+
+    data = _get_json_body(request) or {}
+    environment_id = data.get("environment_id")
+    approved_by = data.get("approved_by")
+
+    if not environment_id:
+        return JsonResponse({"error": "environment_id is required"}, status=400)
+
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        # Check run is in deployable state
+        if run.state not in (RunState.READY_FOR_DEPLOY, RunState.TESTING):
+            return JsonResponse({
+                "error": f"Run must be in READY_FOR_DEPLOY or TESTING state, currently: {run.state.value}"
+            }, status=400)
+
+        service = DeploymentService(db)
+
+        # Start deployment
+        deployment, error = service.start_deployment(
+            run_id=run_id,
+            environment_id=environment_id,
+            approved_by=approved_by,
+            triggered_by="human" if approved_by else "agent"
+        )
+
+        if error:
+            return JsonResponse({"error": error}, status=400)
+
+        # Execute deployment in background
+        def execute_async():
+            from app.db import get_db
+            db_session = next(get_db())
+            try:
+                svc = DeploymentService(db_session)
+                svc.complete_deployment_flow(run_id, environment_id, approved_by)
+            finally:
+                db_session.close()
+
+        thread = threading.Thread(target=execute_async, daemon=True)
+        thread.start()
+
+        return JsonResponse({
+            "deployment": deployment.to_dict(),
+            "message": "Deployment started",
+            "status": "deploying"
+        }, status=202)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def run_rollback(request, run_id):
+    """Rollback a deployment.
+
+    POST /api/runs/{run_id}/rollback
+
+    Body:
+        - deployment_id: ID of deployment to rollback from (optional, defaults to latest)
+        - target_deployment_id: ID of deployment to rollback to (optional)
+        - reason: Reason for rollback
+
+    Returns new rollback deployment record.
+    """
+    from app.services.deployment_service import DeploymentService
+
+    data = _get_json_body(request) or {}
+    deployment_id = data.get("deployment_id")
+    target_deployment_id = data.get("target_deployment_id")
+    reason = data.get("reason", "Manual rollback requested")
+
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        service = DeploymentService(db)
+
+        # If no deployment_id specified, find the latest for this run
+        if not deployment_id:
+            from app.models.deployment_history import DeploymentHistory
+            latest = db.query(DeploymentHistory).filter(
+                DeploymentHistory.run_id == run_id
+            ).order_by(DeploymentHistory.created_at.desc()).first()
+
+            if not latest:
+                return JsonResponse({"error": "No deployments found for this run"}, status=404)
+            deployment_id = latest.id
+
+        # Perform rollback
+        rollback_deployment, error = service.rollback(
+            deployment_id=deployment_id,
+            reason=reason,
+            triggered_by="human",
+            target_deployment_id=target_deployment_id
+        )
+
+        if error:
+            return JsonResponse({"error": error}, status=400)
+
+        # Execute rollback in background
+        def execute_async():
+            from app.db import get_db
+            db_session = next(get_db())
+            try:
+                svc = DeploymentService(db_session)
+                success, output = svc.execute_deployment(rollback_deployment.id)
+                if success:
+                    svc.run_health_check(rollback_deployment.id)
+            finally:
+                db_session.close()
+
+        thread = threading.Thread(target=execute_async, daemon=True)
+        thread.start()
+
+        return JsonResponse({
+            "rollback": rollback_deployment.to_dict(),
+            "message": "Rollback started",
+            "status": "rolling_back"
+        }, status=202)
+    finally:
+        db.close()
+
+
+def run_deployments(request, run_id):
+    """Get deployment history for a run.
+
+    GET /api/runs/{run_id}/deployments
+    """
+    from app.services.deployment_service import DeploymentService
+
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        service = DeploymentService(db)
+        deployments = service.get_deployment_history(run_id=run_id)
+
+        return JsonResponse({
+            "run_id": run_id,
+            "deployments": [d.to_dict() for d in deployments],
+            "count": len(deployments)
+        })
+    finally:
+        db.close()
+
+
+@require_http_methods(["DELETE", "POST"])  # Allow POST as fallback for fetch
+def project_delete(request, project_id):
+    """Delete a project and all its related data. REQUIRES CSRF TOKEN."""
+    db = next(get_db())
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return JsonResponse({"error": "Project not found"}, status=404)
+        
+        project_name = project.name
+        
+        # Delete the project (cascading deletes will handle related records)
+        db.delete(project)
+        db.commit()
+        
+        log_event(db, "human", "delete", "project", project_id, {"name": project_name})
+        return JsonResponse({"success": True, "message": f"Project '{project_name}' deleted successfully"})
+    except Exception as e:
+        db.rollback()
+        return JsonResponse({"error": str(e)}, status=500)
     finally:
         db.close()

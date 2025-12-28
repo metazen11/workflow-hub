@@ -1,6 +1,7 @@
 """UI views for Workflow Hub dashboard."""
 from django.shortcuts import render
 from django.http import HttpResponse
+from django.views.decorators.csrf import ensure_csrf_cookie
 from app.db import get_db
 from app.models import Project, Run, Task, TaskStatus, AuditEvent, RunState, Credential, Environment
 from app.models.bug_report import BugReport, BugReportStatus
@@ -126,28 +127,61 @@ def dashboard(request):
 
         # Projects
         projects_list = db.query(Project).order_by(Project.created_at.desc()).all()
-        projects = [{
-            'id': p.id,
-            'name': p.name,
-            'description': p.description,
-            'task_count': len(p.tasks),
-            'run_count': len(p.runs)
-        } for p in projects_list]
+        projects = db.query(Project).filter(Project.is_archived == False).all()
+        for p in projects:
+            p.task_count = db.query(Task).filter(Task.project_id == p.id).count()
+            p.run_count = db.query(Run).filter(Run.project_id == p.id).count()
 
-        # Recent activity (from audit log + bugs + tasks, exclude killed)
+        # Active Tasks - Group by Pipeline Stage for Kanban
+        task_kanban = {
+            'backlog': [],
+            'dev': [],
+            'qa': [],
+            'sec': [],
+            'docs': [],
+            'complete': []
+        }
+        
+        # Fetch all non-archived tasks
+        all_active_tasks = db.query(Task).filter(
+            Task.status != TaskStatus.DONE
+        ).order_by(Task.priority.desc(), Task.created_at.desc()).all()
+
+        for t in all_active_tasks:
+            # Map stage to key
+            stage_key = 'backlog'
+            if t.pipeline_stage:
+                # specific mapping if needed, otherwise use value
+                val = t.pipeline_stage.value
+                if val == 'none': stage_key = 'backlog'
+                else: stage_key = val
+            
+            if stage_key in task_kanban:
+                task_kanban[stage_key].append({
+                    'id': t.id,
+                    'title': t.title,
+                    'project_name': t.project.name if t.project else '',
+                    'priority': t.priority,
+                    'status_class': _get_status_class(t.status.value),
+                    'run_id': t.run_id
+                })
+
+        # Recent activity (mix of bugs, runs, and recently completed tasks)
         recent_events = db.query(AuditEvent).order_by(AuditEvent.timestamp.desc()).limit(10).all()
-        recent_bugs = db.query(BugReport).filter(BugReport.killed == False).order_by(BugReport.created_at.desc()).limit(5).all()
         recent_tasks = db.query(Task).order_by(Task.created_at.desc()).limit(5).all()
-
+        
         activity = []
+        
+        # 1. Recent bugs
+        recent_bugs = db.query(BugReport).order_by(BugReport.created_at.desc()).limit(5).all()
         for b in recent_bugs:
             activity.append({
                 'type': 'bug',
-                'title': f'Bug #{b.id}: {b.title}',
-                'description': f'{b.app_name or "Unknown app"} - {b.status.value}',
-                'time': b.created_at.strftime('%H:%M') if b.created_at else '',
-                'timestamp': b.created_at,
-                'url': f'/ui/bugs/{b.id}/'
+                'title': f"Bug: {b.title}",
+                'description': b.description[:50] + "...",
+                'time': b.created_at.strftime('%Y-%m-%d %H:%M'),
+                'url': f"/ui/bugs/{b.id}/",
+                'created_at': b.created_at
             })
         for t in recent_tasks:
             activity.append({
@@ -174,7 +208,6 @@ def dashboard(request):
 
         context = {
             'active_page': 'dashboard',
-            'open_bugs_count': open_bugs if open_bugs > 0 else None,
             'stats': {
                 'open_bugs': open_bugs,
                 'active_runs': active_runs,
@@ -182,8 +215,11 @@ def dashboard(request):
                 'total_projects': total_projects
             },
             'kanban': kanban,
+            'task_kanban': task_kanban,
+            'activity': activity,
             'projects': projects,
-            'activity': activity
+            'active_tasks': [], # Legacy support if needed, empty now
+            'open_bugs_count': open_bugs if open_bugs > 0 else None
         }
 
         return render(request, 'dashboard.html', context)
@@ -267,6 +303,7 @@ def runs_list(request):
     try:
         # Exclude killed runs
         all_runs = db.query(Run).filter(Run.killed == False).order_by(Run.created_at.desc()).all()
+        all_projects = db.query(Project).order_by(Project.name).all()
         open_bugs = _get_open_bugs_count(db)
 
         # Stats
@@ -288,10 +325,13 @@ def runs_list(request):
             'created_at': r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '',
         } for r in all_runs]
 
+        projects = [{'id': p.id, 'name': p.name} for p in all_projects]
+
         context = {
             'active_page': 'runs',
             'stats': stats,
             'runs': runs,
+            'projects': projects,
             'open_bugs_count': open_bugs
         }
 
@@ -337,6 +377,7 @@ def projects_list(request):
         db.close()
 
 
+@ensure_csrf_cookie
 def project_view(request, project_id):
     """Project detail view with credentials and environments."""
     db = next(get_db())
@@ -487,6 +528,8 @@ def run_view(request, run_id):
         # State flags for template
         is_failed = current_state in ['qa_failed', 'sec_failed', 'docs_failed', 'testing_failed']
         is_ready_for_deploy = current_state == 'ready_for_deploy'
+        can_deploy = current_state in ['ready_for_deploy', 'testing']
+        can_rollback = current_state in ['deployed', 'testing', 'testing_failed']
 
         context = {
             'active_page': 'runs',
@@ -501,6 +544,8 @@ def run_view(request, run_id):
                 'killed': run.killed,
                 'is_failed': is_failed,
                 'is_ready_for_deploy': is_ready_for_deploy,
+                'can_deploy': can_deploy,
+                'can_rollback': can_rollback,
                 'created_at': run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '',
                 'results': results,
             },
@@ -536,6 +581,7 @@ def run_view(request, run_id):
         db.close()
 
 
+@ensure_csrf_cookie
 def task_view(request, task_id):
     """Task detail view with attachments."""
     db = next(get_db())
@@ -566,6 +612,7 @@ def task_view(request, task_id):
                 'project_name': task.project.name if task.project else 'Unknown',
                 'run_id': task.run_id,
                 'created_at': task.created_at.strftime('%Y-%m-%d %H:%M') if task.created_at else '',
+                'pipeline_stage': task.pipeline_stage.value if task.pipeline_stage else 'none',
             },
             'attachments': [a.to_dict() for a in attachments]
         }

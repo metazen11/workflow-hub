@@ -22,6 +22,7 @@ urlpatterns = [
     path('api/projects/create', api.project_create, name='project_create'),
     path('api/projects/<int:project_id>', api.project_detail, name='project_detail'),
     path('api/projects/<int:project_id>/update', api.project_update, name='project_update'),
+    path('api/projects/<int:project_id>/delete', api.project_delete, name='project_delete'),
     path('api/projects/<int:project_id>/execute', api.project_execute, name='project_execute'),
     path('api/projects/<int:project_id>/refresh', api.project_refresh, name='project_refresh'),
     path('api/projects/<int:project_id>/context', api.orchestrator_context, name='orchestrator_context'),
@@ -80,6 +81,9 @@ urlpatterns = [
     path('api/runs/<int:run_id>/trigger-pipeline', api.run_trigger_pipeline, name='run_trigger_pipeline'),
     path('api/runs/<int:run_id>/task-progress', api.run_task_progress, name='run_task_progress'),
     path('api/runs/<int:run_id>/kill', api.run_kill, name='run_kill'),
+    path('api/runs/<int:run_id>/deploy', api.run_deploy, name='run_deploy'),
+    path('api/runs/<int:run_id>/rollback', api.run_rollback, name='run_rollback'),
+    path('api/runs/<int:run_id>/deployments', api.run_deployments, name='run_deployments'),
     path('api/runs/<int:run_id>/director/process', api.director_process_run, name='director_process_run'),
 
     # Threat Intel
@@ -92,6 +96,7 @@ urlpatterns = [
     path('api/director/stop', api.director_stop, name='director_stop'),
     path('api/director/settings', api.director_settings_update, name='director_settings'),
     path('api/director/activity', api.director_activity, name='director_activity'),
+    path('api/director/run-cycle', api.director_run_cycle, name='director_run_cycle'),
 
     # Audit
     path('api/audit', api.audit_log, name='audit_log'),
@@ -116,4 +121,11 @@ urlpatterns = [
 
     # Kill endpoints (soft delete)
     path('api/runs/<int:run_id>/kill', api.run_kill, name='run_kill'),
+
+    # Proof-of-Work (evidence artifacts)
+    path('api/<str:entity_type>/<int:entity_id>/proofs', api.proof_list, name='proof_list'),
+    path('api/<str:entity_type>/<int:entity_id>/proofs/summary', api.proof_summary, name='proof_summary'),
+    path('api/<str:entity_type>/<int:entity_id>/proofs/upload', api.proof_upload, name='proof_upload'),
+    path('api/<str:entity_type>/<int:entity_id>/proofs/clear', api.proof_clear, name='proof_clear'),
+    path('api/<str:entity_type>/<int:entity_id>/proofs/<path:filename>', api.proof_view, name='proof_view'),
 ]

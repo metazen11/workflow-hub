@@ -3,7 +3,7 @@ from app.models.credential import Credential, CredentialType
 from app.models.environment import Environment, EnvironmentType
 from app.models.project import Project
 from app.models.requirement import Requirement
-from app.models.task import Task, TaskStatus
+from app.models.task import Task, TaskStatus, TaskPipelineStage
 from app.models.run import Run, RunState
 from app.models.report import AgentReport, AgentRole
 from app.models.threat_intel import ThreatIntel, ThreatStatus
@@ -12,6 +12,7 @@ from app.models.webhook import Webhook
 from app.models.bug_report import BugReport, BugReportStatus
 from app.models.attachment import TaskAttachment, AttachmentType, validate_file_security, AttachmentSecurityError
 from app.models.role_config import RoleConfig
+from app.models.deployment_history import DeploymentHistory, DeploymentStatus
 
 __all__ = [
     'Credential',
@@ -22,6 +23,7 @@ __all__ = [
     'Requirement',
     'Task',
     'TaskStatus',
+    'TaskPipelineStage',
     'Run',
     'RunState',
     'AgentReport',
@@ -37,4 +39,6 @@ __all__ = [
     'AttachmentType',
     'validate_file_security',
     'AttachmentSecurityError',
+    'DeploymentHistory',
+    'DeploymentStatus',
 ]

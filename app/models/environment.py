@@ -59,6 +59,8 @@ class Environment(Base):
     # Deployment
     deploy_command = Column(Text, nullable=True)  # e.g., "docker-compose up -d"
     health_check_url = Column(String(512), nullable=True)
+    test_command = Column(Text, nullable=True)  # e.g., "pytest tests/e2e -v"
+    rollback_command = Column(Text, nullable=True)  # e.g., "git checkout {commit_sha}"
     last_deploy_at = Column(DateTime(timezone=True), nullable=True)
     last_health_check_at = Column(DateTime(timezone=True), nullable=True)
     is_healthy = Column(Boolean, nullable=True)
@@ -95,6 +97,8 @@ class Environment(Base):
             "database_name": self.database_name,
             "deploy_command": self.deploy_command,
             "health_check_url": self.health_check_url,
+            "test_command": self.test_command,
+            "rollback_command": self.rollback_command,
             "last_deploy_at": self.last_deploy_at.isoformat() if self.last_deploy_at else None,
             "last_health_check_at": self.last_health_check_at.isoformat() if self.last_health_check_at else None,
             "is_healthy": self.is_healthy,
