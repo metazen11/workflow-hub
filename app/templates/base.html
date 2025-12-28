@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Workflow Hub{% endblock %}</title>
-    <link rel="stylesheet" href="/static/css/app.css">
+    <link rel="stylesheet" href="/static/css/app.css?v=2">
     <script>
         // Apply theme immediately to prevent flash
         if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
@@ -12,6 +13,7 @@
         }
     </script>
 </head>
+
 <body>
     <div class="app-layout">
         <!-- Sidebar -->
@@ -19,7 +21,7 @@
             <div class="sidebar-header">
                 <h1 class="logo">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
                     </svg>
                     Workflow Hub
                 </h1>
@@ -75,14 +77,16 @@
                 </div>
                 <div class="top-bar-actions">
                     <div class="refresh-indicator" id="refresh-indicator" title="Auto-refreshing every 30s">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
                             <path d="M23 4v6h-6M1 20v-6h6"></path>
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
                         </svg>
                         <span class="refresh-countdown">30</span>
                     </div>
                     <button class="icon-btn" id="theme-toggle" title="Toggle theme">
-                        <svg class="sun-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg class="sun-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="5"></circle>
                             <line x1="12" y1="1" x2="12" y2="3"></line>
                             <line x1="12" y1="21" x2="12" y2="23"></line>
@@ -93,7 +97,8 @@
                             <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
                             <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
                         </svg>
-                        <svg class="moon-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg class="moon-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2">
                             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
                         </svg>
                     </button>
@@ -106,15 +111,38 @@
         </main>
     </div>
 
-    <script src="/static/js/app.js?v=3"></script>
-    <script src="/static/js/task-actions.js?v=1"></script>
+    <!-- Global Confirmation Modal -->
+    <div id="global-confirm-modal" class="modal">
+        <div class="modal-content" style="max-width: 400px; padding: 0;">
+            <div class="modal-header">
+                <h3 id="global-confirm-title">Confirm</h3>
+                <button class="modal-close" onclick="closeConfirmModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="global-confirm-message" style="color: var(--text-primary); margin: 0;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+                <button class="btn btn-danger" id="global-confirm-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- React (production builds via CDN) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- Core app scripts -->
+    <script src="/static/js/app.js?v=9"></script>
+    <script src="/static/js/task-actions.js?v=3"></script>
+    <script src="/static/js/react-components.js?v=1"></script>
 
     <!-- Bug Report Widget - auto-captures current project from URL -->
     <script>
         window.BUG_REPORT_API = '/api/bugs/create';
         window.BUG_REPORT_APP = 'Workflow Hub';
         // Auto-detect project from URL if on project/run page
-        (function() {
+        (function () {
             const match = window.location.pathname.match(/\/ui\/(?:project|run)\/(\d+)/);
             if (match) {
                 window.BUG_REPORT_PROJECT_ID = match[1];
@@ -123,4 +151,5 @@
     </script>
     <script src="/static/bug-widget.js"></script>
 </body>
+
 </html>

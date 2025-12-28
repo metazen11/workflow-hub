@@ -221,7 +221,7 @@
     {
       "id": "WH-015",
       "title": "Implement CICD agent with approval gate",
-      "status": "pending",
+      "status": "done",
       "priority": 2,
       "description": "Deployment agent that requires human approval. After DOCS passes: commit to branch, merge to prod, push.",
       "acceptance_criteria": [
@@ -235,12 +235,13 @@
         "Deployment to dev/staging/production environments"
       ],
       "created": "2025-12-26",
+      "completed": "2025-12-27",
       "blocked_by": ["WH-013"]
     },
     {
       "id": "WH-016",
       "title": "Add Director GUI controls to dashboard",
-      "status": "pending",
+      "status": "done",
       "priority": 2,
       "description": "UI controls to start/stop Director service and view status",
       "acceptance_criteria": [
@@ -251,6 +252,7 @@
         "Tasks reviewed count"
       ],
       "created": "2025-12-26",
+      "completed": "2025-12-27",
       "blocked_by": ["WH-014"]
     },
     {
@@ -347,6 +349,114 @@
       ],
       "created": "2025-12-27",
       "completed": "2025-12-27"
+    },
+    {
+      "id": "WH-023",
+      "title": "Proof-of-work folder system for agent evidence",
+      "status": "done",
+      "priority": 2,
+      "description": "Local folder structure for agents to save evidence (screenshots, logs, reports). Ready for S3/cloud migration.",
+      "acceptance_criteria": [
+        "ProofService class with save/list/clear methods",
+        "Folder structure: workspaces/{project}/proof/runs/{id}/{stage}/",
+        "API endpoints for upload/list/view proofs",
+        "UI integration in task and run detail pages",
+        "Proof requirements added to agent prompts"
+      ],
+      "created": "2025-12-27",
+      "completed": "2025-12-27"
+    },
+    {
+      "id": "WH-024",
+      "title": "Complete project documentation",
+      "status": "pending",
+      "priority": 5,
+      "description": "Document all API endpoints, UI features, architecture decisions, and usage guides",
+      "acceptance_criteria": [
+        "README updates",
+        "API documentation",
+        "Developer onboarding guide"
+      ],
+      "created": "2025-12-27"
+    },
+    {
+      "id": "WH-025",
+      "title": "UI polish - responsive dashboard",
+      "status": "pending",
+      "priority": 6,
+      "description": "Fix dashboard width issues - should stay within browser viewport without horizontal scrolling. Make all UI tables filterable and responsive.",
+      "acceptance_criteria": [
+        "Dashboard fits browser viewport",
+        "No horizontal scrolling",
+        "Tables are filterable",
+        "Consistent styling across views"
+      ],
+      "created": "2025-12-27"
+    },
+    {
+      "id": "WH-026",
+      "title": "Automated E2E pipeline test",
+      "status": "pending",
+      "priority": 7,
+      "description": "After CI: Create fully automated end-to-end test that runs a feature through the entire pipeline without human interaction",
+      "acceptance_criteria": [
+        "Playwright test simulates full pipeline",
+        "DEV→QA→SEC→DOCS→COMPLETE automated",
+        "Agent reports simulated",
+        "State transitions verified"
+      ],
+      "created": "2025-12-27"
+    },
+    {
+      "id": "WH-027",
+      "title": "Bug reports as tasks integration",
+      "status": "pending",
+      "priority": 6,
+      "description": "Bug reports created via the widget should also appear as tasks in the project task list",
+      "acceptance_criteria": [
+        "Bug widget remains separate UI",
+        "Bugs can be converted to tasks",
+        "Tasks track original bug reference",
+        "Pipeline flow for bug-derived tasks"
+      ],
+      "created": "2025-12-27"
+    },
+    {
+      "id": "WH-028",
+      "title": "Systematic UI fix - view by view validation",
+      "status": "pending",
+      "priority": 1,
+      "description": "Methodically go through each view, fix confirmation dialogs, button handlers, auto-refresh conflicts, and ensure each view works completely before moving on",
+      "acceptance_criteria": [
+        "Dashboard view - all buttons work correctly",
+        "Project detail view - all actions work",
+        "Run detail view - all controls work",
+        "Task detail view - Run Agent works without page reload",
+        "Task board view - drag and drop works",
+        "Bug list/detail views - all actions work",
+        "No confirmation dialog issues",
+        "No auto-refresh interference"
+      ],
+      "created": "2025-12-27"
+    },
+    {
+      "id": "WH-029",
+      "title": "Reusable editable/filterable table component (PyCRUD-style)",
+      "status": "pending",
+      "priority": 4,
+      "description": "Create a reusable table component like ajaxCRUD that auto-generates editable tables with sorting, filtering, inline editing, AJAX save",
+      "acceptance_criteria": [
+        "create_editable_filterable_table(table_name, params) helper",
+        "Auto-detect column types and render appropriate controls",
+        "Sorting by any column",
+        "Filtering/search across columns",
+        "Double-click inline editing",
+        "AJAX save on edit",
+        "Row-level operations (delete, actions)",
+        "Pagination support"
+      ],
+      "created": "2025-12-27",
+      "notes": "Inspired by ajaxCRUD PHP library - create Python equivalent for Django"
     }
   ]
 }

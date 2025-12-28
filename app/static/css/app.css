@@ -653,6 +653,51 @@ a.activity-item.clickable:hover .activity-title {
 
 .btn-danger { background: var(--danger); color: white; }
 .btn-success { background: var(--success); color: white; }
+.btn-warning { background: var(--warning); color: white; }
+.btn-warning:hover { background: #d97706; }
+
+.btn-loading {
+  opacity: 0.8;
+  cursor: wait;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spinner-sm {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Running state for buttons */
+.btn-running {
+  position: relative;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover), var(--accent));
+  background-size: 200% 100%;
+  animation: btn-running-pulse 1.5s ease-in-out infinite;
+  cursor: wait;
+}
+
+.btn-running:disabled {
+  opacity: 1;
+}
+
+@keyframes btn-running-pulse {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
 
 /* Status buttons group */
 .status-buttons {

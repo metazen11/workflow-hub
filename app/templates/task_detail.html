@@ -191,17 +191,48 @@
                     </select>
                 </div>
                 <div style="display: flex; gap: 8px; align-items: flex-end;">
-                    <button class="btn btn-secondary" onclick="setTaskStage({{ task.id }})">
+                    <button class="btn btn-secondary" id="move-stage-btn" data-task-id="{{ task.id }}">
                         Move to Stage
                     </button>
-                    <button class="btn btn-primary" onclick="executeTaskAgent({{ task.id }})">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" style="margin-right: 6px;">
-                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                        </svg>
-                        Run Agent
-                    </button>
+                    <!-- React-powered Run Agent button -->
+                    <div id="run-agent-container"></div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Proof-of-Work Artifacts -->
+        <div class="section">
+            <h4 class="section-title">Proof-of-Work Artifacts</h4>
+            <div id="proofs-container">
+                <p style="color: var(--text-muted); font-style: italic;">Loading proofs...</p>
+            </div>
+            <div class="upload-section" style="margin-top: 16px;">
+                <h5>Upload Proof</h5>
+                <form id="proof-upload-form" enctype="multipart/form-data"
+                    style="display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end;">
+                    <div>
+                        <label style="font-size: 0.8rem; color: var(--text-muted);">Stage</label>
+                        <select id="proof-stage" class="form-select" style="width: 120px;">
+                            <option value="dev">DEV</option>
+                            <option value="qa">QA</option>
+                            <option value="sec">SEC</option>
+                            <option value="docs">DOCS</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8rem; color: var(--text-muted);">Type</label>
+                        <select id="proof-type" class="form-select" style="width: 120px;">
+                            <option value="screenshot">Screenshot</option>
+                            <option value="log">Log</option>
+                            <option value="report">Report</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <input type="file" id="proof-file" name="file"
+                            accept=".png,.jpg,.jpeg,.gif,.txt,.log,.md,.json,.xml,.csv" style="min-width: 200px;">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Upload</button>
+                </form>
             </div>
         </div>
 
@@ -239,53 +270,39 @@
             .catch(err => alert('Error updating status'));
     }
 
-    function setTaskStage(taskId) {
-        const stage = document.getElementById('stage-select').value;
-        fetch(`/api/tasks/${taskId}/set-stage`, {
+    // Move Stage button handler - uses event delegation to survive auto-refresh
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest('#move-stage-btn');
+        if (!btn) return;
+
+        var taskId = btn.dataset.taskId;
+        var stageSelect = document.getElementById('stage-select');
+        if (!taskId || !stageSelect) return;
+
+        var stage = stageSelect.value;
+
+        fetch('/api/tasks/' + taskId + '/set-stage', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ stage: stage })
         })
-            .then(r => r.json())
-            .then(data => {
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
                 if (data.success) {
                     window.location.reload();
                 } else {
-                    alert('Error: ' + (data.error || 'Failed to sets stage'));
+                    alert('Error: ' + (data.error || 'Failed to set stage'));
                 }
             })
-            .catch(err => alert('Error setting stage'));
-    }
-
-    function executeTaskAgent(taskId) {
-        if (!confirm('Are you sure you want to trigger the agent for the current stage?')) return;
-
-        // Show loading state or toast
-        const btn = event.target.closest('button');
-        const originalText = btn.innerHTML;
-        btn.innerHTML = 'Starting...';
-        btn.disabled = true;
-
-        fetch(`/api/tasks/${taskId}/execute`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        })
-            .then(r => r.json())
-            .then(data => {
-                if (data.run_id || data.success) {
-                    alert('Agent started! Run ID: ' + data.run_id);
-                    window.location.reload();
-                } else {
-                    alert('Error: ' + (data.error || 'Failed to start agent'));
-                    btn.innerHTML = originalText;
-                    btn.disabled = false;
-                }
-            })
-            .catch(err => {
-                alert('Error starting agent');
-                btn.innerHTML = originalText;
-                btn.disabled = false;
+            .catch(function (err) {
+                console.error('Error setting stage:', err);
+                alert('Error setting stage');
             });
+    });
+
+    // Mount React-powered Run Agent button
+    if (window.WH && window.WH.React) {
+        window.WH.React.mountRunAgentButton({{ task.id }}, '{{ task.pipeline_stage }}', 'run-agent-container');
     }
 
     function saveTaskDetails(taskId) {
@@ -339,5 +356,71 @@
             })
             .catch(err => alert('Error uploading file'));
     });
+
+    // Proof-of-Work functionality
+    function loadProofs() {
+        fetch(`/api/tasks/{{ task.id }}/proofs`)
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('proofs-container');
+                if (data.proofs && data.proofs.length > 0) {
+                    let html = '<div class="proofs-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">';
+                    data.proofs.forEach(proof => {
+                        const isImage = proof.filename.match(/\.(png|jpg|jpeg|gif|webp)$/i);
+                        const icon = proof.proof_type === 'screenshot' ? '📸' : proof.proof_type === 'log' ? '📄' : '📋';
+                        html += `
+                            <div class="proof-card" style="background: var(--bg-secondary); border-radius: 8px; padding: 12px; border: 1px solid var(--border);">
+                                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                                    <span class="badge badge-secondary">${proof.stage || 'N/A'}</span>
+                                    <span style="font-size: 1.2rem;">${icon}</span>
+                                </div>
+                                ${isImage ? `<img src="/api/tasks/{{ task.id }}/proofs/${proof.stage}/${proof.filename}" style="width: 100%; border-radius: 4px; margin-bottom: 8px; cursor: pointer;" onclick="window.open(this.src)">` : ''}
+                                <div style="font-size: 0.8rem; color: var(--text-muted); word-break: break-all;">${proof.filename}</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">${proof.proof_type} · ${Math.round(proof.size / 1024)}KB</div>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = '<p style="color: var(--text-muted); font-style: italic;">No proofs uploaded yet.</p>';
+                }
+            })
+            .catch(err => {
+                document.getElementById('proofs-container').innerHTML = '<p style="color: var(--text-muted);">Error loading proofs</p>';
+            });
+    }
+
+    document.getElementById('proof-upload-form').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const fileInput = document.getElementById('proof-file');
+        if (!fileInput.files.length) {
+            alert('Please select a file');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('stage', document.getElementById('proof-stage').value);
+        formData.append('proof_type', document.getElementById('proof-type').value);
+
+        fetch(`/api/tasks/{{ task.id }}/proofs/upload`, {
+            method: 'POST',
+            body: formData
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    fileInput.value = '';
+                    loadProofs();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to upload proof'));
+                }
+            })
+            .catch(err => alert('Error uploading proof'));
+    });
+
+    // Load proofs on page load
+    loadProofs();
 </script>
 {% endblock %}

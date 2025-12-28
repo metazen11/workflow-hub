@@ -102,21 +102,12 @@
                         </button>
                         {% endif %}
                         {% if run.can_deploy %}
-                        <button class="btn btn-primary" onclick="startDeployment()">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
-                            </svg>
-                            Start Deployment
-                        </button>
+                        <!-- React-powered Deploy button -->
+                        <div id="deploy-button-container" style="display: inline-block;"></div>
                         {% endif %}
                         {% if run.can_rollback %}
-                        <button class="btn btn-warning" onclick="rollbackDeployment()">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="1 4 1 10 7 10"></polyline>
-                                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-                            </svg>
-                            Rollback
-                        </button>
+                        <!-- React-powered Rollback button -->
+                        <div id="rollback-button-container" style="display: inline-block;"></div>
                         {% endif %}
                         {% if not run.killed %}
                         <button class="btn btn-danger" onclick="killRun()">
@@ -1204,5 +1195,15 @@ document.getElementById('proof-upload-form').addEventListener('submit', function
 
 // Load proofs on page load
 loadProofs();
+
+// Mount React components
+if (window.WH && window.WH.React) {
+    {% if run.can_deploy %}
+    window.WH.React.mountDeployButton({{ run.id }}, 'deploy-button-container');
+    {% endif %}
+    {% if run.can_rollback %}
+    window.WH.React.mountRollbackButton({{ run.id }}, 'rollback-button-container');
+    {% endif %}
+}
 </script>
 {% endblock %}
