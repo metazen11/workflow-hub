@@ -49,10 +49,12 @@ ROLE_DELIVERABLES = {
         "Output JSON report with findings",
     ],
     "docs": [
-        "Update README.md if needed",
-        "Add/update API documentation",
-        "Document new features or changes",
-        "Output JSON report with docs updated",
+        "VERIFY: Run tests first, ensure feature works",
+        "CAPTURE: Take screenshots of working feature (Playwright)",
+        "UPLOAD: Submit proofs to /api/runs/{run_id}/proofs/upload",
+        "FIX: If tests fail, fix issues (second-layer debug)",
+        "DOCUMENT: Update README.md and docs/ with working examples",
+        "Output JSON report with tests_passed, screenshots_taken, proofs_uploaded",
     ],
 }
 
