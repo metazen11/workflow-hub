@@ -401,13 +401,222 @@ def get_provider() -> AgentProvider:
 
 
 # =============================================================================
+# Automatic Proof Capture
+# =============================================================================
+
+def upload_proof(run_id: int, stage: str, proof_type: str, content: bytes,
+                 filename: str, description: str) -> bool:
+    """Upload a proof file to Workflow Hub."""
+    import io
+    try:
+        # Use requests with files parameter for multipart upload
+        files = {
+            'file': (filename, io.BytesIO(content), 'application/octet-stream')
+        }
+        data = {
+            'stage': stage,
+            'proof_type': proof_type,
+            'description': description
+        }
+        response = requests.post(
+            f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/proofs/upload",
+            files=files,
+            data=data,
+            timeout=30
+        )
+        if response.status_code in (200, 201):
+            print(f"  Uploaded proof: {filename}")
+            return True
+        else:
+            print(f"  Failed to upload proof {filename} (status {response.status_code}): {response.text}")
+            return False
+    except Exception as e:
+        print(f"  Error uploading proof: {e}")
+        return False
+
+
+def get_existing_proof_hashes(run_id: int, stage: str) -> set:
+    """Get (proof_type, size) tuples of existing proofs to avoid duplicates."""
+    try:
+        response = requests.get(
+            f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/proofs",
+            timeout=10
+        )
+        if response.status_code == 200:
+            proofs = response.json().get("proofs", [])
+            # Use (proof_type, size) as dedup key - same type & size = duplicate
+            return {(p.get("proof_type", ""), p.get("size", 0))
+                    for p in proofs if p.get("stage") == stage}
+    except Exception as e:
+        print(f"  Warning: Could not fetch existing proofs: {e}")
+    return set()
+
+
+def capture_automatic_proofs(agent_type: str, run_id: int, project_path: str,
+                             report: Dict[str, Any]) -> int:
+    """Automatically capture and upload proofs after agent execution.
+
+    Returns the number of proofs successfully uploaded.
+    Deduplicates by checking existing proofs before uploading.
+    """
+    print(f"Capturing automatic proofs for {agent_type}...")
+    proofs_uploaded = 0
+    stage = agent_type  # dev, qa, sec, docs, etc.
+
+    # Get existing proofs to avoid duplicates
+    existing = get_existing_proof_hashes(run_id, stage)
+    if existing:
+        print(f"  Found {len(existing)} existing proof(s), will skip duplicates")
+
+    def should_upload(proof_type: str, content: bytes, filename: str) -> bool:
+        """Check if this file should be uploaded (not a duplicate)."""
+        key = (proof_type, len(content))
+        if key in existing:
+            print(f"  Skipping duplicate: {filename} ({proof_type}, {len(content)} bytes)")
+            return False
+        return True
+
+    # 1. Always upload the raw output as a log (but skip if same size exists)
+    raw_output = report.get("raw_output", "")
+    if raw_output:
+        content = raw_output.encode("utf-8")
+        filename = f"{agent_type}_output.log"
+        if should_upload("log", content, filename):
+            success = upload_proof(
+                run_id=run_id,
+                stage=stage,
+                proof_type="log",
+                content=content,
+                filename=filename,
+                description=f"{agent_type.upper()} agent execution log"
+            )
+            if success:
+                proofs_uploaded += 1
+
+    # 2. Role-specific proof capture
+    if agent_type == "docs":
+        # Upload documentation files that were created/modified
+        doc_patterns = [
+            ("README.md", "Main README documentation"),
+            ("docs/API.md", "API documentation"),
+            ("docs/SETUP.md", "Setup documentation"),
+            ("CHANGELOG.md", "Changelog"),
+        ]
+        for doc_path, description in doc_patterns:
+            full_path = os.path.join(project_path, doc_path)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, "rb") as f:
+                        content = f.read()
+                    filename = os.path.basename(doc_path)
+                    if should_upload("report", content, filename):
+                        success = upload_proof(
+                            run_id=run_id,
+                            stage=stage,
+                            proof_type="report",
+                            content=content,
+                            filename=filename,
+                            description=description
+                        )
+                        if success:
+                            proofs_uploaded += 1
+                except Exception as e:
+                    print(f"  Could not upload {doc_path}: {e}")
+
+    elif agent_type == "qa":
+        # Upload test result files
+        test_patterns = [
+            ("pytest_results.xml", "Pytest XML results"),
+            ("test_output.log", "Test output log"),
+            ("bugs.json", "Bugs found by QA"),
+        ]
+        for test_path, description in test_patterns:
+            full_path = os.path.join(project_path, test_path)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, "rb") as f:
+                        content = f.read()
+                    if should_upload("log", content, test_path):
+                        success = upload_proof(
+                            run_id=run_id,
+                            stage=stage,
+                            proof_type="log",
+                            content=content,
+                            filename=test_path,
+                            description=description
+                        )
+                        if success:
+                            proofs_uploaded += 1
+                except Exception as e:
+                    print(f"  Could not upload {test_path}: {e}")
+
+    elif agent_type == "security":
+        # Upload security scan results
+        sec_patterns = [
+            ("security_report.json", "Security scan report"),
+            ("vulnerabilities.json", "Vulnerabilities found"),
+        ]
+        for sec_path, description in sec_patterns:
+            full_path = os.path.join(project_path, sec_path)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, "rb") as f:
+                        content = f.read()
+                    if should_upload("report", content, sec_path):
+                        success = upload_proof(
+                            run_id=run_id,
+                            stage=stage,
+                            proof_type="report",
+                            content=content,
+                            filename=sec_path,
+                            description=description
+                        )
+                        if success:
+                            proofs_uploaded += 1
+                except Exception as e:
+                    print(f"  Could not upload {sec_path}: {e}")
+
+    # 3. Look for any screenshots the agent may have taken
+    screenshots_dir = os.path.join(project_path, "screenshots")
+    if os.path.exists(screenshots_dir):
+        for filename in os.listdir(screenshots_dir):
+            if filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+                full_path = os.path.join(screenshots_dir, filename)
+                try:
+                    with open(full_path, "rb") as f:
+                        content = f.read()
+                    if should_upload("screenshot", content, filename):
+                        success = upload_proof(
+                            run_id=run_id,
+                            stage=stage,
+                            proof_type="screenshot",
+                            content=content,
+                            filename=filename,
+                            description=f"Screenshot: {filename}"
+                        )
+                        if success:
+                            proofs_uploaded += 1
+                except Exception as e:
+                    print(f"  Could not upload screenshot {filename}: {e}")
+
+    print(f"Uploaded {proofs_uploaded} proof(s)")
+    return proofs_uploaded
+
+
+# =============================================================================
 # Main Runner Logic
 # =============================================================================
 
 def run_agent_logic(agent_type: str, run_id: int, project_path: str) -> Dict[str, Any]:
     provider = get_provider()
     prompt = provider.get_agent_prompt(agent_type, run_id, project_path)
-    return provider.run_agent(agent_type, run_id, project_path, prompt)
+    report = provider.run_agent(agent_type, run_id, project_path, prompt)
+
+    # Automatically capture and upload proofs after agent completes
+    proofs_count = capture_automatic_proofs(agent_type, run_id, project_path, report)
+    report["proofs_uploaded"] = proofs_count
+
+    return report
 
 def submit_report(run_id: int, agent_type: str, report: dict):
     """Submit agent report back to Workflow Hub."""

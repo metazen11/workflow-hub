@@ -77,11 +77,18 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
+# NOTE: Django ORM is not used for app data - all models use SQLAlchemy with PostgreSQL.
+# This Django setting is kept minimal since we use SQLAlchemy for all DB operations.
+# If you need Django admin/auth in the future, point this to PostgreSQL as well.
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('POSTGRES_DB', 'wfhub'),
+        'USER': os.getenv('POSTGRES_USER', 'wfhub'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', ''),
+        'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
+        'PORT': os.getenv('POSTGRES_PORT', '5432'),
     }
 }
 

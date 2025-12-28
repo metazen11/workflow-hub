@@ -65,6 +65,7 @@ urlpatterns = [
     path('api/tasks/<int:task_id>/start', api.task_start, name='task_start'),
     path('api/tasks/<int:task_id>/advance', api.task_advance, name='task_advance'),
     path('api/tasks/<int:task_id>/loop-back', api.task_loop_back, name='task_loop_back'),
+    path('api/tasks/<int:task_id>/director/prepare', api.task_director_prepare, name='task_director_prepare'),
 
     # Runs
     path('api/projects/<int:project_id>/runs', api.runs_list, name='runs_list'),
@@ -84,7 +85,7 @@ urlpatterns = [
     path('api/runs/<int:run_id>/deploy', api.run_deploy, name='run_deploy'),
     path('api/runs/<int:run_id>/rollback', api.run_rollback, name='run_rollback'),
     path('api/runs/<int:run_id>/deployments', api.run_deployments, name='run_deployments'),
-    path('api/runs/<int:run_id>/director/process', api.director_process_run, name='director_process_run'),
+    path('api/runs/<int:run_id>/director/process', api.run_director_process, name='run_director_process'),
 
     # Threat Intel
     path('api/threat-intel', api.threat_intel_list, name='threat_intel_list'),

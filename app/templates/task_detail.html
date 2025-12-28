@@ -194,6 +194,15 @@
                     <button class="btn btn-secondary" id="move-stage-btn" data-task-id="{{ task.id }}">
                         Move to Stage
                     </button>
+                    <!-- Prepare Task button (director enrichment) -->
+                    <button class="btn btn-secondary" id="prepare-task-btn" data-task-id="{{ task.id }}" title="Director: enrich task with missing acceptance criteria">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                            <path d="M2 17l10 5 10-5"/>
+                            <path d="M2 12l10 5 10-5"/>
+                        </svg>
+                        Prepare
+                    </button>
                     <!-- React-powered Run Agent button -->
                     <div id="run-agent-container"></div>
                 </div>
@@ -302,8 +311,48 @@
 
     // Mount React-powered Run Agent button
     if (window.WH && window.WH.React) {
-        window.WH.React.mountRunAgentButton({{ task.id }}, '{{ task.pipeline_stage }}', 'run-agent-container');
+        window.WH.React.mountRunAgentButton(
+            {{ task.id }},
+            '{{ task.pipeline_stage }}',
+            'run-agent-container',
+            {{ task.run_id|default:'null' }}  // Pass existing run_id if task has one
+        );
     }
+
+    // Prepare Task button handler - Director enrichment
+    document.getElementById('prepare-task-btn').addEventListener('click', function() {
+        const taskId = this.dataset.taskId;
+        const btn = this;
+        const originalText = btn.innerHTML;
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-sm" style="margin-right: 4px;"></span>Preparing...';
+
+        fetch(`/api/tasks/${taskId}/director/prepare`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auto_trigger: false })  // Just enrich, don't run agent
+        })
+        .then(r => r.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+
+            if (data.enriched) {
+                alert('Task prepared! ' + data.message);
+                window.location.reload();  // Refresh to show new acceptance criteria
+            } else if (data.issues && data.issues.length > 0) {
+                alert('Task needs attention:\n- ' + data.issues.join('\n- '));
+            } else {
+                alert(data.message || 'Task is ready for agent execution');
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+            alert('Error preparing task: ' + err.message);
+        });
+    });
 
     function saveTaskDetails(taskId) {
         const title = document.getElementById('task-title').value;

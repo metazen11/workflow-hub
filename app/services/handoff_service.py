@@ -33,28 +33,31 @@ ROLE_DELIVERABLES = {
     "dev": [
         "Implement code to satisfy tests",
         "Follow TDD - tests should already exist from QA",
-        "Commit working code with clear messages",
-        "Output JSON report with files changed",
+        "COMMIT: Stage and commit ALL changes with descriptive message (git add -A && git commit -m '...')",
+        "Output JSON report with files changed and commit hash",
     ],
     "qa": [
         "Write failing tests FIRST (TDD red phase)",
         "Define acceptance criteria as executable tests",
         "Do NOT implement - only write tests",
+        "COMMIT: Stage and commit test files (git add tests/ && git commit -m 'Add tests for ...')",
         "Output JSON report with tests added",
     ],
     "security": [
         "Scan for OWASP Top 10 vulnerabilities",
         "Check for hardcoded secrets",
         "Review authentication/authorization",
+        "If fixes needed, implement them and COMMIT",
         "Output JSON report with findings",
     ],
     "docs": [
-        "VERIFY: Run tests first, ensure feature works",
+        "VERIFY: Run tests first (pytest), ensure feature works",
         "CAPTURE: Take screenshots of working feature (Playwright)",
         "UPLOAD: Submit proofs to /api/runs/{run_id}/proofs/upload",
         "FIX: If tests fail, fix issues (second-layer debug)",
         "DOCUMENT: Update README.md and docs/ with working examples",
-        "Output JSON report with tests_passed, screenshots_taken, proofs_uploaded",
+        "COMMIT: Stage and commit all documentation and fixes",
+        "Output JSON report with tests_passed, screenshots_taken, proofs_uploaded, commit_hash",
     ],
 }
 

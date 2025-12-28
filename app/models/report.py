@@ -34,18 +34,28 @@ class ReportStatus(enum.Enum):
     PENDING = "pending"
 
 
+# Custom enum type that uses values instead of names
+def _agent_role_values(enum_class):
+    return [e.value for e in enum_class]
+
+def _report_status_values(enum_class):
+    return [e.value for e in enum_class]
+
+
 class AgentReport(Base):
     """Report submitted by an agent for a run."""
     __tablename__ = "agent_reports"
 
     id = Column(Integer, primary_key=True, index=True)
     run_id = Column(Integer, ForeignKey("runs.id"), nullable=False)
-    role = Column(Enum(AgentRole), nullable=False)
-    status = Column(Enum(ReportStatus), default=ReportStatus.PENDING)
+    # Use native PostgreSQL enum with explicit values
+    role = Column(Enum(AgentRole, values_callable=_agent_role_values, native_enum=True, create_constraint=False), nullable=False)
+    status = Column(Enum(ReportStatus, values_callable=_report_status_values, native_enum=True, create_constraint=False), default=ReportStatus.PENDING)
 
     # Report content
     summary = Column(Text, nullable=True)
     details = Column(JSON, nullable=True)  # Flexible JSON for role-specific data
+    raw_output = Column(Text, nullable=True)  # Full LLM output for logging and agent queries
 
     # QA-specific fields stored in details:
     # - tests_added: list of test names
@@ -59,8 +69,8 @@ class AgentReport(Base):
     # Relationships
     run = relationship("Run", back_populates="reports")
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_raw_output: bool = False):
+        result = {
             "id": self.id,
             "run_id": self.run_id,
             "role": self.role.value if self.role else None,
@@ -69,3 +79,6 @@ class AgentReport(Base):
             "details": self.details,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+        if include_raw_output:
+            result["raw_output"] = self.raw_output
+        return result

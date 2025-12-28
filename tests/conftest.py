@@ -4,6 +4,7 @@ Uses the production database (wfhub) directly for simplicity.
 TODO: Add separate test database isolation when needed for CI/CD.
 """
 import os
+import uuid
 import pytest
 from dotenv import load_dotenv
 from sqlalchemy.orm import sessionmaker
@@ -48,9 +49,10 @@ def db_session():
 
 @pytest.fixture
 def sample_project(db_session):
-    """Create a sample project for testing."""
+    """Create a sample project for testing with unique name."""
+    unique_name = f"Test Project {uuid.uuid4().hex[:8]}"
     project = Project(
-        name="Test Project",
+        name=unique_name,
         description="A test project",
         repo_path="/tmp/test-repo",
         stack_tags=["python", "django"]
@@ -58,7 +60,15 @@ def sample_project(db_session):
     db_session.add(project)
     db_session.commit()
     db_session.refresh(project)
-    return project
+
+    yield project
+
+    # Cleanup: delete project and related data
+    try:
+        db_session.delete(project)
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
 
 
 @pytest.fixture
@@ -79,12 +89,16 @@ def sample_requirement(db_session, sample_project):
 
 @pytest.fixture
 def sample_run(db_session, sample_project):
-    """Create a sample run for testing."""
+    """Create a sample run for testing with unique name."""
+    unique_name = f"Run {uuid.uuid4().hex[:8]}"
     run = Run(
         project_id=sample_project.id,
-        name="Run 2025-01-01_01"
+        name=unique_name
     )
     db_session.add(run)
     db_session.commit()
     db_session.refresh(run)
-    return run
+
+    yield run
+
+    # Cleanup handled by cascade delete when project is deleted

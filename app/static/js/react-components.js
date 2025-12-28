@@ -154,21 +154,26 @@
   // RunAgentButton Component
   // Specialized button for triggering agent runs with polling
   // ============================================
-  function RunAgentButton({ taskId, currentStage, onComplete }) {
+  function RunAgentButton({ taskId, currentStage, onComplete, existingRunId }) {
     const [status, setStatus] = useState('idle'); // idle, confirming, starting, running, complete, error
     const [runId, setRunId] = useState(null);
     const [stateLabel, setStateLabel] = useState('');
     const pollInterval = useRef(null);
 
-    // Check for existing run on mount
+    // Check for existing run on mount (from prop or sessionStorage)
     useEffect(() => {
+      // Priority: existingRunId prop > sessionStorage
       const storedRunId = sessionStorage.getItem('runningAgentFor_' + taskId);
-      if (storedRunId && storedRunId !== 'null') {
-        setRunId(parseInt(storedRunId));
+      const activeRunId = existingRunId || (storedRunId && storedRunId !== 'null' ? parseInt(storedRunId) : null);
+
+      if (activeRunId) {
+        setRunId(activeRunId);
         setStatus('running');
-        setStateLabel('Reconnecting...');
+        setStateLabel('Checking...');
+        // Store it in sessionStorage for consistency
+        sessionStorage.setItem('runningAgentFor_' + taskId, activeRunId);
       }
-    }, [taskId]);
+    }, [taskId, existingRunId]);
 
     // Polling effect
     useEffect(() => {
@@ -560,10 +565,10 @@
     return root;
   }
 
-  function mountRunAgentButton(taskId, currentStage, containerId) {
+  function mountRunAgentButton(taskId, currentStage, containerId, existingRunId) {
     const container = document.getElementById(containerId);
     if (container) {
-      return mountComponent(RunAgentButton, { taskId, currentStage }, container);
+      return mountComponent(RunAgentButton, { taskId, currentStage, existingRunId }, container);
     }
   }
 

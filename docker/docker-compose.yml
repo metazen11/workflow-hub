@@ -1,6 +1,8 @@
 services:
   db:
     image: postgres:16
+    container_name: wfhub-db
+    hostname: wfhub-db
     env_file:
       - ../.env
     environment:
@@ -21,6 +23,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+    container_name: wfhub-app
+    hostname: wfhub-app
     env_file:
       - ../.env
     environment:

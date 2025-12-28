@@ -1,0 +1,383 @@
+{% extends 'base.html' %}
+
+{% block title %}Task Board - {{ project.name }}{% endblock %}
+
+{% block content %}
+<div class="row mb-4 align-items-center">
+    <div class="col-md-6">
+        <h1>
+            <i class="bi bi-kanban me-2"></i>Task Board
+            <small class="text-muted fs-5 ms-2">{{ project.name }}</small>
+        </h1>
+        <p class="text-muted mb-0">{{ project.description|truncatechars:100 }}</p>
+    </div>
+    <div class="col-md-6 text-end">
+        <div class="d-inline-flex align-items-center gap-2">
+            <!-- Filters -->
+            <select class="form-select form-select-sm" id="priorityFilter" style="width: auto;">
+                <option value="all">All Priorities</option>
+                <option value="high">High & Critical</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+            </select>
+
+            <div class="vr mx-2"></div>
+
+            <a href="/ui/projects/{{ project.id }}/" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-left me-1"></i>Project
+            </a>
+            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createTaskModal">
+                <i class="bi bi-plus-lg me-1"></i>New Task
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="kanban-board-container" style="overflow-x: auto; min-height: 70vh;">
+    <div class="d-flex gx-3" style="min-width: 1200px;">
+
+        <!-- Backlog -->
+        <div class="col px-2" style="width: 16.6%;">
+            <div class="card bg-light h-100 border-0 shadow-sm">
+                <div class="card-header bg-secondary text-white fw-bold text-center py-2">
+                    BACKLOG <span class="badge bg-white text-secondary ms-1 task-count" data-col="none">0</span>
+                </div>
+                <div class="card-body p-2 kanban-column" id="col-none" data-stage="none">
+                    {% for task in board.none %}
+                    {% include 'partials/kanban_card.html' with task=task %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Dev -->
+        <div class="col px-2" style="width: 16.6%;">
+            <div class="card bg-light h-100 border-0 shadow-sm">
+                <div class="card-header bg-info text-white fw-bold text-center py-2">
+                    DEV <span class="badge bg-white text-info ms-1 task-count" data-col="dev">0</span>
+                </div>
+                <div class="card-body p-2 kanban-column" id="col-dev" data-stage="dev">
+                    {% for task in board.dev %}
+                    {% include 'partials/kanban_card.html' with task=task %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- QA -->
+        <div class="col px-2" style="width: 16.6%;">
+            <div class="card bg-light h-100 border-0 shadow-sm">
+                <div class="card-header bg-warning text-dark fw-bold text-center py-2">
+                    QA <span class="badge bg-white text-dark ms-1 task-count" data-col="qa">0</span>
+                </div>
+                <div class="card-body p-2 kanban-column" id="col-qa" data-stage="qa">
+                    {% for task in board.qa %}
+                    {% include 'partials/kanban_card.html' with task=task %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Security -->
+        <div class="col px-2" style="width: 16.6%;">
+            <div class="card bg-light h-100 border-0 shadow-sm">
+                <div class="card-header bg-purple text-white fw-bold text-center py-2"
+                    style="background-color: #6f42c1;">
+                    SEC <span class="badge bg-white text-purple ms-1 task-count" data-col="sec">0</span>
+                </div>
+                <div class="card-body p-2 kanban-column" id="col-sec" data-stage="sec">
+                    {% for task in board.sec %}
+                    {% include 'partials/kanban_card.html' with task=task %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Docs -->
+        <div class="col px-2" style="width: 16.6%;">
+            <div class="card bg-light h-100 border-0 shadow-sm">
+                <div class="card-header bg-info text-white fw-bold text-center py-2">
+                    DOCS <span class="badge bg-white text-info ms-1 task-count" data-col="docs">0</span>
+                </div>
+                <div class="card-body p-2 kanban-column" id="col-docs" data-stage="docs">
+                    {% for task in board.docs %}
+                    {% include 'partials/kanban_card.html' with task=task %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Complete -->
+        <div class="col px-2" style="width: 16.6%;">
+            <div class="card bg-light h-100 border-0 shadow-sm">
+                <div class="card-header bg-success text-white fw-bold text-center py-2">
+                    DONE <span class="badge bg-white text-success ms-1 task-count" data-col="complete">0</span>
+                </div>
+                <div class="card-body p-2 kanban-column" id="col-complete" data-stage="complete">
+                    {% for task in board.complete %}
+                    {% include 'partials/kanban_card.html' with task=task %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- Task Create Modal -->
+<div class="modal fade" id="createTaskModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="post" action="/api/projects/{{ project.id }}/tasks/create" id="createTaskForm">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">New Task</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Title</label>
+                        <input type="text" class="form-control" name="title" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description</label>
+                        <textarea class="form-control" name="description" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Priority</label>
+                        <select class="form-select" name="priority">
+                            <option value="3">Low</option>
+                            <option value="5" selected>Medium</option>
+                            <option value="8">High</option>
+                            <option value="10">Critical</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Task</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+    .kanban-column {
+        min-height: 200px;
+        transition: background-color 0.2s;
+    }
+
+    .kanban-column.drag-over {
+        background-color: rgba(0, 0, 0, 0.05);
+    }
+
+    .task-card {
+        cursor: grab;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .task-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .task-card.dragging {
+        opacity: 0.5;
+        cursor: grabbing;
+    }
+
+    .task-card[data-priority-val="high"] {
+        border-left: 4px solid #dc3545;
+    }
+
+    .task-card[data-priority-val="medium"] {
+        border-left: 4px solid #ffc107;
+    }
+
+    .task-card[data-priority-val="low"] {
+        border-left: 4px solid #28a745;
+    }
+</style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeDragAndDrop();
+        initializeFilters();
+        updateCounts();
+    });
+
+    function initializeFilters() {
+        const priorityFilter = document.getElementById('priorityFilter');
+
+        priorityFilter.addEventListener('change', filterTasks);
+
+        function filterTasks() {
+            const priority = priorityFilter.value;
+            const cards = document.querySelectorAll('.task-card');
+
+            cards.forEach(card => {
+                const cardPriority = parseInt(card.dataset.priority) || 0;
+                let show = true;
+
+                if (priority !== 'all') {
+                    if (priority === 'high' && cardPriority < 8) show = false;
+                    if (priority === 'medium' && (cardPriority >= 8 || cardPriority <= 3)) show = false;
+                    if (priority === 'low' && cardPriority > 3) show = false;
+                }
+
+                card.style.display = show ? 'block' : 'none';
+            });
+
+            updateCounts();
+        }
+    }
+
+    function updateCounts() {
+        document.querySelectorAll('.kanban-column').forEach(col => {
+            const count = col.querySelectorAll('.task-card[style!="display: none;"]').length;
+            const badge = document.querySelector(`.badge[data-col="${col.dataset.stage}"]`);
+            if (badge) badge.textContent = count;
+        });
+    }
+
+    function initializeDragAndDrop() {
+        const draggables = document.querySelectorAll('.task-card');
+        const containers = document.querySelectorAll('.kanban-column');
+
+        draggables.forEach(draggable => {
+            draggable.addEventListener('dragstart', () => {
+                draggable.classList.add('dragging');
+            });
+
+            draggable.addEventListener('dragend', () => {
+                draggable.classList.remove('dragging');
+                document.querySelectorAll('.kanban-column').forEach(c => c.classList.remove('drag-over'));
+            });
+        });
+
+        containers.forEach(container => {
+            container.addEventListener('dragover', e => {
+                e.preventDefault();
+                container.classList.add('drag-over');
+                const afterElement = getDragAfterElement(container, e.clientY);
+                const draggable = document.querySelector('.dragging');
+                if (afterElement == null) {
+                    container.appendChild(draggable);
+                } else {
+                    container.insertBefore(draggable, afterElement);
+                }
+            });
+
+            container.addEventListener('dragleave', () => {
+                container.classList.remove('drag-over');
+            });
+
+            container.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const draggable = document.querySelector('.dragging');
+                if (draggable) {
+                    const newStage = container.dataset.stage;
+                    const oldStage = draggable.dataset.currentStage || 'none';
+
+                    if (newStage !== oldStage) {
+                        handleTaskMove(draggable, newStage);
+                    }
+                }
+            });
+        });
+    }
+
+    function handleTaskMove(card, newStage) {
+        const taskId = card.dataset.taskId;
+        const taskTitle = card.querySelector('.card-title').textContent.trim();
+
+        // Define actionable stages that can trigger agents
+        const actionableStages = ['dev', 'qa', 'sec', 'docs'];
+
+        let confirmMsg = `Moved to ${newStage.toUpperCase()}.`;
+        let shouldTrigger = false;
+
+        if (actionableStages.includes(newStage)) {
+            shouldTrigger = confirm(`Do you want to run the ${newStage.toUpperCase()} agent for "${taskTitle}"?`);
+        }
+
+        // Optimistic update
+        card.dataset.currentStage = newStage;
+        updateCounts();
+
+        // API Call
+        fetch(`/api/tasks/${taskId}/set-stage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage: newStage })
+        }).then(res => {
+            if (!res.ok) {
+                alert('Failed to update stage on server.');
+                location.reload();
+            } else {
+                if (shouldTrigger) {
+                    triggerAgent(taskId);
+                }
+            }
+        });
+    }
+
+    function triggerAgent(taskId) {
+        // Trigger the specific task pipeline
+        fetch(`/api/tasks/${taskId}/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ max_iterations: 10 })
+        }).then(res => res.json())
+            .then(data => {
+                if (data.status === 'success' || data.run_id) {
+                    // Determine CSS class based on badge content or similar helper if needed
+                    // For now just alert or toast
+                    const toast = document.createElement('div');
+                    toast.className = 'alert alert-success position-fixed bottom-0 end-0 m-3';
+                    toast.style.zIndex = 1000;
+                    toast.innerHTML = `Agent triggered for task! <a href="/ui/run/${data.run_id}/" class="alert-link">View Run</a>`;
+                    document.body.appendChild(toast);
+                    setTimeout(() => toast.remove(), 5000);
+                } else {
+                    alert('Failed to trigger agent: ' + (data.error || 'Unknown error'));
+                }
+            });
+    }
+
+    function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('.task-card:not(.dragging)')];
+
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset: offset, element: child };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // Handle form submission
+    document.getElementById('createTaskForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const data = Object.fromEntries(formData.entries());
+
+        fetch(this.action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (data.task) {
+                    location.reload();
+                } else {
+                    alert('Error creating task');
+                }
+            });
+    });
+</script>
+{% endblock %}

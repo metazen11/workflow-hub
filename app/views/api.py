@@ -2,6 +2,7 @@
 import json
 import os
 import hashlib
+import threading
 from datetime import date, datetime
 from django.http import JsonResponse, FileResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -169,10 +170,84 @@ def project_detail(request, project_id):
 @csrf_exempt
 @require_http_methods(["PUT", "PATCH"])
 def project_update(request, project_id):
-    """Update project details."""
+    """Update project details with input validation and sanitization."""
+    import html
+    import re
+
     data = _get_json_body(request)
     if not data:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    # Field validation rules
+    FIELD_RULES = {
+        "name": {"max_length": 200, "type": str, "pattern": r"^[\w\s\-\.]+$"},
+        "description": {"max_length": 2000, "type": str},
+        "repo_path": {"max_length": 500, "type": str},
+        "repository_url": {"max_length": 500, "type": str, "pattern": r"^https?://"},
+        "repository_ssh_url": {"max_length": 500, "type": str, "pattern": r"^git@"},
+        "primary_branch": {"max_length": 100, "type": str, "pattern": r"^[\w\-/\.]+$"},
+        "documentation_url": {"max_length": 500, "type": str, "pattern": r"^https?://"},
+        "entry_point": {"max_length": 300, "type": str},
+        "build_command": {"max_length": 1000, "type": str},
+        "test_command": {"max_length": 1000, "type": str},
+        "run_command": {"max_length": 1000, "type": str},
+        "deploy_command": {"max_length": 1000, "type": str},
+        "default_port": {"type": int, "min": 1, "max": 65535},
+        "python_version": {"max_length": 20, "type": str},
+        "node_version": {"max_length": 20, "type": str},
+        "is_active": {"type": bool},
+        "is_archived": {"type": bool},
+        "git_credential_id": {"type": int},
+        "git_auth_method": {"max_length": 50, "type": str},
+    }
+
+    def sanitize_string(value):
+        """Sanitize string input to prevent XSS."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        # HTML escape to prevent XSS
+        value = html.escape(value.strip())
+        # Remove null bytes and control characters (except newlines/tabs)
+        value = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', value)
+        return value
+
+    def validate_field(field, value):
+        """Validate a field value against its rules. Returns (validated_value, error)."""
+        rules = FIELD_RULES.get(field, {"type": str, "max_length": 500})
+
+        # Allow None/null values (clears the field)
+        if value is None or value == "" or value == "-":
+            return None, None
+
+        expected_type = rules.get("type", str)
+
+        if expected_type == int:
+            try:
+                value = int(value)
+            except (ValueError, TypeError):
+                return None, f"{field} must be a number"
+            if "min" in rules and value < rules["min"]:
+                return None, f"{field} must be at least {rules['min']}"
+            if "max" in rules and value > rules["max"]:
+                return None, f"{field} must be at most {rules['max']}"
+        elif expected_type == bool:
+            if isinstance(value, str):
+                value = value.lower() in ("true", "1", "yes")
+            value = bool(value)
+        elif expected_type == str:
+            value = sanitize_string(str(value))
+            max_len = rules.get("max_length", 500)
+            if len(value) > max_len:
+                return None, f"{field} exceeds maximum length of {max_len}"
+            # Pattern validation (only warn, don't block - allows flexibility)
+            pattern = rules.get("pattern")
+            if pattern and value and not re.match(pattern, value):
+                # Log warning but allow - pattern is advisory
+                pass
+
+        return value, None
 
     db = next(get_db())
     try:
@@ -180,28 +255,44 @@ def project_update(request, project_id):
         if not project:
             return JsonResponse({"error": "Project not found"}, status=404)
 
-        # Update allowed fields - scalars
+        # Update allowed fields - scalars with validation
         scalar_fields = [
             "name", "description", "repo_path", "repository_url", "repository_ssh_url",
             "primary_branch", "documentation_url", "git_credential_id", "git_auth_method",
             "entry_point", "build_command", "test_command", "run_command", "deploy_command",
             "default_port", "python_version", "node_version", "is_active", "is_archived"
         ]
+        errors = []
+        updated_fields = []
+
         for field in scalar_fields:
             if field in data:
-                setattr(project, field, data[field])
+                validated_value, error = validate_field(field, data[field])
+                if error:
+                    errors.append(error)
+                else:
+                    setattr(project, field, validated_value)
+                    updated_fields.append(field)
 
-        # Update allowed fields - arrays (JSON columns)
+        if errors:
+            return JsonResponse({"error": "; ".join(errors)}, status=400)
+
+        # Update allowed fields - arrays (JSON columns) with sanitization
         array_fields = [
             "stack_tags", "languages", "frameworks", "databases", "key_files", "config_files"
         ]
         for field in array_fields:
             if field in data:
-                setattr(project, field, data[field])
+                arr_value = data[field]
+                if isinstance(arr_value, list):
+                    # Sanitize each element, limit to 200 chars per item
+                    arr_value = [sanitize_string(str(v))[:200] for v in arr_value if v]
+                setattr(project, field, arr_value)
+                updated_fields.append(field)
 
         db.commit()
         db.refresh(project)
-        log_event(db, "human", "update", "project", project.id, {"updated_fields": list(data.keys())})
+        log_event(db, "human", "update", "project", project.id, {"updated_fields": updated_fields})
         return JsonResponse({"project": project.to_dict()})
     finally:
         db.close()
@@ -911,6 +1002,104 @@ def run_trigger_pipeline(request, run_id):
 
     status_code = 200 if result.get("status") == "started" else 400
     return JsonResponse(result, status=status_code)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def run_director_process(request, run_id):
+    """Have the director process and advance tasks for a run.
+
+    The director will:
+    - Enrich tasks with missing acceptance criteria
+    - Validate task readiness
+    - Optionally trigger agent execution
+
+    Body:
+        auto_trigger (bool): If True, automatically trigger agents for ready tasks
+        max_tasks (int): Max tasks to process (default 10)
+    """
+    from app.services.director_service import DirectorService
+
+    data = _get_json_body(request) or {}
+    auto_trigger = data.get("auto_trigger", False)
+    max_tasks = data.get("max_tasks", 10)
+
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        director = DirectorService(db)
+        result = director.process_run(
+            run_id=run_id,
+            max_tasks=max_tasks,
+            auto_trigger=auto_trigger
+        )
+
+        log_event(
+            db,
+            actor="api",
+            action="director_process",
+            entity_type="run",
+            entity_id=run_id,
+            details={
+                "tasks_enriched": result.get("tasks_enriched", 0),
+                "tasks_triggered": result.get("tasks_triggered", 0),
+                "tasks_queued": result.get("tasks_queued", 0)
+            }
+        )
+
+        return JsonResponse(result)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_director_prepare(request, task_id):
+    """Have the director prepare and optionally run a specific task.
+
+    The director will:
+    - Enrich the task with missing acceptance criteria
+    - Validate task readiness
+    - Optionally trigger agent execution
+
+    Body:
+        auto_trigger (bool): If True, automatically trigger agent for this task
+    """
+    from app.services.director_service import DirectorService
+
+    data = _get_json_body(request) or {}
+    auto_trigger = data.get("auto_trigger", True)
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        director = DirectorService(db)
+
+        # Prepare (enrich + validate)
+        result = director.prepare_and_run_task(task) if auto_trigger else {
+            "task_id": task.task_id,
+            "enriched": False,
+            "triggered": False,
+            "message": ""
+        }
+
+        # If not auto-triggering, just enrich
+        if not auto_trigger:
+            enriched, msg = director.enrich_task(task)
+            is_ready, issues = director.validate_task_readiness(task)
+            result["enriched"] = enriched
+            result["issues"] = issues
+            result["message"] = msg if enriched else ("Ready for agent" if is_ready else "; ".join(issues))
+
+        return JsonResponse(result)
+    finally:
+        db.close()
 
 
 # --- Threat Intel ---

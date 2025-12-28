@@ -1,0 +1,21 @@
+<div class="card mb-2 task-card" draggable="true" data-task-id="{{ task.id }}" data-priority="{{ task.priority }}">
+    <div class="card-body p-2">
+        <div class="d-flex justify-content-between align-items-start mb-1">
+            <span class="badge bg-light text-dark border">{{ task.task_id }}</span>
+            {% if task.priority >= 8 %}
+            <span class="badge bg-danger">Hi</span>
+            {% elif task.priority <= 3 %} <span class="badge bg-success">Lo</span>
+                {% endif %}
+        </div>
+        <h6 class="card-title mb-1 small fw-bold">
+            <a href="/ui/task/{{ task.id }}/" class="text-decoration-none text-dark stretched-link">{{ task.title }}</a>
+        </h6>
+        {% if task.assigned_to %}
+        <div class="mt-2 text-end">
+            <small class="text-muted" style="font-size: 0.7rem;">
+                <i class="bi bi-person-fill"></i> {{ task.assigned_to }}
+            </small>
+        </div>
+        {% endif %}
+    </div>
+</div>

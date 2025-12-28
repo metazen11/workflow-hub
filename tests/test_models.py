@@ -1,4 +1,5 @@
 """Tests for SQLAlchemy models."""
+import uuid
 import pytest
 from app.models import (
     Project, Requirement, Task, TaskStatus,
@@ -14,8 +15,9 @@ class TestProject:
 
     def test_create_project(self, db_session):
         """Test creating a project."""
+        unique_name = f"My Project {uuid.uuid4().hex[:8]}"
         project = Project(
-            name="My Project",
+            name=unique_name,
             description="Test description",
             repo_path="/home/user/project",
             stack_tags=["python", "fastapi"]
@@ -24,13 +26,17 @@ class TestProject:
         db_session.commit()
 
         assert project.id is not None
-        assert project.name == "My Project"
+        assert project.name == unique_name
         assert project.stack_tags == ["python", "fastapi"]
+
+        # Cleanup
+        db_session.delete(project)
+        db_session.commit()
 
     def test_project_to_dict(self, sample_project):
         """Test project serialization."""
         data = sample_project.to_dict()
-        assert data["name"] == "Test Project"
+        assert data["name"].startswith("Test Project")  # Name has unique suffix
         assert data["stack_tags"] == ["python", "django"]
         assert "created_at" in data
 
@@ -130,7 +136,7 @@ class TestRun:
         """Test run serialization."""
         data = sample_run.to_dict()
         assert data["state"] == "pm"
-        assert data["name"] == "Run 2025-01-01_01"
+        assert data["name"].startswith("Run ")  # Name has unique suffix
 
 
 class TestRunStateTransitions:
@@ -188,7 +194,7 @@ class TestAgentReport:
         db_session.commit()
 
         data = report.to_dict()
-        assert data["role"] == "dev"
+        assert data["role"] == "dev"  # Roles are lowercase
         assert data["status"] == "pass"
 
 

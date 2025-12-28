@@ -17,9 +17,10 @@ class TestRunService:
         assert run.state == RunState.PM
         assert run.name == "Test Run"
 
-        # Should create audit event
+        # Should create audit event for THIS run
         events = db_session.query(AuditEvent).filter(
             AuditEvent.entity_type == "run",
+            AuditEvent.entity_id == run.id,
             AuditEvent.action == "create"
         ).all()
         assert len(events) == 1
@@ -178,11 +179,11 @@ class TestGateEnforcement:
             summary="No issues"
         )
 
-        # Try to advance
+        # Try to advance - SEC now goes to DOCS first
         new_state, error = service.advance_state(sample_run.id)
 
         assert error is None
-        assert new_state == RunState.READY_FOR_COMMIT
+        assert new_state == RunState.DOCS  # Pipeline: SEC → DOCS → READY_FOR_COMMIT
 
 
 class TestHumanApproval:
@@ -203,18 +204,18 @@ class TestHumanApproval:
         assert sample_run.state == RunState.READY_FOR_DEPLOY
 
     def test_deploy_succeeds_with_human_approval(self, db_session, sample_run):
-        """Test human can approve deployment."""
+        """Test human can approve deployment to testing."""
         service = RunService(db_session)
 
         # Set to ready for deploy
         sample_run.state = RunState.READY_FOR_DEPLOY
         db_session.commit()
 
-        # Advance as human
+        # Advance as human - goes to TESTING first
         new_state, error = service.advance_state(sample_run.id, actor="human")
 
         assert error is None
-        assert new_state == RunState.DEPLOYED
+        assert new_state == RunState.TESTING  # Pipeline: READY_FOR_DEPLOY → TESTING → DEPLOYED
 
 
 class TestRetryFromFailed:
@@ -280,8 +281,13 @@ class TestFullPipeline:
         state, _ = service.advance_state(run.id)
         assert state == RunState.SEC
 
-        # SEC → READY_FOR_COMMIT
+        # SEC → DOCS
         service.submit_report(run.id, AgentRole.SECURITY, ReportStatus.PASS, "Secure")
+        state, _ = service.advance_state(run.id)
+        assert state == RunState.DOCS
+
+        # DOCS → READY_FOR_COMMIT
+        service.submit_report(run.id, AgentRole.DOCS, ReportStatus.PASS, "Docs updated")
         state, _ = service.advance_state(run.id)
         assert state == RunState.READY_FOR_COMMIT
 
@@ -293,8 +299,12 @@ class TestFullPipeline:
         state, _ = service.advance_state(run.id)
         assert state == RunState.READY_FOR_DEPLOY
 
-        # READY_FOR_DEPLOY → DEPLOYED (human approval)
+        # READY_FOR_DEPLOY → TESTING (human approval)
         state, _ = service.advance_state(run.id, actor="human")
+        assert state == RunState.TESTING
+
+        # TESTING → DEPLOYED
+        state, _ = service.advance_state(run.id)
         assert state == RunState.DEPLOYED
 
         # Verify audit trail
@@ -302,4 +312,4 @@ class TestFullPipeline:
             AuditEvent.entity_type == "run",
             AuditEvent.entity_id == run.id
         ).all()
-        assert len(events) >= 8  # create + 7 state changes
+        assert len(events) >= 10  # create + 9 state changes (with DOCS and TESTING)
