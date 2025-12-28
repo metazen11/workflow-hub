@@ -149,6 +149,80 @@ def project_create(request):
         db.close()
 
 
+@csrf_exempt
+@require_http_methods(["POST"])
+def project_discover(request):
+    """Discover project metadata from an existing folder.
+
+    POST /api/projects/discover
+    Body: {"path": "/path/to/project", "create": false}
+
+    Returns discovered metadata. If create=true, also creates the project.
+    """
+    import sys
+    import os
+    scripts_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'scripts')
+    if scripts_path not in sys.path:
+        sys.path.insert(0, scripts_path)
+
+    from discover_project import ProjectDiscovery
+
+    data = _get_json_body(request)
+    if not data:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    path = data.get("path")
+    if not path:
+        return JsonResponse({"error": "path required"}, status=400)
+
+    try:
+        discovery = ProjectDiscovery(path)
+        result = discovery.discover()
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": f"Discovery failed: {e}"}, status=500)
+
+    # Optionally create the project
+    if data.get("create"):
+        db = next(get_db())
+        try:
+            project = Project(
+                name=result['name'],
+                description=result['description'],
+                repo_path=result['repo_path'],
+                repository_url=result['repository_url'],
+                repository_ssh_url=result['repository_ssh_url'],
+                primary_branch=result['primary_branch'],
+                languages=result['languages'],
+                frameworks=result['frameworks'],
+                databases=result['databases'],
+                stack_tags=result['stack_tags'],
+                key_files=result['key_files'],
+                entry_point=result['entry_point'],
+                config_files=result['config_files'],
+                build_command=result['build_command'],
+                test_command=result['test_command'],
+                run_command=result['run_command'],
+            )
+            db.add(project)
+            db.commit()
+            db.refresh(project)
+            log_event(db, "human", "create", "project", project.id, {
+                "name": result['name'],
+                "auto_discovered": True
+            })
+            return JsonResponse({
+                "discovered": result,
+                "project": project.to_dict(),
+                "created": True
+            }, status=201)
+        finally:
+            db.close()
+
+    return JsonResponse({"discovered": result, "created": False})
+
+
 def project_detail(request, project_id):
     """Get project details with requirements, tasks, and runs."""
     db = next(get_db())
@@ -1169,6 +1243,7 @@ def credential_create(request, project_id):
         except ValueError:
             cred_type_enum = CredentialType.OTHER
 
+        from app.services.crypto_service import encrypt
         credential = Credential(
             project_id=project_id,
             name=data.get("name"),
@@ -1176,12 +1251,12 @@ def credential_create(request, project_id):
             service=data.get("service"),
             description=data.get("description"),
             username=data.get("username"),
-            password_encrypted=data.get("password"),  # TODO: Encrypt
-            api_key_encrypted=data.get("api_key"),  # TODO: Encrypt
-            token_encrypted=data.get("token"),  # TODO: Encrypt
+            password_encrypted=encrypt(data.get("password", "")),
+            api_key_encrypted=encrypt(data.get("api_key", "")),
+            token_encrypted=encrypt(data.get("token", "")),
             ssh_key_path=data.get("ssh_key_path"),
-            ssh_key_encrypted=data.get("ssh_key"),  # TODO: Encrypt
-            database_url_encrypted=data.get("database_url"),  # TODO: Encrypt
+            ssh_key_encrypted=encrypt(data.get("ssh_key", "")),
+            database_url_encrypted=encrypt(data.get("database_url", "")),
             environment=data.get("environment"),
         )
         db.add(credential)
@@ -1224,10 +1299,11 @@ def credential_update(request, credential_id):
             if field in data:
                 setattr(credential, field, data[field])
 
-        # Update encrypted fields (TODO: Encrypt before storing)
+        # Update encrypted fields
+        from app.services.crypto_service import encrypt
         for field in ["password", "api_key", "token", "ssh_key", "database_url"]:
             if field in data:
-                setattr(credential, f"{field}_encrypted", data[field])
+                setattr(credential, f"{field}_encrypted", encrypt(data[field] or ""))
 
         if "credential_type" in data:
             try:
@@ -2013,18 +2089,11 @@ def task_queue(request):
     if not run_id:
         return JsonResponse({"error": "run_id required"}, status=400)
 
-    # Map stage string to enum
-    stage_map = {
-        "none": TaskPipelineStage.NONE,
-        "dev": TaskPipelineStage.DEV,
-        "qa": TaskPipelineStage.QA,
-        "sec": TaskPipelineStage.SEC,
-        "docs": TaskPipelineStage.DOCS,
-    }
-
-    target_stage = stage_map.get(stage)
+    # Use enum's DRY helper for stage lookup
+    stage_map = TaskPipelineStage.get_stage_map()
+    target_stage = stage_map.get(stage.upper())
     if not target_stage:
-        return JsonResponse({"error": f"Invalid stage: {stage}"}, status=400)
+        return JsonResponse({"error": f"Invalid stage: {stage}. Valid: {', '.join(TaskPipelineStage.valid_stages())}"}, status=400)
 
     db = next(get_db())
     try:
@@ -2120,17 +2189,14 @@ def task_set_stage(request, task_id):
     stage_str = data.get("stage", "").lower()
     actor = data.get("actor", "agent")
 
-    stage_map = {
-        "none": TaskPipelineStage.NONE,
-        "dev": TaskPipelineStage.DEV,
-        "qa": TaskPipelineStage.QA,
-        "sec": TaskPipelineStage.SEC,
-        "docs": TaskPipelineStage.DOCS,
-        "complete": TaskPipelineStage.COMPLETE,
-    }
+    # Use enum's DRY helper for stage lookup
+    stage_map = TaskPipelineStage.get_stage_map()
+    stage_str_upper = stage_str.upper()
 
-    if stage_str not in stage_map:
-        return JsonResponse({"error": f"Invalid stage: {stage_str}"}, status=400)
+    if stage_str_upper not in stage_map:
+        return JsonResponse({"error": f"Invalid stage: {stage_str}. Valid: {', '.join(TaskPipelineStage.valid_stages())}"}, status=400)
+
+    stage_str = stage_str_upper  # Use uppercase for lookup
 
     db = next(get_db())
     try:
@@ -2146,7 +2212,7 @@ def task_set_stage(request, task_id):
             task.completed = True
             from datetime import datetime, timezone
             task.completed_at = datetime.now(timezone.utc)
-        elif stage_map[stage_str] in (TaskPipelineStage.DEV, TaskPipelineStage.QA, TaskPipelineStage.SEC):
+        elif stage_map[stage_str] in (TaskPipelineStage.PM, TaskPipelineStage.DEV, TaskPipelineStage.QA, TaskPipelineStage.SEC, TaskPipelineStage.DOCS):
             task.status = TaskStatus.IN_PROGRESS
 
         db.commit()

@@ -20,6 +20,7 @@ urlpatterns = [
     # Projects
     path('api/projects', api.projects_list, name='projects_list'),
     path('api/projects/create', api.project_create, name='project_create'),
+    path('api/projects/discover', api.project_discover, name='project_discover'),
     path('api/projects/<int:project_id>', api.project_detail, name='project_detail'),
     path('api/projects/<int:project_id>/update', api.project_update, name='project_update'),
     path('api/projects/<int:project_id>/delete', api.project_delete, name='project_delete'),

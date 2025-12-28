@@ -200,7 +200,7 @@ class DirectorService:
             run = run_service.create_run(
                 project_id=project.id,
                 name=f"Execute Task: {task.task_id} - {task.title[:50]}",
-                goal=task.description or task.title
+                actor="director"
             )
             task.run_id = run.id
             self.db.commit()

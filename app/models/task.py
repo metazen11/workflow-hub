@@ -17,13 +17,51 @@ class TaskStatus(enum.Enum):
 
 
 class TaskPipelineStage(enum.Enum):
-    """Pipeline stage a task is currently in."""
-    NONE = "none"  # Not in pipeline yet
-    DEV = "dev"  # Being implemented by DEV agent
-    QA = "qa"  # Being tested by QA agent
-    SEC = "sec"  # Being reviewed by Security agent
-    DOCS = "docs"  # Documentation stage
-    COMPLETE = "complete"  # Passed all stages
+    """Pipeline stage a task is currently in.
+
+    Each stage has a value (db storage) and a label (UI display).
+    When adding new stages, add them here and the UI will auto-update.
+
+    Pipeline flow: NONE → PM → DEV → QA → SEC → DOCS → COMPLETE
+
+    NOTE: Values must be UPPERCASE to match PostgreSQL native enum storage.
+    """
+    NONE = "NONE"  # Not in pipeline yet (backlog)
+    PM = "PM"  # Being planned/defined by PM agent (requirements, acceptance criteria)
+    DEV = "DEV"  # Being implemented by DEV agent
+    QA = "QA"  # Being tested by QA agent
+    SEC = "SEC"  # Being reviewed by Security agent
+    DOCS = "DOCS"  # Documentation stage
+    COMPLETE = "COMPLETE"  # Passed all stages
+
+    @property
+    def label(self) -> str:
+        """Human-readable label for UI display."""
+        labels = {
+            'NONE': 'Backlog',
+            'PM': 'Planning (PM)',
+            'DEV': 'Development',
+            'QA': 'QA',
+            'SEC': 'Security',
+            'DOCS': 'Documentation',
+            'COMPLETE': 'Complete',
+        }
+        return labels.get(self.value, self.name.title())
+
+    @classmethod
+    def get_stage_map(cls) -> dict:
+        """Build stage map for API lookups (case-insensitive).
+
+        Returns dict mapping uppercase stage values to enum members.
+        Use: stage_map = TaskPipelineStage.get_stage_map()
+             stage = stage_map.get(user_input.upper())
+        """
+        return {stage.value.upper(): stage for stage in cls}
+
+    @classmethod
+    def valid_stages(cls) -> list:
+        """Return list of valid stage values (lowercase for display)."""
+        return [stage.value.lower() for stage in cls]
 
 
 # Association table for Task <-> Requirement many-to-many

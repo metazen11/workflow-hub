@@ -4,7 +4,47 @@
 {% block page_title %}Dashboard{% endblock %}
 
 {% block content %}
+<!-- Dashboard Config Button -->
+<div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
+    <div class="dropdown" style="position: relative;">
+        <button class="btn btn-sm btn-secondary" onclick="toggleDashboardConfig()" title="Configure Dashboard">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            Configure
+        </button>
+        <div id="dashboard-config-menu" class="dropdown-menu" style="display: none; position: absolute; right: 0; top: 100%; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-width: 200px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+            <div style="font-weight: 600; margin-bottom: 8px; font-size: 0.9rem;">Show Sections</div>
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
+                <input type="checkbox" data-section="stats" checked onchange="toggleSection('stats')"> Stats Cards
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
+                <input type="checkbox" data-section="director" checked onchange="toggleSection('director')"> Director Panel
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
+                <input type="checkbox" data-section="new-task" checked onchange="toggleSection('new-task')"> New Task Input
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
+                <input type="checkbox" data-section="projects" checked onchange="toggleSection('projects')"> Projects
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
+                <input type="checkbox" data-section="task-pipeline" checked onchange="toggleSection('task-pipeline')"> Task Pipeline
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
+                <input type="checkbox" data-section="run-pipeline" checked onchange="toggleSection('run-pipeline')"> Run Pipeline
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
+                <input type="checkbox" data-section="activity" checked onchange="toggleSection('activity')"> Recent Activity
+            </label>
+            <hr style="margin: 8px 0; border: none; border-top: 1px solid var(--border);">
+            <button class="btn btn-sm" onclick="resetDashboardConfig()" style="width: 100%;">Reset to Default</button>
+        </div>
+    </div>
+</div>
+
 <!-- Stats Cards -->
+<div class="dashboard-section" data-section="stats">
 <div class="stats-grid">
     <div class="stat-card">
         <div class="stat-card-header">
@@ -57,8 +97,10 @@
         <div class="stat-card-value">{{ stats.total_projects }}</div>
     </div>
 </div>
+</div>
 
 <!-- Director Control Panel -->
+<div class="dashboard-section" data-section="director">
 <div class="section">
     <div class="card">
         <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer;" onclick="toggleDirectorPanel()">
@@ -123,8 +165,10 @@
         </div>
     </div>
 </div>
+</div>
 
 <!-- New Task Input -->
+<div class="dashboard-section" data-section="new-task">
 <div class="section">
     <div class="card">
         <div class="card-body">
@@ -150,8 +194,47 @@
         </div>
     </div>
 </div>
+</div>
+
+<!-- Projects (moved up for visibility) -->
+<div class="dashboard-section" data-section="projects">
+<div class="section">
+    <h3 class="section-title">Projects</h3>
+    <div class="card">
+        <div class="card-body no-padding">
+            {% if projects %}
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Tasks</th>
+                        <th>Runs</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for project in projects %}
+                    <tr>
+                        <td><a href="/ui/project/{{ project.id }}/">{{ project.name }}</a></td>
+                        <td>{{ project.description|default:"—"|truncatechars:50 }}</td>
+                        <td>{{ project.task_count }}</td>
+                        <td>{{ project.run_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <p>No projects yet. Create one via API.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+</div>
 
 <!-- Task Pipeline Kanban Board -->
+<div class="dashboard-section" data-section="task-pipeline">
 <div class="section">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
         <h3 class="section-title" style="margin-bottom: 0;">Task Pipeline</h3>
@@ -296,8 +379,10 @@
         </div>
     </div>
 </div>
+</div>
 
 <!-- Run Pipeline Kanban Board -->
+<div class="dashboard-section" data-section="run-pipeline">
 <div class="section">
     <h3 class="section-title">Run Pipeline</h3>
     <div class="kanban-board">
@@ -524,8 +609,10 @@
         </div>
     </div>
 </div>
+</div>
 
 <!-- Recent Activity -->
+<div class="dashboard-section" data-section="activity">
 <div class="section">
     <h3 class="section-title">Recent Activity</h3>
     <div class="card">
@@ -581,40 +668,6 @@
         {% endif %}
     </div>
 </div>
-
-<!-- Projects -->
-<div class="section">
-    <h3 class="section-title">Projects</h3>
-    <div class="card">
-        <div class="card-body no-padding">
-            {% if projects %}
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Description</th>
-                        <th>Tasks</th>
-                        <th>Runs</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for project in projects %}
-                    <tr>
-                        <td><a href="/ui/project/{{ project.id }}/">{{ project.name }}</a></td>
-                        <td>{{ project.description|default:"—"|truncatechars:50 }}</td>
-                        <td>{{ project.task_count }}</td>
-                        <td>{{ project.run_count }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% else %}
-            <div class="empty-state">
-                <p>No projects yet. Create one via API.</p>
-            </div>
-            {% endif %}
-        </div>
-    </div>
 </div>
 
 <!-- Task Edit Modal (shared partial) -->
@@ -855,5 +908,72 @@ fetch('/api/director/status')
         }
     })
     .catch(() => {});
+
+// ===== Dashboard Configuration =====
+const DASHBOARD_CONFIG_KEY = 'wfhub_dashboard_config';
+const DEFAULT_CONFIG = {
+    sections: {
+        'stats': true,
+        'director': true,
+        'new-task': true,
+        'projects': true,
+        'task-pipeline': true,
+        'run-pipeline': true,
+        'activity': true
+    }
+};
+
+function getDashboardConfig() {
+    try {
+        const saved = localStorage.getItem(DASHBOARD_CONFIG_KEY);
+        return saved ? JSON.parse(saved) : DEFAULT_CONFIG;
+    } catch (e) {
+        return DEFAULT_CONFIG;
+    }
+}
+
+function saveDashboardConfig(config) {
+    localStorage.setItem(DASHBOARD_CONFIG_KEY, JSON.stringify(config));
+}
+
+function toggleDashboardConfig() {
+    const menu = document.getElementById('dashboard-config-menu');
+    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleSection(sectionName) {
+    const config = getDashboardConfig();
+    const checkbox = document.querySelector(`input[data-section="${sectionName}"]`);
+    config.sections[sectionName] = checkbox.checked;
+    saveDashboardConfig(config);
+    applyDashboardConfig();
+}
+
+function applyDashboardConfig() {
+    const config = getDashboardConfig();
+    for (const [section, visible] of Object.entries(config.sections)) {
+        const el = document.querySelector(`.dashboard-section[data-section="${section}"]`);
+        const checkbox = document.querySelector(`input[data-section="${section}"]`);
+        if (el) el.style.display = visible ? '' : 'none';
+        if (checkbox) checkbox.checked = visible;
+    }
+}
+
+function resetDashboardConfig() {
+    saveDashboardConfig(DEFAULT_CONFIG);
+    applyDashboardConfig();
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    const menu = document.getElementById('dashboard-config-menu');
+    const btn = e.target.closest('.dropdown');
+    if (!btn && menu.style.display === 'block') {
+        menu.style.display = 'none';
+    }
+});
+
+// Apply config on page load
+applyDashboardConfig();
 </script>
 {% endblock %}

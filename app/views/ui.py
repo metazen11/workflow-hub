@@ -3,7 +3,7 @@ from django.shortcuts import render
 from django.http import HttpResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from app.db import get_db
-from app.models import Project, Run, Task, TaskStatus, AuditEvent, RunState, Credential, Environment
+from app.models import Project, Run, Task, TaskStatus, TaskPipelineStage, AuditEvent, RunState, Credential, Environment
 from app.models.bug_report import BugReport, BugReportStatus
 
 
@@ -596,6 +596,13 @@ def task_view(request, task_id):
         from app.models import TaskAttachment
         attachments = db.query(TaskAttachment).filter(TaskAttachment.task_id == task_id).all()
 
+        # Build pipeline stages from enum for dynamic dropdown
+        # Labels come from TaskPipelineStage.label property
+        pipeline_stages = [
+            {'value': stage.value, 'label': stage.label}
+            for stage in TaskPipelineStage
+        ]
+
         context = {
             'active_page': 'tasks',
             'open_bugs_count': open_bugs if open_bugs > 0 else None,
@@ -614,7 +621,8 @@ def task_view(request, task_id):
                 'created_at': task.created_at.strftime('%Y-%m-%d %H:%M') if task.created_at else '',
                 'pipeline_stage': task.pipeline_stage.value if task.pipeline_stage else 'none',
             },
-            'attachments': [a.to_dict() for a in attachments]
+            'attachments': [a.to_dict() for a in attachments],
+            'pipeline_stages': pipeline_stages,
         }
 
         return render(request, 'task_detail.html', context)

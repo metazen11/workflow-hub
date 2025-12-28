@@ -157,6 +157,35 @@ When a run is created:
 - Extracts git info (branch, remote)
 - Updates project with git details
 
+## UI Testing - Use Playwright, Not curl
+
+**IMPORTANT:** When testing UI functionality, use Playwright instead of curl.
+
+- `curl` only fetches raw HTML - it doesn't execute JavaScript or render the page
+- `Playwright` runs a real browser - it clicks buttons, fills forms, and shows what users actually see
+
+```python
+# Example: Test a button click
+from playwright.sync_api import sync_playwright
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.goto('http://localhost:8000/ui/projects/')
+    page.click('text=Add Existing')  # Actually clicks the button
+    page.fill('#discover-path', '/path/to/project')
+    page.click('#discover-btn')
+    page.wait_for_timeout(3000)  # Wait for async operations
+    # Check what actually rendered
+    print(page.is_visible('#import-step-2'))
+    browser.close()
+```
+
+Use curl only for:
+- Testing raw API endpoints (JSON responses)
+- Checking if server is running
+- Verifying HTML structure (not behavior)
+
 ## Monitoring
 
 Pipeline health monitoring via Playwright:

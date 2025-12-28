@@ -179,15 +179,9 @@
                         style="display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">Current
                         Stage: <strong>{{ task.pipeline_stage|upper }}</strong></label>
                     <select id="stage-select" class="form-select" style="width: 100%;">
-                        <option value="none" {% if task.pipeline_stage == 'none' %}selected{% endif %}>Backlog (None)
-                        </option>
-                        <option value="dev" {% if task.pipeline_stage == 'dev' %}selected{% endif %}>Development</option>
-                        <option value="qa" {% if task.pipeline_stage == 'qa' %}selected{% endif %}>QA</option>
-                        <option value="sec" {% if task.pipeline_stage == 'sec' %}selected{% endif %}>Security</option>
-                        <option value="docs" {% if task.pipeline_stage == 'docs' %}selected{% endif %}>Documentation
-                        </option>
-                        <option value="complete" {% if task.pipeline_stage == 'complete' %}selected{% endif %}>Complete
-                        </option>
+                        {% for stage in pipeline_stages %}
+                        <option value="{{ stage.value }}" {% if task.pipeline_stage == stage.value %}selected{% endif %}>{{ stage.label }}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <div style="display: flex; gap: 8px; align-items: flex-end;">
@@ -222,10 +216,11 @@
                     <div>
                         <label style="font-size: 0.8rem; color: var(--text-muted);">Stage</label>
                         <select id="proof-stage" class="form-select" style="width: 120px;">
-                            <option value="dev">DEV</option>
-                            <option value="qa">QA</option>
-                            <option value="sec">SEC</option>
-                            <option value="docs">DOCS</option>
+                            {% for stage in pipeline_stages %}
+                            {% if stage.value != 'none' and stage.value != 'complete' %}
+                            <option value="{{ stage.value }}">{{ stage.value|upper }}</option>
+                            {% endif %}
+                            {% endfor %}
                         </select>
                     </div>
                     <div>

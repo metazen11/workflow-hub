@@ -19,7 +19,10 @@
             <div class="stat-label">With Tasks</div>
         </div>
     </div>
-    <button class="btn btn-primary" onclick="showModal('create-project-modal')">+ New Project</button>
+    <div class="header-actions">
+        <button class="btn btn-secondary" onclick="showModal('import-project-modal')">+ Add Existing</button>
+        <button class="btn btn-primary" onclick="showModal('create-project-modal')">+ New Project</button>
+    </div>
 </div>
 
 <div class="card">
@@ -114,7 +117,144 @@
     </div>
 </div>
 
+<!-- Import Existing Project Modal -->
+<div id="import-project-modal" class="modal">
+    <div class="modal-content modal-lg">
+        <div class="modal-header">
+            <h3>Add Existing Project</h3>
+            <button class="modal-close" onclick="hideModal('import-project-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <!-- Step 1: Enter path -->
+            <div id="import-step-1">
+                <div class="form-group">
+                    <label>Project Folder Path</label>
+                    <div class="input-group">
+                        <input type="text" id="discover-path" placeholder="/Users/you/projects/myproject" style="flex:1">
+                        <button type="button" class="btn btn-primary" onclick="discoverProject()" id="discover-btn">
+                            <span id="discover-btn-text">Discover</span>
+                            <span id="discover-spinner" style="display:none">⏳ Scanning...</span>
+                        </button>
+                    </div>
+                    <small class="form-help">Enter the full path to your existing project folder</small>
+                </div>
+                <div id="discover-error" class="alert alert-error" style="display:none"></div>
+            </div>
+
+            <!-- Step 2: Preview discovered data -->
+            <div id="import-step-2" style="display:none">
+                <div class="discovered-preview">
+                    <div class="preview-header">
+                        <h4 id="discovered-name">Project Name</h4>
+                        <button class="btn btn-sm btn-secondary" onclick="resetDiscover()">Change Path</button>
+                    </div>
+
+                    <div class="preview-grid">
+                        <div class="preview-item">
+                            <label>Path</label>
+                            <span id="discovered-path"></span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Git Remote</label>
+                            <span id="discovered-git"></span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Branch</label>
+                            <span id="discovered-branch"></span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Languages</label>
+                            <span id="discovered-languages"></span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Frameworks</label>
+                            <span id="discovered-frameworks"></span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Databases</label>
+                            <span id="discovered-databases"></span>
+                        </div>
+                        <div class="preview-item full-width">
+                            <label>Description</label>
+                            <span id="discovered-description"></span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Entry Point</label>
+                            <span id="discovered-entry"></span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Build Command</label>
+                            <span id="discovered-build"></span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Test Command</label>
+                            <span id="discovered-test"></span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Run Command</label>
+                            <span id="discovered-run"></span>
+                        </div>
+                    </div>
+
+                    <!-- Extended Discovery Section -->
+                    <div id="extended-discovery" style="display:none; margin-top: 16px;">
+                        <div class="preview-section" id="docker-section" style="display:none">
+                            <label class="section-label">🐳 Docker Services</label>
+                            <div class="preview-list" id="discovered-docker"></div>
+                        </div>
+                        <div class="preview-section" id="cicd-section" style="display:none">
+                            <label class="section-label">⚙️ CI/CD Workflows</label>
+                            <div class="preview-list" id="discovered-cicd"></div>
+                        </div>
+                        <div class="preview-section" id="env-section" style="display:none">
+                            <label class="section-label">🔐 Environment Variables</label>
+                            <div class="preview-list" id="discovered-env"></div>
+                        </div>
+                        <div class="preview-section" id="routes-section" style="display:none">
+                            <label class="section-label">🔗 API Routes</label>
+                            <div class="preview-list" id="discovered-routes"></div>
+                        </div>
+                    </div>
+
+                    <div class="preview-tags" id="discovered-tags"></div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="hideModal('import-project-modal')">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="createDiscoveredProject()" id="create-discovered-btn" disabled>
+                Create Project
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+.input-group { display: flex; gap: 8px; }
+.form-help { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
+.alert-error { background: #fee; border: 1px solid #f88; color: #c00; padding: 10px; border-radius: 4px; margin-top: 10px; }
+.modal-lg .modal-content { max-width: 700px; }
+.discovered-preview { background: var(--bg-secondary); border-radius: 8px; padding: 16px; }
+.preview-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; }
+.preview-header h4 { margin: 0; font-size: 18px; }
+.preview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.preview-item { background: var(--bg-primary); padding: 10px; border-radius: 4px; }
+.preview-item.full-width { grid-column: 1 / -1; }
+.preview-item label { display: block; font-size: 11px; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 4px; }
+.preview-item span { font-size: 13px; word-break: break-all; }
+.preview-tags { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 6px; }
+.preview-tags .tag { background: var(--accent-color); color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; }
+.preview-section { background: var(--bg-primary); padding: 12px; border-radius: 6px; margin-bottom: 12px; }
+.section-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+.preview-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.preview-list .item { background: var(--bg-secondary); border: 1px solid var(--border-color); padding: 4px 10px; border-radius: 4px; font-size: 12px; font-family: monospace; }
+.preview-list .item-muted { color: var(--text-secondary); }
+.preview-list .route-method { background: #3b82f6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; margin-right: 4px; }
+</style>
+
 <script>
+let discoveredData = null;
+
 function showModal(id) {
     document.getElementById(id).classList.add('active');
 }
@@ -171,6 +311,228 @@ document.querySelectorAll('.modal').forEach(modal => {
             modal.classList.remove('active');
         }
     });
+});
+
+// === Import Existing Project Functions ===
+
+async function discoverProject() {
+    const path = document.getElementById('discover-path').value.trim();
+    if (!path) {
+        showDiscoverError('Please enter a project path');
+        return;
+    }
+
+    const btn = document.getElementById('discover-btn');
+    btn.disabled = true;
+    document.getElementById('discover-btn-text').style.display = 'none';
+    document.getElementById('discover-spinner').style.display = 'inline';
+    hideDiscoverError();
+
+    try {
+        const response = await fetch('/api/projects/discover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path })
+        });
+        const result = await response.json();
+
+        if (result.error) {
+            showDiscoverError(result.error);
+            return;
+        }
+
+        // Store and display discovered data
+        discoveredData = result.discovered;
+        displayDiscoveredData(discoveredData);
+
+    } catch (e) {
+        showDiscoverError('Failed to discover project: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        document.getElementById('discover-btn-text').style.display = 'inline';
+        document.getElementById('discover-spinner').style.display = 'none';
+    }
+}
+
+function displayDiscoveredData(data) {
+    // Show step 2, hide step 1
+    document.getElementById('import-step-1').style.display = 'none';
+    document.getElementById('import-step-2').style.display = 'block';
+    document.getElementById('create-discovered-btn').disabled = false;
+
+    // Populate fields
+    document.getElementById('discovered-name').textContent = data.name || 'Unknown';
+    document.getElementById('discovered-path').textContent = data.repo_path || '-';
+    document.getElementById('discovered-git').textContent = data.repository_url || 'No remote';
+    document.getElementById('discovered-branch').textContent = data.primary_branch || '-';
+    document.getElementById('discovered-languages').textContent = (data.languages || []).join(', ') || '-';
+    document.getElementById('discovered-frameworks').textContent = (data.frameworks || []).join(', ') || '-';
+    document.getElementById('discovered-databases').textContent = (data.databases || []).join(', ') || '-';
+    document.getElementById('discovered-description').textContent = data.description || 'No description found';
+    document.getElementById('discovered-entry').textContent = data.entry_point || '-';
+    document.getElementById('discovered-build').textContent = data.build_command || '-';
+    document.getElementById('discovered-test').textContent = data.test_command || '-';
+    document.getElementById('discovered-run').textContent = data.run_command || '-';
+
+    // Display tags
+    const tagsContainer = document.getElementById('discovered-tags');
+    tagsContainer.innerHTML = '';
+    (data.stack_tags || []).forEach(tag => {
+        const tagEl = document.createElement('span');
+        tagEl.className = 'tag';
+        tagEl.textContent = tag;
+        tagsContainer.appendChild(tagEl);
+    });
+
+    // Extended discovery
+    const extSection = document.getElementById('extended-discovery');
+    let hasExtended = false;
+
+    // Docker services
+    const dockerSection = document.getElementById('docker-section');
+    const dockerList = document.getElementById('discovered-docker');
+    dockerList.innerHTML = '';
+    if (data.docker_services && data.docker_services.length > 0) {
+        hasExtended = true;
+        dockerSection.style.display = 'block';
+        data.docker_services.forEach(svc => {
+            const el = document.createElement('span');
+            el.className = 'item';
+            el.textContent = svc.name + (svc.image ? ` (${svc.image.split(':')[0]})` : '');
+            dockerList.appendChild(el);
+        });
+    } else {
+        dockerSection.style.display = 'none';
+    }
+
+    // CI/CD workflows
+    const cicdSection = document.getElementById('cicd-section');
+    const cicdList = document.getElementById('discovered-cicd');
+    cicdList.innerHTML = '';
+    if (data.ci_cd_workflows && data.ci_cd_workflows.length > 0) {
+        hasExtended = true;
+        cicdSection.style.display = 'block';
+        data.ci_cd_workflows.forEach(wf => {
+            const el = document.createElement('span');
+            el.className = 'item';
+            el.textContent = (wf.name || wf.file) + ` [${wf.platform}]`;
+            cicdList.appendChild(el);
+        });
+    } else {
+        cicdSection.style.display = 'none';
+    }
+
+    // Environment variables
+    const envSection = document.getElementById('env-section');
+    const envList = document.getElementById('discovered-env');
+    envList.innerHTML = '';
+    if (data.env_variables && data.env_variables.length > 0) {
+        hasExtended = true;
+        envSection.style.display = 'block';
+        data.env_variables.slice(0, 12).forEach(v => {
+            const el = document.createElement('span');
+            el.className = 'item';
+            el.textContent = v;
+            envList.appendChild(el);
+        });
+        if (data.env_variables.length > 12) {
+            const more = document.createElement('span');
+            more.className = 'item item-muted';
+            more.textContent = `+${data.env_variables.length - 12} more`;
+            envList.appendChild(more);
+        }
+    } else {
+        envSection.style.display = 'none';
+    }
+
+    // API routes
+    const routesSection = document.getElementById('routes-section');
+    const routesList = document.getElementById('discovered-routes');
+    routesList.innerHTML = '';
+    if (data.api_routes && data.api_routes.length > 0) {
+        hasExtended = true;
+        routesSection.style.display = 'block';
+        data.api_routes.slice(0, 10).forEach(r => {
+            const el = document.createElement('span');
+            el.className = 'item';
+            if (r.method) {
+                el.innerHTML = `<span class="route-method">${r.method}</span>${r.path}`;
+            } else {
+                el.textContent = r.path;
+            }
+            routesList.appendChild(el);
+        });
+        if (data.api_routes.length > 10) {
+            const more = document.createElement('span');
+            more.className = 'item item-muted';
+            more.textContent = `+${data.api_routes.length - 10} more`;
+            routesList.appendChild(more);
+        }
+    } else {
+        routesSection.style.display = 'none';
+    }
+
+    extSection.style.display = hasExtended ? 'block' : 'none';
+}
+
+function resetDiscover() {
+    discoveredData = null;
+    document.getElementById('import-step-1').style.display = 'block';
+    document.getElementById('import-step-2').style.display = 'none';
+    document.getElementById('create-discovered-btn').disabled = true;
+    document.getElementById('discover-path').value = '';
+    hideDiscoverError();
+}
+
+function showDiscoverError(msg) {
+    const el = document.getElementById('discover-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
+function hideDiscoverError() {
+    document.getElementById('discover-error').style.display = 'none';
+}
+
+async function createDiscoveredProject() {
+    if (!discoveredData) return;
+
+    const btn = document.getElementById('create-discovered-btn');
+    btn.disabled = true;
+    btn.textContent = 'Creating...';
+
+    try {
+        const response = await fetch('/api/projects/discover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                path: discoveredData.repo_path,
+                create: true
+            })
+        });
+        const result = await response.json();
+
+        if (result.error) {
+            alert('Error: ' + result.error);
+            return;
+        }
+
+        if (result.project) {
+            window.location.href = '/ui/project/' + result.project.id + '/';
+        }
+    } catch (e) {
+        alert('Failed to create project: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create Project';
+    }
+}
+
+// Reset import modal when closed
+document.getElementById('import-project-modal').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal') || e.target.classList.contains('modal-close')) {
+        resetDiscover();
+    }
 });
 </script>
 {% endblock %}
