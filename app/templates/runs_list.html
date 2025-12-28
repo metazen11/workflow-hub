@@ -4,7 +4,7 @@
 {% block page_title %}Runs{% endblock %}
 
 {% block content %}
-<div class="page-header">
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
     <div class="header-stats">
         <div class="stat-card">
             <div class="stat-value">{{ stats.total }}</div>
@@ -23,9 +23,38 @@
             <div class="stat-label">Failed</div>
         </div>
     </div>
+    <button class="btn btn-primary" onclick="openCreateRunModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        New Run
+    </button>
 </div>
 
 <div class="card">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin: 0;">All Runs</h3>
+        <div class="filters" style="display: flex; gap: 8px;">
+            <select id="filter-project" class="form-select" onchange="filterRuns()" style="min-width: 150px;">
+                <option value="">All Projects</option>
+                {% for project in projects %}
+                <option value="{{ project.id }}">{{ project.name }}</option>
+                {% endfor %}
+            </select>
+            <select id="filter-state" class="form-select" onchange="filterRuns()" style="min-width: 120px;">
+                <option value="">All States</option>
+                <option value="pm">PM</option>
+                <option value="dev">DEV</option>
+                <option value="qa">QA</option>
+                <option value="sec">SEC</option>
+                <option value="deployed">DEPLOYED</option>
+                <option value="qa_failed">QA_FAILED</option>
+                <option value="sec_failed">SEC_FAILED</option>
+            </select>
+            <button class="btn btn-sm" onclick="clearFilters()">Clear</button>
+        </div>
+    </div>
     <div class="card-body">
         <table class="data-table">
             <thead>
@@ -37,9 +66,9 @@
                     <th>Actions</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="runs-table-body">
                 {% for run in runs %}
-                <tr>
+                <tr data-project-id="{{ run.project_id }}" data-state="{{ run.state|lower }}">
                     <td>
                         <a href="/ui/run/{{ run.id }}/" class="run-name">{{ run.name }}</a>
                         <div class="run-id">#{{ run.id }}</div>
@@ -51,22 +80,67 @@
                         <span class="badge badge-{{ run.state_class }}">{{ run.state }}</span>
                     </td>
                     <td>{{ run.created_at }}</td>
-                    <td>
+                    <td class="run-actions">
                         <button class="btn btn-sm" onclick="window.location='/ui/run/{{ run.id }}/'" title="View">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                                 <circle cx="12" cy="12" r="3"></circle>
                             </svg>
                         </button>
+                        <button class="btn btn-sm btn-danger" onclick="killRun({{ run.id }})" title="Kill Run">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="5" class="text-center text-muted">No runs yet. Create a run from a project!</td>
+                    <td colspan="5" class="text-center text-muted">No runs yet. Click "New Run" to create one!</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+    </div>
+</div>
+
+<!-- Create Run Modal -->
+<div id="create-run-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3>Create New Run</h3>
+            <button class="modal-close" onclick="closeCreateRunModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Project: <span class="required">*</span></label>
+                <select id="run-project" class="form-select" required>
+                    <option value="">-- Select Project --</option>
+                    {% for project in projects %}
+                    <option value="{{ project.id }}">{{ project.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Run Name:</label>
+                <input type="text" id="run-name" class="form-input" placeholder="Auto-generated if empty">
+            </div>
+            <div class="form-group">
+                <label>Goal/Description:</label>
+                <textarea id="run-goal" class="form-textarea" rows="3" placeholder="What should this run accomplish?"></textarea>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="run-auto-trigger" checked>
+                    Auto-trigger pipeline agents
+                </label>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeCreateRunModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="createRun()">Create Run</button>
+        </div>
     </div>
 </div>
 
@@ -83,5 +157,108 @@
     font-size: 0.8rem;
     color: var(--text-muted);
 }
+.run-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+}
+tr.hidden { display: none; }
 </style>
+
+<script>
+function openCreateRunModal() {
+    document.getElementById('create-run-modal').style.display = 'flex';
+    document.getElementById('run-project').focus();
+}
+
+function closeCreateRunModal() {
+    document.getElementById('create-run-modal').style.display = 'none';
+}
+
+function createRun() {
+    const projectId = document.getElementById('run-project').value;
+    const name = document.getElementById('run-name').value.trim();
+    const goal = document.getElementById('run-goal').value.trim();
+    const autoTrigger = document.getElementById('run-auto-trigger').checked;
+
+    if (!projectId) {
+        alert('Please select a project');
+        return;
+    }
+
+    fetch(`/api/projects/${projectId}/runs/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name: name || null,
+            goal: goal || null,
+            auto_trigger: autoTrigger
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.run) {
+            closeCreateRunModal();
+            // Navigate to the new run
+            window.location.href = `/ui/run/${data.run.id}/`;
+        } else {
+            alert('Error: ' + (data.error || 'Failed to create run'));
+        }
+    })
+    .catch(err => alert('Error creating run: ' + err));
+}
+
+function filterRuns() {
+    const projectFilter = document.getElementById('filter-project').value;
+    const stateFilter = document.getElementById('filter-state').value;
+
+    const rows = document.querySelectorAll('#runs-table-body tr');
+    rows.forEach(row => {
+        if (!row.dataset.projectId) return; // Skip empty row
+
+        const projectId = row.dataset.projectId;
+        const state = row.dataset.state;
+
+        let show = true;
+        if (projectFilter && projectId !== projectFilter) show = false;
+        if (stateFilter && state !== stateFilter) show = false;
+
+        row.classList.toggle('hidden', !show);
+    });
+}
+
+function clearFilters() {
+    document.getElementById('filter-project').value = '';
+    document.getElementById('filter-state').value = '';
+    filterRuns();
+}
+
+function killRun(runId) {
+    if (!confirm('Kill this run? This cannot be undone.')) return;
+
+    fetch(`/api/runs/${runId}/kill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error: ' + data.error);
+        } else {
+            window.location.reload();
+        }
+    })
+    .catch(err => alert('Error killing run'));
+}
+
+// Close modal on click outside
+document.getElementById('create-run-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeCreateRunModal();
+});
+
+// Close modal on Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeCreateRunModal();
+});
+</script>
 {% endblock %}
