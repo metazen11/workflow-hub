@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Agent Runner for Goose LLM Integration
+Agent Runner - Pluggable Agent Execution System
 
 This script is invoked by n8n when the Workflow Hub emits webhooks.
-It runs Goose with appropriate prompts and submits results back to the Hub.
+It runs agents (via providers like Goose, Ollama, etc.) and submits results back to the Hub.
 
 Usage:
     # From n8n webhook, invoke via HTTP server:
@@ -14,14 +14,17 @@ Usage:
 
 Environment:
     WORKFLOW_HUB_URL - Base URL of Workflow Hub API (default: http://localhost:8000)
-    GOOSE_PROVIDER - LLM provider for Goose (e.g., anthropic, openai, ollama)
+    AGENT_PROVIDER   - Agent provider to use (default: goose)
+    LLM_TIMEOUT      - Timeout for agent execution in seconds (default: 600)
 """
 import argparse
 import json
 import os
 import subprocess
 import sys
+import abc
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Dict, Any, Optional
 import requests
 
 # Add project root for imports
@@ -32,179 +35,301 @@ load_dotenv()
 
 
 WORKFLOW_HUB_URL = os.getenv("WORKFLOW_HUB_URL", "http://localhost:8000")
+AGENT_PROVIDER = os.getenv("AGENT_PROVIDER", "goose").lower()
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "600"))
 
-# LLM Provider configuration - supports multiple backends
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "goose")  # goose, claude, openai, ollama
 
-# Timeout configuration - local LLMs can be slow
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "600"))  # 10 minutes default for local LLMs
+# =============================================================================
+# Abstract Base Class for Agent Providers
+# =============================================================================
 
-# Find Goose executable (may not be in subprocess PATH)
-def find_goose_executable():
-    """Find the goose executable, checking common locations."""
-    # Check if explicitly set
-    explicit_path = os.getenv("GOOSE_PATH")
-    if explicit_path and os.path.exists(explicit_path):
-        return explicit_path
-
-    # Common installation locations
-    common_paths = [
-        "/opt/homebrew/bin/goose",  # Homebrew on Apple Silicon
-        "/usr/local/bin/goose",     # Homebrew on Intel Mac
-        os.path.expanduser("~/.local/bin/goose"),  # pipx
-        "/usr/bin/goose",           # System install
-    ]
-
-    for path in common_paths:
-        if os.path.exists(path):
-            return path
-
-    # Try which command
-    try:
-        result = subprocess.run(["which", "goose"], capture_output=True, text=True)
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
+class AgentProvider(abc.ABC):
+    """Abstract base class for agent providers."""
+    
+    @abc.abstractmethod
+    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str) -> Dict[str, Any]:
+        """
+        Run the agent with the given role and prompt.
+        
+        Args:
+            role: The agent role (pm, dev, qa, security, etc.)
+            run_id: The ID of the current run
+            project_path: Absolute path to the project repository
+            prompt: The full prompt text to send to the agent
+            
+        Returns:
+            Dict containing 'status' (pass/fail), 'summary', and 'details'
+        """
         pass
 
-    return "goose"  # Fallback to PATH lookup
+    def get_agent_prompt(self, role: str, run_id: int, project_path: str) -> str:
+        """
+        Load agent prompt from database and format with context.
+        Includes full project details and handoff context in every prompt.
+        """
+        project_context = self._get_project_context(role, run_id, project_path)
 
-GOOSE_EXECUTABLE = find_goose_executable()
+        try:
+            from app.db import get_db
+            from app.models.role_config import RoleConfig
 
+            db = next(get_db())
+            config = db.query(RoleConfig).filter(
+                RoleConfig.role == role,
+                RoleConfig.active == True
+            ).first()
 
-def get_agent_prompt(role: str, run_id: int, project_path: str) -> str:
-    """
-    Load agent prompt from database and format with context.
+            if config and config.prompt:
+                # Format the prompt with context variables
+                prompt = config.prompt.format(
+                    project_path=project_path,
+                    run_id=run_id,
+                    project_context=project_context,
+                    **self._get_format_vars(project_path, run_id)
+                )
+                db.close()
+                return f"{project_context}\n\n{prompt}"
 
-    Prompts are stored in the role_configs table (see WH-010).
-    This replaces the hardcoded ROLE_PROMPTS dict (DRY principle).
-    """
-    try:
-        from app.db import get_db
-        from app.models.role_config import RoleConfig
-
-        db = next(get_db())
-        config = db.query(RoleConfig).filter(
-            RoleConfig.role == role,
-            RoleConfig.active == True
-        ).first()
-
-        if config and config.prompt:
-            # Format the prompt with context variables
-            prompt = config.prompt.format(
-                project_path=project_path,
-                run_id=run_id
-            )
             db.close()
-            return prompt
 
-        db.close()
+        except Exception as e:
+            print(f"Warning: Could not load prompt from DB for role '{role}': {e}")
+            pass
 
-    except Exception as e:
-        print(f"Warning: Could not load prompt from DB for role '{role}': {e}")
+        # Fallback: return minimal prompt if DB unavailable
+        return f"""
+{project_context}
 
-    # Fallback: return minimal prompt if DB unavailable
-    return f"""
 ## Your Role: {role.upper()}
-
-Project path: {project_path}
-Run ID: {run_id}
 
 Execute your role's responsibilities and output a JSON status report.
 """
 
+    def _get_project_context(self, role: str, run_id: int, project_path: str) -> str:
+        """Fetch full project details and handoff context from DB.
 
-def get_role_config(role: str) -> dict:
-    """
-    Load full role configuration from database.
+        Uses the handoff service to build comprehensive context including:
+        - Project info (name, tech stack, commands)
+        - Run state and goal
+        - ALL previous agent reports (full history)
+        - Recent git commits
+        - Role-specific deliverables
+        """
+        try:
+            from app.db import get_db
+            from app.models.project import Project
+            from app.models.run import Run
+            from app.services.handoff_service import get_handoff_for_prompt
 
-    Returns the RoleConfig as a dict including checks and approval requirements.
-    """
-    try:
-        from app.db import get_db
-        from app.models.role_config import RoleConfig
+            db = next(get_db())
 
-        db = next(get_db())
-        config = db.query(RoleConfig).filter(
-            RoleConfig.role == role,
-            RoleConfig.active == True
-        ).first()
+            # Get run and project details
+            run = db.query(Run).filter(Run.id == run_id).first()
+            if not run:
+                db.close()
+                return f"# Project Context\nProject Path: {project_path}\nRun ID: {run_id}"
 
-        if config:
-            result = config.to_dict()
+            project = db.query(Project).filter(Project.id == run.project_id).first()
+            if not project:
+                db.close()
+                return f"# Project Context\nProject Path: {project_path}\nRun ID: {run_id}"
+
+            # Get handoff context (writes HANDOFF.md and returns context string)
+            handoff_context = get_handoff_for_prompt(
+                db=db,
+                run_id=run_id,
+                role=role,
+                project_path=project.repo_path or project_path,
+                write_file=True
+            )
+
+            # Build comprehensive context combining project info + handoff
+            context = f"""# Project Context
+
+## Project: {project.name}
+- **ID**: {project.id}
+- **Repository**: {project.repo_path or project_path}
+- **Git URL**: {project.git_url or 'N/A'}
+- **Branch**: {project.branch or 'main'}
+
+## Technology Stack
+{project.tech_stack or 'Not specified'}
+
+## Key Files
+{project.key_files or 'Not specified'}
+
+## Build/Test/Run Commands
+- **Build**: {project.build_cmd or 'Not specified'}
+- **Test**: {project.test_cmd or 'Not specified'}
+- **Run**: {project.run_cmd or 'Not specified'}
+
+## IMPORTANT: Stay in your workspace!
+You MUST work only within: {project.repo_path or project_path}
+Do NOT modify files outside this directory.
+
+## Proof-of-Work Requirements
+You MUST provide evidence of your work by uploading proofs to the API:
+- **Screenshots**: Capture UI states, test results, or visual changes
+- **Logs**: Save command output, test results, or build logs
+- **Reports**: Generate summary reports of your findings
+
+Upload proofs using:
+```bash
+curl -X POST "http://localhost:8000/api/runs/{run_id}/proofs/upload" \\
+  -F "stage=dev" \\
+  -F "proof_type=screenshot" \\
+  -F "description=description_here" \\
+  -F "file=@/path/to/file.png"
+```
+
+Proof types: screenshot, log, report
+Stages: dev, qa, sec, docs
+
+---
+
+{handoff_context}"""
             db.close()
-            return result
+            return context
 
-        db.close()
+        except Exception as e:
+            print(f"Warning: Could not fetch project context: {e}")
+            return f"# Project Context\nProject Path: {project_path}\nRun ID: {run_id}"
 
-    except Exception as e:
-        print(f"Warning: Could not load config from DB for role '{role}': {e}")
+    def _get_format_vars(self, project_path: str, run_id: int) -> dict:
+        """Get additional format variables for prompt templates."""
+        return {
+            "project_name": os.path.basename(project_path),
+            "workspace": project_path,
+        }
 
-    return {"role": role, "requires_approval": False, "checks": {}}
+# =============================================================================
+# Goose Provider Implementation
+# =============================================================================
 
+class GooseProvider(AgentProvider):
+    """Provider implementation for Goose AI agent."""
+    
+    def __init__(self):
+        self.executable = self._find_goose_executable()
 
-def run_goose(agent_type: str, run_id: int, project_path: str) -> dict:
-    """Run Goose with the appropriate prompt for the agent type."""
-    # Load prompt from database (DRY - prompts stored in role_configs table)
-    prompt = get_agent_prompt(agent_type, run_id, project_path)
-    if not prompt or len(prompt) < 50:
-        return {"status": "fail", "summary": f"Could not load prompt for agent: {agent_type}"}
+    def _find_goose_executable(self) -> str:
+        """Find the goose executable, checking common locations."""
+        explicit_path = os.getenv("GOOSE_PATH")
+        if explicit_path and os.path.exists(explicit_path):
+            return explicit_path
 
-    try:
-        # Check if Goose is available
-        if not GOOSE_EXECUTABLE or GOOSE_EXECUTABLE == "goose":
-            # Verify goose is in PATH
-            try:
-                subprocess.run(["which", "goose"], capture_output=True, check=True)
-            except subprocess.CalledProcessError:
-                return {
-                    "status": "fail",
-                    "summary": f"Goose not found. Searched: /opt/homebrew/bin/goose, ~/.local/bin/goose, PATH",
-                    "details": {"goose_path": GOOSE_EXECUTABLE, "error": "executable_not_found"}
+        common_paths = [
+            "/opt/homebrew/bin/goose",
+            "/usr/local/bin/goose",
+            os.path.expanduser("~/.local/bin/goose"),
+            "/usr/bin/goose",
+        ]
+
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+
+        try:
+            result = subprocess.run(["which", "goose"], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except Exception:
+            pass
+
+        return "goose"
+
+    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str) -> Dict[str, Any]:
+        if not prompt or len(prompt) < 10:
+             return {"status": "fail", "summary": f"Invalid prompt for agent: {role}"}
+        
+        try:
+            # Check executable availability
+            if self.executable == "goose":
+                try:
+                    subprocess.run(["which", "goose"], capture_output=True, check=True)
+                except subprocess.CalledProcessError:
+                    return {
+                        "status": "fail",
+                        "summary": "Goose executable not found",
+                        "details": {"error": "Ensure 'goose' is in PATH or set GOOSE_PATH"}
+                    }
+
+            print(f"  Running Goose ({role}) with {LLM_TIMEOUT}s timeout...")
+            result = subprocess.run(
+                [self.executable, "run", "--text", prompt],
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                timeout=LLM_TIMEOUT
+            )
+
+            output = result.stdout
+            report = self._parse_json_output(output)
+            
+            # If no JSON parsed, create a basic report from output
+            if not report:
+                # If exit code 0 but no JSON, it's a "soft" pass unless we have stricter rules
+                status = "pass" if result.returncode == 0 else "fail"
+                report = {
+                    "status": status,
+                    "summary": f"{role.upper()} agent execution completed",
+                    "details": {}
                 }
 
-        # Run goose with the prompt (use configurable timeout for local LLMs)
-        print(f"  Running Goose with {LLM_TIMEOUT}s timeout...")
-        result = subprocess.run(
-            [GOOSE_EXECUTABLE, "run", "--text", prompt],
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=LLM_TIMEOUT
-        )
+            # Always include full raw output for logging (no truncation)
+            report["raw_output"] = output
 
-        output = result.stdout
+            # Role-specific additional checks (checking specific result files)
+            report = self._perform_role_checks(role, project_path, report)
+            
+            return report
 
-        # Try to extract JSON from output
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "fail",
+                "summary": f"Agent timed out after {LLM_TIMEOUT}s",
+                "details": {"timeout": LLM_TIMEOUT}
+            }
+        except Exception as e:
+            return {
+                "status": "fail",
+                "summary": f"Error running Goose: {str(e)}",
+                "details": {"error": str(e)}
+            }
+
+    def _parse_json_output(self, output: str) -> Optional[Dict]:
+        """Attempt to extract and parse JSON from mixed output."""
         try:
-            # Look for JSON block in output
             if "```json" in output:
                 json_start = output.find("```json") + 7
                 json_end = output.find("```", json_start)
                 json_str = output[json_start:json_end].strip()
             elif "{" in output and "}" in output:
+                # Last valid JSON block heuristic
                 json_start = output.rfind("{")
                 json_end = output.rfind("}") + 1
                 json_str = output[json_start:json_end]
             else:
-                json_str = None
+                return None
+            
+            return json.loads(json_str)
+        except (json.JSONDecodeError, ValueError):
+            return None
 
-            if json_str:
-                report = json.loads(json_str)
-                return report
-        except json.JSONDecodeError:
-            pass
-
-        # For QA agent, check bugs.json file
-        if agent_type == "qa":
+    def _perform_role_checks(self, role: str, project_path: str, report: Dict) -> Dict:
+        """Inject additional checks based on role (QA bugs file, Security report)."""
+        
+        # QA Agent Check
+        if role == "qa":
             bugs_path = os.path.join(project_path, "bugs.json")
             if os.path.exists(bugs_path):
                 try:
                     with open(bugs_path) as f:
                         bugs_data = json.load(f)
-
+                    
                     bugs = bugs_data.get("bugs", [])
                     if bugs:
+                        # Override report if bugs found
                         return {
                             "status": "fail",
                             "summary": f"QA found {len(bugs)} bugs",
@@ -217,86 +342,66 @@ def run_goose(agent_type: str, run_id: int, project_path: str) -> dict:
                 except Exception as e:
                     print(f"Warning: Could not read bugs.json: {e}")
 
-        # For security agent, check the security_report.json file
-        if agent_type == "security":
-            security_report_path = os.path.join(project_path, "security_report.json")
-            if os.path.exists(security_report_path):
+        # Security Agent Check
+        elif role == "security":
+            sec_path = os.path.join(project_path, "security_report.json")
+            if os.path.exists(sec_path):
                 try:
-                    with open(security_report_path) as f:
+                    with open(sec_path) as f:
                         sec_report = json.load(f)
-
+                    
                     vulnerabilities = sec_report.get("vulnerabilities", [])
-                    # Count by severity
-                    high_count = len([v for v in vulnerabilities if v.get("severity") in ("critical", "high")])
-                    medium_count = len([v for v in vulnerabilities if v.get("severity") == "medium"])
-                    low_count = len([v for v in vulnerabilities if v.get("severity") == "low"])
-
-                    # Fail if any high/critical vulnerabilities found
-                    if high_count > 0:
+                    high_critical = [v for v in vulnerabilities if v.get("severity") in ("critical", "high")]
+                    
+                    if high_critical:
                         return {
                             "status": "fail",
-                            "summary": f"Security scan found {high_count} high/critical vulnerabilities",
+                            "summary": f"Security scan found {len(high_critical)} high/critical vulnerabilities",
                             "details": {
                                 "vulnerabilities": vulnerabilities,
-                                "critical": len([v for v in vulnerabilities if v.get("severity") == "critical"]),
-                                "high": high_count,
-                                "medium": medium_count,
-                                "low": low_count,
-                                "report_file": "security_report.json"
-                            }
-                        }
-                    else:
-                        # Pass if only medium/low issues
-                        return {
-                            "status": "pass",
-                            "summary": f"Security scan complete - {medium_count} medium, {low_count} low issues",
-                            "details": {
-                                "vulnerabilities": vulnerabilities,
-                                "critical": 0,
-                                "high": 0,
-                                "medium": medium_count,
-                                "low": low_count,
+                                "high_critical_count": len(high_critical),
                                 "report_file": "security_report.json"
                             }
                         }
                 except Exception as e:
                     print(f"Warning: Could not read security_report.json: {e}")
+        
+        return report
 
-        # Fallback: assume success if goose completed
-        return {
-            "status": "pass" if result.returncode == 0 else "fail",
-            "summary": f"{agent_type.upper()} agent completed",
-            "details": {"output": output[:2000]}  # Truncate long output
-        }
 
-    except subprocess.TimeoutExpired:
+# =============================================================================
+# Factory & Mock Providers
+# =============================================================================
+
+class MockProvider(AgentProvider):
+    """Mock provider for testing without an LLM."""
+    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str) -> Dict[str, Any]:
         return {
-            "status": "fail",
-            "summary": f"Agent timed out after {LLM_TIMEOUT}s. Increase LLM_TIMEOUT env var for slower models.",
-            "details": {"timeout_seconds": LLM_TIMEOUT}
-        }
-    except FileNotFoundError as e:
-        return {
-            "status": "fail",
-            "summary": f"Goose executable not found at: {GOOSE_EXECUTABLE}",
-            "details": {
-                "error": str(e),
-                "searched_paths": [
-                    "/opt/homebrew/bin/goose",
-                    "/usr/local/bin/goose",
-                    "~/.local/bin/goose",
-                    "/usr/bin/goose"
-                ],
-                "suggestion": "Install with: brew install goose-ai OR pipx install goose-ai"
-            }
-        }
-    except Exception as e:
-        return {
-            "status": "fail",
-            "summary": f"Error running Goose: {str(e)}",
-            "details": {"error_type": type(e).__name__, "error": str(e)}
+            "status": "pass",
+            "summary": f"Mock execution for {role}",
+            "details": {"mock": True, "run_id": run_id}
         }
 
+def get_provider() -> AgentProvider:
+    """Factory to get the configured agent provider."""
+    if AGENT_PROVIDER == "mock":
+        return MockProvider()
+    elif AGENT_PROVIDER == "goose":
+        return GooseProvider()
+    else:
+        # Default fallback or raise error
+        print(f"Unknown provider '{AGENT_PROVIDER}', falling back to Goose")
+        return GooseProvider()
+
+
+# =============================================================================
+# Main Runner Logic
+# =============================================================================
+
+def run_agent_logic(agent_type: str, run_id: int, project_path: str) -> Dict[str, Any]:
+    provider = get_provider()
+    prompt = provider.get_agent_prompt(agent_type, run_id, project_path)
+    return provider.run_agent(agent_type, run_id, project_path, prompt)
 
 def submit_report(run_id: int, agent_type: str, report: dict):
     """Submit agent report back to Workflow Hub."""
@@ -311,7 +416,8 @@ def submit_report(run_id: int, agent_type: str, report: dict):
                 "status": report.get("status", "fail"),
                 "summary": report.get("summary", ""),
                 "details": report.get("details", {}),
-                "actor": f"goose-{agent_type}"
+                "actor": f"{AGENT_PROVIDER}-{agent_type}",
+                "raw_output": report.get("raw_output", "")
             },
             timeout=30
         )
@@ -323,10 +429,9 @@ def submit_report(run_id: int, agent_type: str, report: dict):
         print(f"Report submitted for run {run_id}, agent {agent_type}")
 
         # Always try to advance the state - the state machine handles pass/fail transitions
-        # For QA/SEC: pass → next stage, fail → QA_FAILED/SEC_FAILED
         advance_response = requests.post(
             f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/advance",
-            json={"actor": f"goose-{agent_type}"},
+            json={"actor": f"{AGENT_PROVIDER}-{agent_type}"},
             timeout=30
         )
         if advance_response.status_code == 200:
@@ -342,6 +447,9 @@ def submit_report(run_id: int, agent_type: str, report: dict):
         print(f"Error submitting report: {e}")
         return False
 
+# =============================================================================
+# Webhook Server
+# =============================================================================
 
 class WebhookHandler(BaseHTTPRequestHandler):
     """HTTP handler for receiving webhooks from n8n."""
@@ -360,16 +468,15 @@ class WebhookHandler(BaseHTTPRequestHandler):
         payload = data.get("payload", {})
 
         print(f"Received webhook: {event}")
-        print(f"Payload: {json.dumps(payload, indent=2)}")
-
+        
         # Handle different event types
         if event in ("run_created", "state_change"):
             agent = payload.get("next_agent")
             run_id = payload.get("run_id")
 
             if agent and run_id:
-                # Get project path from run
                 try:
+                    # Resolve project path
                     run_resp = requests.get(f"{WORKFLOW_HUB_URL}/api/runs/{run_id}")
                     run_data = run_resp.json()
                     project_id = run_data.get("run", {}).get("project_id")
@@ -378,11 +485,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     proj_data = proj_resp.json()
                     project_path = proj_data.get("project", {}).get("repo_path", ".")
 
-                    # Run the agent
                     print(f"Running {agent} agent for run {run_id}...")
-                    report = run_goose(agent, run_id, project_path)
-
-                    # Submit the report
+                    report = run_agent_logic(agent, run_id, project_path)
                     submit_report(run_id, agent, report)
 
                 except Exception as e:
@@ -396,270 +500,19 @@ class WebhookHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         print(f"[Webhook] {args[0]}")
 
-
 def serve(port: int):
-    """Start HTTP server to receive webhooks."""
     server = HTTPServer(("0.0.0.0", port), WebhookHandler)
     print(f"Agent runner listening on port {port}")
+    print(f"Provider: {AGENT_PROVIDER}")
     print(f"Workflow Hub URL: {WORKFLOW_HUB_URL}")
-    print("\nConfigure n8n to POST webhooks to: http://localhost:{port}/")
     server.serve_forever()
 
-
-def get_run_state(run_id: int) -> dict:
-    """Get current run state from Workflow Hub."""
-    try:
-        resp = requests.get(f"{WORKFLOW_HUB_URL}/api/runs/{run_id}", timeout=10)
-        return resp.json().get("run", {})
-    except Exception as e:
-        print(f"Error getting run state: {e}")
-        return {}
-
-
-def loop_back_to_dev(run_id: int) -> bool:
-    """When QA/SEC fails, loop back to DEV stage."""
-    try:
-        # First reset to dev state via API
-        resp = requests.post(
-            f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/reset-to-dev",
-            json={"actor": "orchestrator"},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            print(f"  → Looped back to DEV stage")
-            return True
-        else:
-            # Fallback: try retry endpoint
-            resp = requests.post(
-                f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/retry",
-                json={"actor": "orchestrator"},
-                timeout=10
-            )
-            return resp.status_code == 200
-    except Exception as e:
-        print(f"Error looping back: {e}")
-        return False
-
-
-def run_pipeline(run_id: int, project_path: str, max_iterations: int = 10):
-    """
-    Automated pipeline orchestrator.
-    Runs agents in sequence, handling failures and loopbacks.
-
-    Pipeline: PM → DEV → QA → SEC → (human approval) → DEPLOYED
-              ↑__________|  (loops back on QA/SEC failure)
-    """
-    STATE_TO_AGENT = {
-        "pm": "pm",
-        "dev": "dev",
-        "qa": "qa",
-        "sec": "security",
-        "security": "security",
-    }
-
-    TERMINAL_STATES = {"deployed", "ready_for_deploy", "testing", "docs"}
-    FAILED_STATES = {"qa_failed", "sec_failed"}
-
-    iteration = 0
-
-    print(f"\n{'='*60}")
-    print(f"AUTOMATED PIPELINE - Run {run_id}")
-    print(f"Project: {project_path}")
-    print(f"{'='*60}\n")
-
-    while iteration < max_iterations:
-        iteration += 1
-
-        # Get current state
-        run_data = get_run_state(run_id)
-        state = run_data.get("state", "unknown")
-
-        print(f"\n[Iteration {iteration}] Current state: {state.upper()}")
-
-        # Check terminal states
-        if state in TERMINAL_STATES:
-            print(f"\n✓ Pipeline reached {state.upper()} - stopping")
-            if state == "ready_for_deploy":
-                print("  → Human approval required for deployment")
-            break
-
-        # Handle failed states - loop back to DEV
-        if state in FAILED_STATES:
-            print(f"  ✗ {state.upper()} detected - looping back to DEV")
-            if loop_back_to_dev(run_id):
-                state = "dev"
-            else:
-                print("  ✗ Failed to loop back - stopping")
-                break
-
-        # Get agent for current state
-        agent = STATE_TO_AGENT.get(state)
-        if not agent:
-            print(f"  ✗ No agent for state '{state}' - stopping")
-            break
-
-        # Run the agent
-        print(f"  → Running {agent.upper()} agent...")
-        report = run_goose(agent, run_id, project_path)
-
-        status = report.get("status", "unknown")
-        summary = report.get("summary", "No summary")
-        print(f"  → Result: {status.upper()} - {summary}")
-
-        # Submit report
-        submit_report(run_id, agent, report)
-
-        # Small delay to let state machine update
-        import time
-        time.sleep(1)
-
-    if iteration >= max_iterations:
-        print(f"\n✗ Max iterations ({max_iterations}) reached - stopping")
-
-    # Final state
-    final_run = get_run_state(run_id)
-    print(f"\n{'='*60}")
-    print(f"PIPELINE COMPLETE - Final state: {final_run.get('state', 'unknown').upper()}")
-    print(f"{'='*60}\n")
-
-
-def run_director(run_id: int, project_path: str, poll_interval: int = 10, max_iterations: int = 100):
-    """
-    Run the Director daemon for task-level pipeline orchestration.
-
-    This processes individual tasks through stages:
-    BACKLOG → DEV → QA → SEC → DOCS → COMPLETE
-              ↑______|  (loop back on failures)
-
-    Args:
-        run_id: Run ID to process
-        project_path: Path to project repository
-        poll_interval: Seconds between work queue polls
-        max_iterations: Maximum number of task processing iterations
-    """
-    import time
-
-    print(f"\n{'='*60}")
-    print(f"DIRECTOR - Task Pipeline Orchestrator")
-    print(f"{'='*60}")
-    print(f"Run ID: {run_id}")
-    print(f"Project: {project_path}")
-    print(f"Poll interval: {poll_interval}s")
-    print(f"{'='*60}\n")
-
-    iteration = 0
-    completed_tasks = set()
-
-    while iteration < max_iterations:
-        iteration += 1
-
-        # Get work queue from Director
-        try:
-            resp = requests.post(
-                f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/director/process",
-                timeout=30
-            )
-            if resp.status_code != 200:
-                print(f"Error getting work queue: {resp.text}")
-                time.sleep(poll_interval)
-                continue
-
-            result = resp.json()
-        except Exception as e:
-            print(f"Error contacting Director: {e}")
-            time.sleep(poll_interval)
-            continue
-
-        work_queue = result.get("work_queue", [])
-        progress = result.get("progress", {})
-
-        print(f"\n[Iteration {iteration}] Progress: {progress.get('percent_complete', 0)}% complete")
-        print(f"  Stages: {progress.get('stages', {})}")
-
-        # Check if all done
-        if progress.get("percent_complete", 0) >= 100:
-            print(f"\n✓ All tasks complete!")
-            break
-
-        if not work_queue:
-            print(f"  No tasks in queue, waiting...")
-            time.sleep(poll_interval)
-            continue
-
-        # Process each task in the queue
-        for item in work_queue:
-            task_id = item["task_id"]
-            task_ref = item["task_ref"]
-            agent = item["agent"]
-            stage = item["stage"]
-            title = item["title"][:50]
-
-            # Skip already completed in this session
-            if task_id in completed_tasks:
-                continue
-
-            print(f"\n  [{task_ref}] {title}")
-            print(f"    Stage: {stage.upper()} → Agent: {agent.upper()}")
-
-            # Run the agent for this task
-            report = run_goose(agent, run_id, project_path)
-            status = report.get("status", "unknown")
-            summary = report.get("summary", "No summary")[:100]
-
-            print(f"    Result: {status.upper()} - {summary}")
-
-            # Advance or loop back based on result
-            if status == "pass":
-                # Advance to next stage
-                try:
-                    adv_resp = requests.post(
-                        f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/advance",
-                        json={"report_status": "pass", "report_summary": summary},
-                        timeout=30
-                    )
-                    if adv_resp.status_code == 200:
-                        adv_result = adv_resp.json()
-                        new_stage = adv_result.get("task", {}).get("pipeline_stage", "?")
-                        print(f"    → Advanced to {new_stage.upper()}")
-                        if new_stage == "complete":
-                            completed_tasks.add(task_id)
-                except Exception as e:
-                    print(f"    → Error advancing: {e}")
-            else:
-                # Loop back to DEV
-                try:
-                    loop_resp = requests.post(
-                        f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/loop-back",
-                        json={"reason": summary},
-                        timeout=30
-                    )
-                    if loop_resp.status_code == 200:
-                        print(f"    → Looped back to DEV for fixes")
-                except Exception as e:
-                    print(f"    → Error looping back: {e}")
-
-            # Small delay between tasks
-            time.sleep(1)
-
-        # Delay before next poll
-        time.sleep(poll_interval)
-
-    # Final summary
-    try:
-        final_resp = requests.get(f"{WORKFLOW_HUB_URL}/api/runs/{run_id}/task-progress", timeout=10)
-        final = final_resp.json()
-        print(f"\n{'='*60}")
-        print(f"DIRECTOR COMPLETE")
-        print(f"  Total tasks: {final.get('total_tasks', 0)}")
-        print(f"  Completed: {final.get('completed', 0)}")
-        print(f"  Progress: {final.get('progress_percent', 0)}%")
-        print(f"{'='*60}\n")
-    except:
-        pass
-
+# =============================================================================
+# CLI Entry Point
+# =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Goose Agent Runner for Workflow Hub")
+    parser = argparse.ArgumentParser(description="Agent Runner for Workflow Hub")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # serve command
@@ -673,35 +526,17 @@ def main():
     run_parser.add_argument("--project-path", default=".", help="Path to project repository")
     run_parser.add_argument("--submit", action="store_true", help="Submit report to Workflow Hub")
 
-    # pipeline command - automated full pipeline (run-level)
-    pipeline_parser = subparsers.add_parser("pipeline", help="Run automated pipeline (PM→DEV→QA→SEC)")
-    pipeline_parser.add_argument("--run-id", type=int, required=True, help="Workflow Hub run ID")
-    pipeline_parser.add_argument("--project-path", required=True, help="Path to project repository")
-    pipeline_parser.add_argument("--max-iterations", type=int, default=10, help="Max pipeline iterations")
-
-    # director command - task-level pipeline orchestration
-    director_parser = subparsers.add_parser("director", help="Run Director for task-level pipeline")
-    director_parser.add_argument("--run-id", type=int, required=True, help="Workflow Hub run ID")
-    director_parser.add_argument("--project-path", required=True, help="Path to project repository")
-    director_parser.add_argument("--poll-interval", type=int, default=10, help="Seconds between polls")
-    director_parser.add_argument("--max-iterations", type=int, default=100, help="Max iterations")
-
     args = parser.parse_args()
 
     if args.command == "serve":
         serve(args.port)
     elif args.command == "run":
-        print(f"Running {args.agent} agent for run {args.run_id}...")
-        report = run_goose(args.agent, args.run_id, args.project_path)
+        print(f"Running {args.agent} agent for run {args.run_id} using {AGENT_PROVIDER}...")
+        report = run_agent_logic(args.agent, args.run_id, args.project_path)
         print(f"\nReport: {json.dumps(report, indent=2)}")
 
         if args.submit:
             submit_report(args.run_id, args.agent, report)
-    elif args.command == "pipeline":
-        run_pipeline(args.run_id, args.project_path, args.max_iterations)
-    elif args.command == "director":
-        run_director(args.run_id, args.project_path, args.poll_interval, args.max_iterations)
-
 
 if __name__ == "__main__":
     main()
