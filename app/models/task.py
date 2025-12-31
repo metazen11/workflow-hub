@@ -80,7 +80,7 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     task_id = Column(String(20), nullable=False)  # e.g., "T1", "T2"
-    title = Column(String(255), nullable=False)
+    title = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
     acceptance_criteria = Column(JSON, default=list)  # List of testable criteria
     status = Column(Enum(TaskStatus), default=TaskStatus.BACKLOG)

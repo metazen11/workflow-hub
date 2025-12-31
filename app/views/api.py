@@ -757,10 +757,10 @@ def task_execute(request, task_id):
             return JsonResponse({"error": "Project has no repo_path configured"}, status=400)
 
         # Create a run for this specific task
-        # Truncate name to fit varchar(100) in runs.name column
+        # Truncate name to fit varchar(500) in runs.name column
         run_name = f"Execute Task: {task.task_id} - {task.title}"
-        if len(run_name) > 100:
-            run_name = run_name[:97] + "..."
+        if len(run_name) > 500:
+            run_name = run_name[:497] + "..."
         service = RunService(db)
         run = service.create_run(project.id, run_name)
 

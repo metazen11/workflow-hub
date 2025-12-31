@@ -12,7 +12,7 @@ class Requirement(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     req_id = Column(String(20), nullable=False)  # e.g., "R1", "R2"
-    title = Column(String(255), nullable=False)
+    title = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
     acceptance_criteria = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

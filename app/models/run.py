@@ -49,7 +49,7 @@ class Run(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    name = Column(String(100), nullable=False)  # e.g., "Run 2025-12-24_01"
+    name = Column(String(500), nullable=False)  # e.g., "Run 2025-12-24_01" or task execution
     state = Column(Enum(RunState), default=RunState.PM)
 
     # Artifact storage

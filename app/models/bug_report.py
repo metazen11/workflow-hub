@@ -19,7 +19,7 @@ class BugReport(Base):
     __tablename__ = "bug_reports"
 
     id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(255), nullable=False)
+    title = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
     screenshot = Column(Text, nullable=True)  # Base64 encoded image
     url = Column(String(512), nullable=True)  # Page URL where bug was reported
