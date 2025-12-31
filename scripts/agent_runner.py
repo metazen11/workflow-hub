@@ -45,24 +45,25 @@ LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "600"))
 
 class AgentProvider(abc.ABC):
     """Abstract base class for agent providers."""
-    
+
     @abc.abstractmethod
-    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str) -> Dict[str, Any]:
+    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str, task_id: int = None) -> Dict[str, Any]:
         """
         Run the agent with the given role and prompt.
-        
+
         Args:
             role: The agent role (pm, dev, qa, security, etc.)
             run_id: The ID of the current run
             project_path: Absolute path to the project repository
             prompt: The full prompt text to send to the agent
-            
+            task_id: Optional task ID for session persistence
+
         Returns:
             Dict containing 'status' (pass/fail), 'summary', and 'details'
         """
         pass
 
-    def get_agent_prompt(self, role: str, run_id: int, project_path: str) -> str:
+    def get_agent_prompt(self, role: str, run_id: int, project_path: str, task_id: int = None) -> str:
         """
         Load agent prompt from database and format with context.
         Includes full project details and handoff context in every prompt.
@@ -72,8 +73,15 @@ class AgentProvider(abc.ABC):
         try:
             from app.db import get_db
             from app.models.role_config import RoleConfig
+            from app.models.task import Task
 
             db = next(get_db())
+
+            # Get task_id if not provided
+            if not task_id:
+                task = db.query(Task).filter(Task.run_id == run_id).first()
+                task_id = task.id if task else None
+
             config = db.query(RoleConfig).filter(
                 RoleConfig.role == role,
                 RoleConfig.active == True
@@ -81,11 +89,13 @@ class AgentProvider(abc.ABC):
 
             if config and config.prompt:
                 # Format the prompt with context variables
+                # Note: _get_format_vars includes task_id, so don't pass it separately
+                format_vars = self._get_format_vars(project_path, run_id, task_id)
                 prompt = config.prompt.format(
                     project_path=project_path,
                     run_id=run_id,
                     project_context=project_context,
-                    **self._get_format_vars(project_path, run_id)
+                    **format_vars
                 )
                 db.close()
                 return f"{project_context}\n\n{prompt}"
@@ -149,25 +159,35 @@ Execute your role's responsibilities and output a JSON status report.
                 write_file=True
             )
 
+            # Build tech stack string from available fields
+            tech_stack_parts = []
+            if project.languages:
+                tech_stack_parts.append(f"Languages: {', '.join(project.languages)}")
+            if project.frameworks:
+                tech_stack_parts.append(f"Frameworks: {', '.join(project.frameworks)}")
+            if project.databases:
+                tech_stack_parts.append(f"Databases: {', '.join(project.databases)}")
+            tech_stack = '\n'.join(tech_stack_parts) if tech_stack_parts else 'Not specified'
+
             # Build comprehensive context combining project info + handoff
             context = f"""# Project Context
 
 ## Project: {project.name}
 - **ID**: {project.id}
 - **Repository**: {project.repo_path or project_path}
-- **Git URL**: {project.git_url or 'N/A'}
-- **Branch**: {project.branch or 'main'}
+- **Git URL**: {project.repository_url or 'N/A'}
+- **Branch**: {project.primary_branch or 'main'}
 
 ## Technology Stack
-{project.tech_stack or 'Not specified'}
+{tech_stack}
 
 ## Key Files
-{project.key_files or 'Not specified'}
+{', '.join(project.key_files) if project.key_files else 'Not specified'}
 
 ## Build/Test/Run Commands
-- **Build**: {project.build_cmd or 'Not specified'}
-- **Test**: {project.test_cmd or 'Not specified'}
-- **Run**: {project.run_cmd or 'Not specified'}
+- **Build**: {project.build_command or 'Not specified'}
+- **Test**: {project.test_command or 'Not specified'}
+- **Run**: {project.run_command or 'Not specified'}
 
 ## IMPORTANT: Stay in your workspace!
 You MUST work only within: {project.repo_path or project_path}
@@ -201,11 +221,12 @@ Stages: dev, qa, sec, docs
             print(f"Warning: Could not fetch project context: {e}")
             return f"# Project Context\nProject Path: {project_path}\nRun ID: {run_id}"
 
-    def _get_format_vars(self, project_path: str, run_id: int) -> dict:
+    def _get_format_vars(self, project_path: str, run_id: int, task_id: int = None) -> dict:
         """Get additional format variables for prompt templates."""
         return {
             "project_name": os.path.basename(project_path),
             "workspace": project_path,
+            "task_id": task_id or "N/A",
         }
 
 # =============================================================================
@@ -213,10 +234,48 @@ Stages: dev, qa, sec, docs
 # =============================================================================
 
 class GooseProvider(AgentProvider):
-    """Provider implementation for Goose AI agent."""
-    
+    """Provider implementation for Goose AI agent with session persistence.
+
+    Sessions are stored in {project_path}/.goose/sessions/task_{id}/
+    This allows agents to maintain conversation context across multiple calls.
+    """
+
     def __init__(self):
         self.executable = self._find_goose_executable()
+
+    def _get_session_name(self, task_id: int = None, run_id: int = None) -> str:
+        """Generate session name for a task or run."""
+        if task_id:
+            return f"task_{task_id}"
+        elif run_id:
+            return f"run_{run_id}"
+        return "default"
+
+    def _session_exists(self, project_path: str, session_name: str) -> bool:
+        """Check if a Goose session exists."""
+        session_dir = os.path.join(project_path, ".goose", "sessions", session_name)
+        return os.path.exists(session_dir)
+
+    def clear_session(self, project_path: str, task_id: int = None, run_id: int = None) -> bool:
+        """Clear a Goose session to start fresh.
+
+        Args:
+            project_path: Path to the project
+            task_id: Task ID whose session to clear
+            run_id: Run ID whose session to clear (if no task_id)
+
+        Returns:
+            True if session was cleared, False if it didn't exist
+        """
+        import shutil
+        session_name = self._get_session_name(task_id, run_id)
+        session_dir = os.path.join(project_path, ".goose", "sessions", session_name)
+
+        if os.path.exists(session_dir):
+            shutil.rmtree(session_dir)
+            print(f"  Cleared Goose session: {session_name}")
+            return True
+        return False
 
     def _find_goose_executable(self) -> str:
         """Find the goose executable, checking common locations."""
@@ -244,10 +303,10 @@ class GooseProvider(AgentProvider):
 
         return "goose"
 
-    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str) -> Dict[str, Any]:
+    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str, task_id: int = None) -> Dict[str, Any]:
         if not prompt or len(prompt) < 10:
              return {"status": "fail", "summary": f"Invalid prompt for agent: {role}"}
-        
+
         try:
             # Check executable availability
             if self.executable == "goose":
@@ -260,9 +319,25 @@ class GooseProvider(AgentProvider):
                         "details": {"error": "Ensure 'goose' is in PATH or set GOOSE_PATH"}
                     }
 
-            print(f"  Running Goose ({role}) with {LLM_TIMEOUT}s timeout...")
+            # Determine session name for context persistence
+            # Each task gets its own session to maintain conversation history
+            session_name = f"task_{task_id}" if task_id else f"run_{run_id}"
+            session_dir = os.path.join(project_path, ".goose", "sessions", session_name)
+
+            # Build command using goose run (supports both new and resumed sessions)
+            # goose run -n <name> -t <prompt> for new session
+            # goose run -n <name> --resume -t <prompt> for resuming
+            if os.path.exists(session_dir):
+                # Resume existing session - Goose will have context from previous calls
+                print(f"  Resuming Goose session '{session_name}' ({role}) with {LLM_TIMEOUT}s timeout...")
+                cmd = [self.executable, "run", "-n", session_name, "--resume", "-t", prompt]
+            else:
+                # Start new session for this task
+                print(f"  Starting new Goose session '{session_name}' ({role}) with {LLM_TIMEOUT}s timeout...")
+                cmd = [self.executable, "run", "-n", session_name, "-t", prompt]
+
             result = subprocess.run(
-                [self.executable, "run", "--text", prompt],
+                cmd,
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -285,9 +360,16 @@ class GooseProvider(AgentProvider):
             # Always include full raw output for logging (no truncation)
             report["raw_output"] = output
 
+            # Include session info for debugging/tracking
+            report["session"] = {
+                "name": session_name,
+                "resumed": os.path.exists(session_dir),
+                "path": session_dir
+            }
+
             # Role-specific additional checks (checking specific result files)
             report = self._perform_role_checks(role, project_path, report)
-            
+
             return report
 
         except subprocess.TimeoutExpired:
@@ -381,11 +463,11 @@ class GooseProvider(AgentProvider):
 
 class MockProvider(AgentProvider):
     """Mock provider for testing without an LLM."""
-    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str) -> Dict[str, Any]:
+    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str, task_id: int = None) -> Dict[str, Any]:
         return {
             "status": "pass",
             "summary": f"Mock execution for {role}",
-            "details": {"mock": True, "run_id": run_id}
+            "details": {"mock": True, "run_id": run_id, "task_id": task_id}
         }
 
 def get_provider() -> AgentProvider:
@@ -618,6 +700,209 @@ def run_agent_logic(agent_type: str, run_id: int, project_path: str) -> Dict[str
 
     return report
 
+
+# =============================================================================
+# Task-Centric Handoff Functions
+# =============================================================================
+
+def get_or_create_task_handoff(task_id: int, to_role: str, stage: str, run_id: int = None) -> Optional[Dict]:
+    """Get current handoff or create one if none exists.
+
+    Returns the handoff data including context_markdown for the agent prompt.
+    """
+    try:
+        # First, try to get existing handoff
+        response = requests.get(
+            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/handoff",
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("handoff"):
+                return data["handoff"]
+
+        # No pending handoff - create one
+        create_response = requests.post(
+            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/handoff/create",
+            json={
+                "to_role": to_role,
+                "stage": stage,
+                "run_id": run_id,
+                "created_by": f"{AGENT_PROVIDER}-agent"
+            },
+            timeout=30
+        )
+
+        if create_response.status_code == 201:
+            return create_response.json().get("handoff")
+        else:
+            print(f"Failed to create handoff: {create_response.text}")
+            return None
+
+    except Exception as e:
+        print(f"Error getting/creating handoff: {e}")
+        return None
+
+
+def accept_task_handoff(task_id: int, handoff_id: int = None) -> bool:
+    """Accept a task handoff (mark as in_progress)."""
+    try:
+        response = requests.post(
+            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/handoff/accept",
+            json={"handoff_id": handoff_id} if handoff_id else {},
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            print(f"Handoff accepted for task {task_id}")
+            return True
+        else:
+            print(f"Failed to accept handoff: {response.text}")
+            return False
+
+    except Exception as e:
+        print(f"Error accepting handoff: {e}")
+        return False
+
+
+def complete_task_handoff(task_id: int, report: Dict, handoff_id: int = None) -> bool:
+    """Complete a task handoff with the agent's report."""
+    try:
+        response = requests.post(
+            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/handoff/complete",
+            json={
+                "handoff_id": handoff_id,
+                "report_status": report.get("status", "fail"),
+                "report_summary": report.get("summary", ""),
+                "report_details": report.get("details", {})
+            },
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            print(f"Handoff completed for task {task_id}")
+            return True
+        else:
+            print(f"Failed to complete handoff: {response.text}")
+            return False
+
+    except Exception as e:
+        print(f"Error completing handoff: {e}")
+        return False
+
+
+def run_agent_for_task(task_id: int, agent_type: str, stage: str = None,
+                       run_id: int = None, project_path: str = None) -> Dict[str, Any]:
+    """Run an agent for a specific task using the handoff API.
+
+    This is the task-centric execution flow:
+    1. Get or create handoff for the task
+    2. Accept the handoff (mark in_progress)
+    3. Run the agent with handoff context
+    4. Complete the handoff with the report
+
+    Args:
+        task_id: The task to work on
+        agent_type: Agent role (dev, qa, sec, docs)
+        stage: Pipeline stage (defaults to agent_type)
+        run_id: Optional run ID for context
+        project_path: Path to project (auto-detected if not provided)
+
+    Returns:
+        Agent report dict
+    """
+    stage = stage or agent_type
+
+    # Get task details if project_path not provided
+    if not project_path:
+        try:
+            task_resp = requests.get(f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/details", timeout=30)
+            if task_resp.status_code == 200:
+                task_data = task_resp.json().get("task", {})
+                project_path = task_data.get("project", {}).get("repo_path", ".")
+            else:
+                project_path = "."
+        except Exception:
+            project_path = "."
+
+    # Step 1: Get or create handoff
+    print(f"Getting handoff for task {task_id}...")
+    handoff = get_or_create_task_handoff(task_id, agent_type, stage, run_id)
+
+    if not handoff:
+        return {
+            "status": "fail",
+            "summary": "Could not create/get handoff for task",
+            "details": {"task_id": task_id}
+        }
+
+    handoff_id = handoff.get("id")
+
+    # Step 2: Accept the handoff
+    if handoff.get("status") == "pending":
+        if not accept_task_handoff(task_id, handoff_id):
+            return {
+                "status": "fail",
+                "summary": "Could not accept handoff",
+                "details": {"handoff_id": handoff_id}
+            }
+
+    # Step 3: Build prompt using handoff context
+    provider = get_provider()
+
+    # Use handoff context_markdown as the primary context
+    context_markdown = handoff.get("context_markdown", "")
+
+    # Get role-specific prompt from DB
+    try:
+        from app.db import get_db
+        from app.models.role_config import RoleConfig
+
+        db = next(get_db())
+        config = db.query(RoleConfig).filter(
+            RoleConfig.role == agent_type,
+            RoleConfig.active == True
+        ).first()
+
+        role_prompt = config.prompt if config else ""
+        db.close()
+    except Exception as e:
+        print(f"Warning: Could not load prompt from DB: {e}")
+        role_prompt = ""
+
+    # Combine context and role prompt
+    full_prompt = f"""# Task Handoff Context
+
+{context_markdown}
+
+---
+
+## Your Role: {agent_type.upper()}
+
+{role_prompt if role_prompt else f'''
+Execute your role's responsibilities for this task.
+When complete, output a JSON status report with:
+- "status": "pass" or "fail"
+- "summary": Brief description of what you did
+- "details": Any relevant details
+'''}
+"""
+
+    # Step 4: Run the agent (with task_id for session persistence)
+    print(f"Running {agent_type} agent for task {task_id}...")
+    report = provider.run_agent(agent_type, run_id or 0, project_path, full_prompt, task_id=task_id)
+
+    # Capture proofs
+    proofs_count = capture_automatic_proofs(agent_type, run_id or task_id, project_path, report)
+    report["proofs_uploaded"] = proofs_count
+
+    # Step 5: Complete the handoff
+    complete_task_handoff(task_id, report, handoff_id)
+
+    return report
+
+
 def submit_report(run_id: int, agent_type: str, report: dict):
     """Submit agent report back to Workflow Hub."""
     role_map = {"pm": "pm", "dev": "dev", "qa": "qa", "security": "security"}
@@ -734,24 +1019,54 @@ def main():
     serve_parser = subparsers.add_parser("serve", help="Start webhook HTTP server")
     serve_parser.add_argument("--port", type=int, default=5001, help="Port to listen on")
 
-    # run command - single agent
-    run_parser = subparsers.add_parser("run", help="Run an agent directly")
+    # run command - single agent (legacy run-centric mode)
+    run_parser = subparsers.add_parser("run", help="Run an agent for a run (legacy mode)")
     run_parser.add_argument("--agent", required=True, choices=["pm", "dev", "qa", "security", "docs", "director"])
     run_parser.add_argument("--run-id", type=int, required=True, help="Workflow Hub run ID")
     run_parser.add_argument("--project-path", default=".", help="Path to project repository")
     run_parser.add_argument("--submit", action="store_true", help="Submit report to Workflow Hub")
+
+    # task command - task-centric mode with handoff API
+    task_parser = subparsers.add_parser("task", help="Run an agent for a task (uses handoff API)")
+    task_parser.add_argument("--agent", required=True, choices=["pm", "dev", "qa", "security", "sec", "docs", "director"])
+    task_parser.add_argument("--task-id", type=int, required=True, help="Task ID to work on")
+    task_parser.add_argument("--run-id", type=int, help="Optional run ID for context")
+    task_parser.add_argument("--stage", help="Pipeline stage (defaults to agent type)")
+    task_parser.add_argument("--project-path", help="Path to project (auto-detected if not provided)")
 
     args = parser.parse_args()
 
     if args.command == "serve":
         serve(args.port)
     elif args.command == "run":
+        # Legacy run-centric mode
         print(f"Running {args.agent} agent for run {args.run_id} using {AGENT_PROVIDER}...")
         report = run_agent_logic(args.agent, args.run_id, args.project_path)
         print(f"\nReport: {json.dumps(report, indent=2)}")
 
         if args.submit:
             submit_report(args.run_id, args.agent, report)
+
+    elif args.command == "task":
+        # Task-centric mode with handoff API
+        agent_type = args.agent
+        # Normalize 'sec' to 'security' for consistency
+        if agent_type == "sec":
+            agent_type = "security"
+
+        print(f"Running {agent_type} agent for task {args.task_id} using {AGENT_PROVIDER}...")
+        print("Using handoff API for context and reporting...")
+
+        report = run_agent_for_task(
+            task_id=args.task_id,
+            agent_type=agent_type,
+            stage=args.stage,
+            run_id=args.run_id,
+            project_path=args.project_path
+        )
+
+        print(f"\nReport: {json.dumps(report, indent=2)}")
+
 
 if __name__ == "__main__":
     main()

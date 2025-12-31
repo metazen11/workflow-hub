@@ -186,6 +186,15 @@ Use curl only for:
 - Checking if server is running
 - Verifying HTML structure (not behavior)
 
+## Documentation
+
+Additional documentation in `docs/`:
+- `DOCKER_MODEL_RUNNER.md` - Local LLM API for simple completions (docs enrichment, wizards)
+- `OFFLINE_SETUP.md` - Offline environment setup
+- `N8N_INTEGRATION.md` - N8N workflow integration
+
+---
+
 ## Monitoring
 
 Pipeline health monitoring via Playwright:

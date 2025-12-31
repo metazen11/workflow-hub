@@ -151,6 +151,17 @@
                             <option value="10">Critical</option>
                         </select>
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label">Attachments</label>
+                        <div id="board-dropzone" class="dropzone-area">
+                            <input type="file" id="task-files" multiple accept="image/*,.pdf,.txt,.md,.json,.log">
+                            <div class="dropzone-prompt">
+                                <span class="dropzone-icon">📎</span>
+                                <span>Drop files here or <u>click to browse</u></span>
+                            </div>
+                            <div id="board-file-previews" class="file-previews"></div>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -197,8 +208,52 @@
     .task-card[data-priority-val="low"] {
         border-left: 4px solid #28a745;
     }
+
+    /* Dropzone styles */
+    .dropzone-area {
+        border: 2px dashed #dee2e6;
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.2s;
+        position: relative;
+        min-height: 80px;
+    }
+    .dropzone-area:hover, .dropzone-area.dragover {
+        border-color: #0d6efd;
+        background: rgba(13, 110, 253, 0.05);
+    }
+    .dropzone-area input[type="file"] {
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        opacity: 0;
+        cursor: pointer;
+    }
+    .dropzone-prompt { color: #6c757d; font-size: 14px; }
+    .dropzone-icon { font-size: 24px; display: block; margin-bottom: 8px; }
+    .file-previews { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; justify-content: center; }
+    .file-preview {
+        position: relative;
+        width: 60px; height: 60px;
+        border-radius: 6px;
+        overflow: hidden;
+        border: 1px solid #dee2e6;
+    }
+    .file-preview img { width: 100%; height: 100%; object-fit: cover; }
+    .file-preview .file-icon {
+        display: flex; align-items: center; justify-content: center;
+        width: 100%; height: 100%; background: #f8f9fa; font-size: 24px;
+    }
+    .file-preview .remove-btn {
+        position: absolute; top: 2px; right: 2px;
+        width: 18px; height: 18px; border-radius: 50%;
+        background: rgba(0,0,0,0.6); color: white;
+        border: none; cursor: pointer; font-size: 12px; line-height: 1;
+    }
 </style>
 
+<script src="/static/js/task-modal.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         initializeDragAndDrop();
@@ -359,25 +414,29 @@
         }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
-    // Handle form submission
-    document.getElementById('createTaskForm').addEventListener('submit', function (e) {
+    // Initialize dropzone for board create modal (uses shared initDropzone from task-modal.js)
+    const boardDropzone = initDropzone('board-dropzone', 'task-files', 'board-file-previews');
+    if (boardDropzone) {
+        document.getElementById('createTaskModal').addEventListener('hidden.bs.modal', boardDropzone.clear);
+    }
+
+    // Handle form submission - uses createTaskWithFiles from task-modal.js
+    document.getElementById('createTaskForm').addEventListener('submit', async function (e) {
         e.preventDefault();
         const formData = new FormData(this);
-        const data = Object.fromEntries(formData.entries());
+        const files = document.getElementById('task-files').files;
+        const projectId = {{ project.id }};
 
-        fetch(this.action, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        })
-            .then(res => res.json())
-            .then(data => {
-                if (data.task) {
-                    location.reload();
-                } else {
-                    alert('Error creating task');
-                }
-            });
+        try {
+            await createTaskWithFiles(projectId, {
+                title: formData.get('title'),
+                description: formData.get('description'),
+                priority: formData.get('priority')
+            }, files);
+            location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
     });
 </script>
 {% endblock %}

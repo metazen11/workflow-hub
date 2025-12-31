@@ -13,6 +13,9 @@ from app.models.bug_report import BugReport, BugReportStatus
 from app.models.attachment import TaskAttachment, AttachmentType, validate_file_security, AttachmentSecurityError
 from app.models.role_config import RoleConfig
 from app.models.deployment_history import DeploymentHistory, DeploymentStatus
+from app.models.proof import Proof, ProofType
+from app.models.handoff import Handoff, HandoffStatus
+from app.models.llm_session import LLMSession
 
 __all__ = [
     'Credential',
@@ -41,4 +44,9 @@ __all__ = [
     'AttachmentSecurityError',
     'DeploymentHistory',
     'DeploymentStatus',
+    'Proof',
+    'ProofType',
+    'Handoff',
+    'HandoffStatus',
+    'LLMSession',
 ]

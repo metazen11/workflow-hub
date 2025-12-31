@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/projects/<int:project_id>/execute', api.project_execute, name='project_execute'),
     path('api/projects/<int:project_id>/refresh', api.project_refresh, name='project_refresh'),
     path('api/projects/<int:project_id>/context', api.orchestrator_context, name='orchestrator_context'),
+    path('api/projects/<int:project_id>/handoff/history', api.project_handoff_history, name='project_handoff_history'),
 
     # Credentials
     path('api/projects/<int:project_id>/credentials', api.credentials_list, name='credentials_list'),
@@ -67,6 +68,14 @@ urlpatterns = [
     path('api/tasks/<int:task_id>/advance', api.task_advance, name='task_advance'),
     path('api/tasks/<int:task_id>/loop-back', api.task_loop_back, name='task_loop_back'),
     path('api/tasks/<int:task_id>/director/prepare', api.task_director_prepare, name='task_director_prepare'),
+
+    # Task Handoffs (agent work cycle tracking)
+    path('api/tasks/<int:task_id>/handoff', api.task_handoff_current, name='task_handoff_current'),
+    path('api/tasks/<int:task_id>/handoff/create', api.task_handoff_create, name='task_handoff_create'),
+    path('api/tasks/<int:task_id>/handoff/accept', api.task_handoff_accept, name='task_handoff_accept'),
+    path('api/tasks/<int:task_id>/handoff/complete', api.task_handoff_complete, name='task_handoff_complete'),
+    path('api/tasks/<int:task_id>/handoff/fail', api.task_handoff_fail, name='task_handoff_fail'),
+    path('api/tasks/<int:task_id>/handoff/history', api.task_handoff_history, name='task_handoff_history'),
 
     # Runs
     path('api/projects/<int:project_id>/runs', api.runs_list, name='runs_list'),
@@ -124,10 +133,40 @@ urlpatterns = [
     # Kill endpoints (soft delete)
     path('api/runs/<int:run_id>/kill', api.run_kill, name='run_kill'),
 
-    # Proof-of-Work (evidence artifacts)
+    # Proof History (database-backed, for agent memory)
+    # Must come BEFORE generic proof patterns to avoid <path:filename> matching
+    path('api/tasks/<int:task_id>/proof-history', api.task_proof_history, name='task_proof_history'),
+    path('api/projects/<int:project_id>/proof-history', api.project_proof_history, name='project_proof_history'),
+    path('api/tasks/<int:task_id>/proofs/<int:proof_id>/download', api.proof_download, name='proof_download'),
+
+    # Proof-of-Work (evidence artifacts - filesystem based)
     path('api/<str:entity_type>/<int:entity_id>/proofs', api.proof_list, name='proof_list'),
     path('api/<str:entity_type>/<int:entity_id>/proofs/summary', api.proof_summary, name='proof_summary'),
     path('api/<str:entity_type>/<int:entity_id>/proofs/upload', api.proof_upload, name='proof_upload'),
     path('api/<str:entity_type>/<int:entity_id>/proofs/clear', api.proof_clear, name='proof_clear'),
     path('api/<str:entity_type>/<int:entity_id>/proofs/<path:filename>', api.proof_view, name='proof_view'),
+
+    # LLM Service (Docker Model Runner - lightweight completions without Goose)
+    path('api/llm/models', api.llm_models, name='llm_models'),
+    path('api/llm/complete', api.llm_complete, name='llm_complete'),
+    path('api/llm/chat', api.llm_chat, name='llm_chat'),
+    path('api/llm/query', api.llm_query, name='llm_query'),
+    path('api/llm/enrich-docs', api.llm_enrich_docs, name='llm_enrich_docs'),
+    path('api/llm/review-code', api.llm_review_code, name='llm_review_code'),
+    path('api/llm/requirements', api.llm_requirements, name='llm_requirements'),
+    path('api/llm/summarize', api.llm_summarize, name='llm_summarize'),
+    path('api/llm/extract-json', api.llm_extract_json, name='llm_extract_json'),
+
+    # LLM Sessions (conversation persistence)
+    path('api/llm/sessions', api.llm_sessions_list, name='llm_sessions_list'),
+    path('api/llm/sessions/<int:session_id>', api.llm_session_detail, name='llm_session_detail'),
+    path('api/llm/sessions/<int:session_id>/clear', api.llm_session_clear, name='llm_session_clear'),
+    path('api/llm/sessions/<int:session_id>/export', api.llm_session_export, name='llm_session_export'),
+    path('api/llm/sessions/name/<str:name>', api.llm_session_by_name, name='llm_session_by_name'),
+
+    # Agent Prompt Builder (structured context for task execution)
+    path('api/tasks/<int:task_id>/agent-prompt', api.build_agent_prompt_view, name='build_agent_prompt'),
+
+    # Project Enrichment (LLM-powered documentation generation)
+    path('api/projects/<int:project_id>/enrich', api.project_enrich, name='project_enrich'),
 ]

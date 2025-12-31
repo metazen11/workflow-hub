@@ -148,14 +148,15 @@ def dashboard(request):
         ).order_by(Task.priority.desc(), Task.created_at.desc()).all()
 
         for t in all_active_tasks:
-            # Map stage to key
+            # Map stage to key (lowercase for kanban dict keys)
             stage_key = 'backlog'
             if t.pipeline_stage:
-                # specific mapping if needed, otherwise use value
-                val = t.pipeline_stage.value
-                if val == 'none': stage_key = 'backlog'
-                else: stage_key = val
-            
+                val = t.pipeline_stage.value.lower()  # Lowercase to match dict keys
+                if val == 'none':
+                    stage_key = 'backlog'
+                else:
+                    stage_key = val
+
             if stage_key in task_kanban:
                 task_kanban[stage_key].append({
                     'id': t.id,
@@ -446,6 +447,7 @@ def project_view(request, project_id):
                 'test_command': project.test_command,
                 'run_command': project.run_command,
                 'deploy_command': project.deploy_command,
+                'additional_commands': project.additional_commands or {},
                 'default_port': project.default_port,
                 'python_version': project.python_version,
                 'node_version': project.node_version,

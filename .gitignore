@@ -45,3 +45,4 @@ projects/
 # Task attachments (uploaded files)
 uploads/attachments/*
 !uploads/attachments/.gitkeep
+.cache/

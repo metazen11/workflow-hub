@@ -15,7 +15,8 @@ from app.models import (
     AgentReport, ThreatIntel, ThreatStatus, AuditEvent, Webhook,
     BugReport, BugReportStatus, TaskAttachment, AttachmentType,
     validate_file_security, AttachmentSecurityError,
-    Credential, CredentialType, Environment, EnvironmentType
+    Credential, CredentialType, Environment, EnvironmentType,
+    Handoff, HandoffStatus, Proof
 )
 from app.models.task import TaskPipelineStage
 from app.models.report import AgentRole, ReportStatus
@@ -363,6 +364,20 @@ def project_update(request, project_id):
                     arr_value = [sanitize_string(str(v))[:200] for v in arr_value if v]
                 setattr(project, field, arr_value)
                 updated_fields.append(field)
+
+        # Handle additional_commands (JSON dict)
+        if "additional_commands" in data:
+            cmd_value = data["additional_commands"]
+            if isinstance(cmd_value, dict):
+                # Don't HTML-escape command values (they need && etc)
+                # Just validate structure and sanitize keys
+                sanitized = {}
+                for k, v in cmd_value.items():
+                    key = re.sub(r'[^\w\-_]', '', str(k))[:50]  # Alphanumeric keys only
+                    if key and v:
+                        sanitized[key] = str(v)[:2000]  # Allow longer commands
+                setattr(project, "additional_commands", sanitized)
+                updated_fields.append("additional_commands")
 
         db.commit()
         db.refresh(project)
@@ -1468,8 +1483,26 @@ def environment_delete(request, environment_id):
 def orchestrator_context(request, project_id):
     """
     Get full project context for orchestrator/agents.
-    Includes project details, tasks, environments, and credentials (masked).
+
+    GET /api/projects/{id}/context
+
+    Returns everything an agent needs to work on a project:
+    - Project metadata and all commands
+    - Key file contents (CLAUDE.md, coding_principles.md, todo.json, etc.)
+    - Tasks, environments, credentials (masked), requirements
+    - Recent handoffs, proofs, and audit events
+
+    Query params:
+    - include_files: true/false (default true) - include key file contents
+    - include_history: true/false (default true) - include handoffs/proofs
+    - max_file_size: int (default 50000) - max bytes per file
     """
+    import os
+
+    include_files = request.GET.get("include_files", "true").lower() == "true"
+    include_history = request.GET.get("include_history", "true").lower() == "true"
+    max_file_size = int(request.GET.get("max_file_size", 50000))
+
     db = next(get_db())
     try:
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -1482,13 +1515,97 @@ def orchestrator_context(request, project_id):
         credentials = db.query(Credential).filter(Credential.project_id == project_id).all()
         requirements = db.query(Requirement).filter(Requirement.project_id == project_id).all()
 
-        return JsonResponse({
+        result = {
             "project": project.to_dict(include_children=True),
             "tasks": [t.to_dict() for t in tasks],
             "environments": [e.to_dict() for e in environments],
             "credentials": [c.to_dict() for c in credentials],  # Masked by default
             "requirements": [r.to_dict() for r in requirements],
-        })
+        }
+
+        # Commands summary for easy agent access
+        result["commands"] = {
+            "build": project.build_command,
+            "test": project.test_command,
+            "run": project.run_command,
+            "deploy": project.deploy_command,
+            **(project.additional_commands or {})
+        }
+
+        # Include key file contents if requested and repo_path exists
+        if include_files and project.repo_path and os.path.isdir(project.repo_path):
+            file_contents = {}
+
+            # Priority files for agent context
+            priority_files = [
+                "CLAUDE.md",
+                "coding_principles.md",
+                "todo.json",
+                "_spec/BRIEF.md",
+                "_spec/HANDOFF.md",
+                "_spec/SESSION_CONTEXT.md",
+            ]
+
+            # Add project's key_files
+            all_files = priority_files + (project.key_files or [])
+            seen = set()
+
+            for filename in all_files:
+                if filename in seen:
+                    continue
+                seen.add(filename)
+
+                filepath = os.path.join(project.repo_path, filename)
+                if os.path.isfile(filepath):
+                    try:
+                        size = os.path.getsize(filepath)
+                        if size <= max_file_size:
+                            with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                                file_contents[filename] = {
+                                    "content": f.read(),
+                                    "size": size
+                                }
+                        else:
+                            file_contents[filename] = {
+                                "content": f"[File too large: {size} bytes, max {max_file_size}]",
+                                "size": size,
+                                "truncated": True
+                            }
+                    except Exception as e:
+                        file_contents[filename] = {"error": str(e)}
+
+            result["files"] = file_contents
+
+        # Include recent history if requested
+        if include_history:
+            # Recent handoffs
+            recent_handoffs = db.query(Handoff).filter(
+                Handoff.project_id == project_id
+            ).order_by(Handoff.created_at.desc()).limit(10).all()
+            result["recent_handoffs"] = [h.to_dict() for h in recent_handoffs]
+
+            # Recent proofs
+            recent_proofs = db.query(Proof).filter(
+                Proof.project_id == project_id
+            ).order_by(Proof.created_at.desc()).limit(10).all()
+            result["recent_proofs"] = [p.to_dict() for p in recent_proofs]
+
+            # Recent audit events for this project
+            recent_events = db.query(AuditEvent).filter(
+                AuditEvent.entity_type == "project",
+                AuditEvent.entity_id == project_id
+            ).order_by(AuditEvent.timestamp.desc()).limit(20).all()
+            result["recent_events"] = [
+                {
+                    "id": e.id,
+                    "action": e.action,
+                    "actor": e.actor,
+                    "details": e.details,
+                    "timestamp": e.timestamp.isoformat() if e.timestamp else None
+                } for e in recent_events
+            ]
+
+        return JsonResponse(result)
     finally:
         db.close()
 
@@ -1591,12 +1708,22 @@ def project_refresh(request, project_id):
 # --- Audit Log ---
 
 def audit_log(request):
-    """List recent audit events, optionally filtered by project."""
+    """List recent audit events, optionally filtered by project, entity_type, or entity_id."""
     limit = int(request.GET.get("limit", 100))
     project_id = request.GET.get("project_id")
+    entity_type = request.GET.get("entity_type")
+    entity_id = request.GET.get("entity_id")
 
     db = next(get_db())
     try:
+        # Direct entity filter (e.g., specific task or run)
+        if entity_type and entity_id:
+            events = db.query(AuditEvent).filter(
+                AuditEvent.entity_type == entity_type,
+                AuditEvent.entity_id == int(entity_id)
+            ).order_by(AuditEvent.timestamp.desc()).limit(limit).all()
+            return JsonResponse({"events": [e.to_dict() for e in events]})
+
         if project_id:
             # Filter events related to a project (runs, tasks, project itself)
             project_id = int(project_id)
@@ -2479,6 +2606,8 @@ _director_settings = {
     "enforce_tdd": True,
     "enforce_dry": True,
     "enforce_security": True,
+    "include_images": False,  # Enable multimodal image processing in agent prompts
+    "vision_model": "ai/qwen3-vl",  # Model to use for image analysis (ai/gemma3, ai/qwen3-vl)
 }
 
 
@@ -2611,6 +2740,10 @@ def director_settings_update(request):
         _director_settings["enforce_dry"] = bool(data["enforce_dry"])
     if "enforce_security" in data:
         _director_settings["enforce_security"] = bool(data["enforce_security"])
+    if "include_images" in data:
+        _director_settings["include_images"] = bool(data["include_images"])
+    if "vision_model" in data:
+        _director_settings["vision_model"] = str(data["vision_model"])
 
     return JsonResponse({
         "status": "updated",
@@ -2685,6 +2818,96 @@ def director_run_cycle(request):
 # =============================================================================
 # Proof-of-Work Endpoints
 # =============================================================================
+
+def task_proof_history(request, task_id):
+    """Get complete proof history for a task (database-backed).
+
+    GET /api/tasks/{task_id}/proof-history
+
+    Returns all proofs ever created for this task across all runs.
+    Optimized for agent context and project memory.
+
+    Query params:
+        - stage: Filter by stage (dev, qa, sec, docs)
+        - format: 'full' or 'compact' (default: full)
+    """
+    from app.models.proof import Proof
+
+    stage = request.GET.get("stage")
+    fmt = request.GET.get("format", "full")
+
+    db = next(get_db())
+    try:
+        query = db.query(Proof).filter(Proof.task_id == task_id)
+
+        if stage:
+            query = query.filter(Proof.stage == stage)
+
+        proofs = query.order_by(Proof.created_at.desc()).all()
+
+        if fmt == "compact":
+            # Compact format for agent memory
+            return JsonResponse({
+                "task_id": task_id,
+                "proofs": [p.to_agent_context() for p in proofs],
+                "count": len(proofs)
+            })
+        else:
+            return JsonResponse({
+                "task_id": task_id,
+                "proofs": [p.to_dict() for p in proofs],
+                "count": len(proofs)
+            })
+    finally:
+        db.close()
+
+
+def project_proof_history(request, project_id):
+    """Get proof history for entire project (database-backed).
+
+    GET /api/projects/{project_id}/proof-history
+
+    Returns all proofs for all tasks in the project.
+    Useful for project-level memory and history.
+
+    Query params:
+        - stage: Filter by stage
+        - task_id: Filter by specific task
+        - limit: Max results (default 100)
+    """
+    from app.models.proof import Proof
+
+    stage = request.GET.get("stage")
+    task_filter = request.GET.get("task_id")
+    limit = int(request.GET.get("limit", 100))
+
+    db = next(get_db())
+    try:
+        query = db.query(Proof).filter(Proof.project_id == project_id)
+
+        if stage:
+            query = query.filter(Proof.stage == stage)
+        if task_filter:
+            query = query.filter(Proof.task_id == int(task_filter))
+
+        proofs = query.order_by(Proof.created_at.desc()).limit(limit).all()
+
+        # Group by task for easier agent consumption
+        by_task = {}
+        for p in proofs:
+            if p.task_id not in by_task:
+                by_task[p.task_id] = []
+            by_task[p.task_id].append(p.to_agent_context())
+
+        return JsonResponse({
+            "project_id": project_id,
+            "proofs": [p.to_dict() for p in proofs],
+            "by_task": by_task,
+            "count": len(proofs)
+        })
+    finally:
+        db.close()
+
 
 def proof_list(request, entity_type, entity_id):
     """List proof artifacts for a run or task.
@@ -2829,6 +3052,53 @@ def proof_upload(request, entity_type, entity_id):
             description=description
         )
 
+        # Save proof metadata to database for querying
+        from app.models.proof import Proof, ProofType as ProofTypeEnum
+        import mimetypes
+
+        # Get task_id and project_id
+        if etype == "task":
+            task = db.query(Task).filter(Task.id == entity_id).first()
+            task_id = entity_id
+            project_id = task.project_id if task else None
+            run_id = task.run_id if task else None
+        else:  # run
+            run = db.query(Run).filter(Run.id == entity_id).first()
+            run_id = entity_id
+            project_id = run.project_id if run else None
+            # Try to find associated task
+            task = db.query(Task).filter(Task.run_id == entity_id).first()
+            task_id = task.id if task else None
+
+        if task_id and project_id:
+            # Map proof_type string to enum
+            proof_type_enum = {
+                "screenshot": ProofTypeEnum.SCREENSHOT,
+                "log": ProofTypeEnum.LOG,
+                "report": ProofTypeEnum.REPORT,
+                "test_result": ProofTypeEnum.TEST_RESULT,
+                "code_diff": ProofTypeEnum.CODE_DIFF,
+            }.get(proof_type, ProofTypeEnum.OTHER)
+
+            mime_type, _ = mimetypes.guess_type(result["filename"])
+
+            proof_record = Proof(
+                project_id=project_id,
+                task_id=task_id,
+                run_id=run_id,
+                stage=stage,
+                filename=result["filename"],
+                filepath=result["path"],
+                proof_type=proof_type_enum,
+                file_size=result["size"],
+                mime_type=mime_type,
+                description=description,
+                created_by="agent" if etype == "run" else "human"
+            )
+            db.add(proof_record)
+            db.commit()
+            result["proof_id"] = proof_record.id
+
         log_event(db, "agent", "upload_proof", etype, entity_id, {
             "stage": stage,
             "proof_type": proof_type,
@@ -2897,6 +3167,48 @@ def proof_view(request, entity_type, entity_id, filename):
         db.close()
 
 
+def proof_download(request, task_id, proof_id):
+    """Download a proof artifact by database ID.
+
+    GET /api/tasks/{task_id}/proofs/{proof_id}/download
+
+    Uses the database record to locate and serve the file.
+    This is the preferred method for agents - get proof history first,
+    then download specific proofs by ID.
+    """
+    import mimetypes
+    from app.models.proof import Proof
+
+    db = next(get_db())
+    try:
+        proof = db.query(Proof).filter(
+            Proof.id == proof_id,
+            Proof.task_id == task_id
+        ).first()
+
+        if not proof:
+            return JsonResponse({"error": "Proof not found"}, status=404)
+
+        filepath = proof.filepath
+        if not os.path.exists(filepath):
+            return JsonResponse({
+                "error": "Proof file not found on disk",
+                "db_record": proof.to_dict()
+            }, status=404)
+
+        content_type = proof.mime_type
+        if not content_type:
+            content_type, _ = mimetypes.guess_type(filepath)
+            content_type = content_type or "application/octet-stream"
+
+        with open(filepath, "rb") as f:
+            response = HttpResponse(f.read(), content_type=content_type)
+            response["Content-Disposition"] = f'attachment; filename="{proof.filename}"'
+            return response
+    finally:
+        db.close()
+
+
 @csrf_exempt
 @require_http_methods(["DELETE", "POST"])
 def proof_clear(request, entity_type, entity_id):
@@ -2932,6 +3244,371 @@ def proof_clear(request, entity_type, entity_id):
         })
     except ValueError as e:
         return JsonResponse({"error": str(e)}, status=404)
+    finally:
+        db.close()
+
+
+# =============================================================================
+# Handoff Endpoints (Task-Centric Agent Work Cycles)
+# =============================================================================
+
+def task_handoff_current(request, task_id):
+    """Get the current pending/in_progress handoff for a task.
+
+    GET /api/tasks/{task_id}/handoff
+
+    Returns the handoff that an agent should work on.
+    Includes full context (structured + markdown).
+    """
+    from app.services import handoff_service
+
+    db = next(get_db())
+    try:
+        handoff = handoff_service.get_current_handoff(db, task_id)
+
+        if not handoff:
+            return JsonResponse({
+                "task_id": task_id,
+                "handoff": None,
+                "message": "No pending handoff for this task"
+            })
+
+        return JsonResponse({
+            "task_id": task_id,
+            "handoff": handoff.to_dict()
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_handoff_create(request, task_id):
+    """Create a new handoff for a task.
+
+    POST /api/tasks/{task_id}/handoff/create
+
+    Body:
+        - to_role: Agent role that should pick this up (dev, qa, sec, docs, pm)
+        - stage: Pipeline stage (required)
+        - run_id: Optional run ID for context
+        - from_role: Previous agent role (optional)
+        - created_by: Who created this (default: "system")
+        - write_file: Whether to write context to file (default: true)
+
+    Returns the created handoff with full context.
+    """
+    from app.services import handoff_service
+
+    data = _get_json_body(request)
+    if not data:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    to_role = data.get("to_role")
+    stage = data.get("stage")
+
+    if not to_role:
+        return JsonResponse({"error": "to_role is required"}, status=400)
+    if not stage:
+        return JsonResponse({"error": "stage is required"}, status=400)
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        # Check for existing pending handoff
+        existing = handoff_service.get_current_handoff(db, task_id)
+        if existing:
+            return JsonResponse({
+                "error": "Task already has a pending handoff",
+                "existing_handoff_id": existing.id
+            }, status=400)
+
+        handoff = handoff_service.create_handoff(
+            db=db,
+            task_id=task_id,
+            to_role=to_role,
+            stage=stage,
+            project_id=data.get("project_id"),
+            run_id=data.get("run_id"),
+            from_role=data.get("from_role"),
+            created_by=data.get("created_by", "system"),
+            write_file=data.get("write_file", True)
+        )
+
+        log_event(db, "system", "create_handoff", "task", task_id, {
+            "handoff_id": handoff.id,
+            "to_role": to_role,
+            "stage": stage
+        })
+
+        return JsonResponse({
+            "handoff": handoff.to_dict()
+        }, status=201)
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_handoff_accept(request, task_id):
+    """Accept a handoff (agent starting work).
+
+    POST /api/tasks/{task_id}/handoff/accept
+
+    Body:
+        - handoff_id: Optional specific handoff ID (uses current if not provided)
+
+    Marks the handoff as IN_PROGRESS.
+    """
+    from app.services import handoff_service
+
+    data = _get_json_body(request) or {}
+    handoff_id = data.get("handoff_id")
+
+    db = next(get_db())
+    try:
+        # Get handoff - either specified or current
+        if handoff_id:
+            handoff = handoff_service.get_handoff_by_id(db, handoff_id)
+            if not handoff or handoff.task_id != task_id:
+                return JsonResponse({"error": "Handoff not found for this task"}, status=404)
+        else:
+            handoff = handoff_service.get_current_handoff(db, task_id)
+            if not handoff:
+                return JsonResponse({"error": "No pending handoff for this task"}, status=404)
+
+        handoff = handoff_service.accept_handoff(db, handoff.id)
+
+        log_event(db, "agent", "accept_handoff", "task", task_id, {
+            "handoff_id": handoff.id,
+            "to_role": handoff.to_role,
+            "stage": handoff.stage
+        })
+
+        return JsonResponse({
+            "success": True,
+            "handoff": handoff.to_dict()
+        })
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_handoff_complete(request, task_id):
+    """Complete a handoff with the agent's report.
+
+    POST /api/tasks/{task_id}/handoff/complete
+
+    Body:
+        - handoff_id: Optional specific handoff ID (uses current if not provided)
+        - report_status: "pass" or "fail" (required)
+        - report_summary: Summary of what agent did (required)
+        - report_details: Full report details as JSON (optional)
+        - agent_report_id: Link to AgentReport record (optional)
+
+    Marks the handoff as COMPLETED with the report.
+    """
+    from app.services import handoff_service
+
+    data = _get_json_body(request)
+    if not data:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    report_status = data.get("report_status")
+    if not report_status:
+        return JsonResponse({"error": "report_status is required"}, status=400)
+    if report_status not in ("pass", "fail"):
+        return JsonResponse({"error": "report_status must be 'pass' or 'fail'"}, status=400)
+
+    handoff_id = data.get("handoff_id")
+
+    db = next(get_db())
+    try:
+        # Get handoff - either specified or current in_progress
+        if handoff_id:
+            handoff = handoff_service.get_handoff_by_id(db, handoff_id)
+            if not handoff or handoff.task_id != task_id:
+                return JsonResponse({"error": "Handoff not found for this task"}, status=404)
+        else:
+            handoff = handoff_service.get_current_handoff(db, task_id)
+            if not handoff:
+                return JsonResponse({"error": "No in-progress handoff for this task"}, status=404)
+
+        handoff = handoff_service.complete_handoff(
+            db=db,
+            handoff_id=handoff.id,
+            report_status=report_status,
+            report_summary=data.get("report_summary"),
+            report_details=data.get("report_details"),
+            agent_report_id=data.get("agent_report_id")
+        )
+
+        log_event(db, "agent", "complete_handoff", "task", task_id, {
+            "handoff_id": handoff.id,
+            "to_role": handoff.to_role,
+            "stage": handoff.stage,
+            "report_status": report_status
+        })
+
+        return JsonResponse({
+            "success": True,
+            "handoff": handoff.to_dict()
+        })
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_handoff_fail(request, task_id):
+    """Mark a handoff as failed (timeout, error, etc.).
+
+    POST /api/tasks/{task_id}/handoff/fail
+
+    Body:
+        - handoff_id: Optional specific handoff ID (uses current if not provided)
+        - reason: Reason for failure (optional)
+
+    Marks the handoff as FAILED.
+    """
+    from app.services import handoff_service
+
+    data = _get_json_body(request) or {}
+    handoff_id = data.get("handoff_id")
+    reason = data.get("reason")
+
+    db = next(get_db())
+    try:
+        # Get handoff - either specified or current
+        if handoff_id:
+            handoff = handoff_service.get_handoff_by_id(db, handoff_id)
+            if not handoff or handoff.task_id != task_id:
+                return JsonResponse({"error": "Handoff not found for this task"}, status=404)
+        else:
+            handoff = handoff_service.get_current_handoff(db, task_id)
+            if not handoff:
+                return JsonResponse({"error": "No active handoff for this task"}, status=404)
+
+        handoff = handoff_service.fail_handoff(db, handoff.id, reason)
+
+        log_event(db, "system", "fail_handoff", "task", task_id, {
+            "handoff_id": handoff.id,
+            "reason": reason
+        })
+
+        return JsonResponse({
+            "success": True,
+            "handoff": handoff.to_dict()
+        })
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    finally:
+        db.close()
+
+
+def task_handoff_history(request, task_id):
+    """Get handoff history for a task.
+
+    GET /api/tasks/{task_id}/handoff/history
+
+    Query params:
+        - stage: Filter by pipeline stage
+        - limit: Max results (default: 50)
+        - format: 'full' or 'compact' (default: full)
+
+    Returns all handoffs for the task, ordered by creation date (newest first).
+    Used for agent memory - understanding previous work cycles.
+    """
+    from app.services import handoff_service
+
+    stage = request.GET.get("stage")
+    limit = int(request.GET.get("limit", 50))
+    fmt = request.GET.get("format", "full")
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        handoffs = handoff_service.get_handoff_history(
+            db=db,
+            task_id=task_id,
+            stage=stage,
+            limit=limit
+        )
+
+        if fmt == "compact":
+            return JsonResponse({
+                "task_id": task_id,
+                "handoffs": [h.to_agent_context() for h in handoffs],
+                "count": len(handoffs)
+            })
+        else:
+            return JsonResponse({
+                "task_id": task_id,
+                "handoffs": [h.to_dict() for h in handoffs],
+                "count": len(handoffs)
+            })
+    finally:
+        db.close()
+
+
+def project_handoff_history(request, project_id):
+    """Get handoff history for a project.
+
+    GET /api/projects/{project_id}/handoff/history
+
+    Query params:
+        - stage: Filter by pipeline stage
+        - task_id: Filter by specific task
+        - limit: Max results (default: 100)
+
+    Returns all handoffs for the project, useful for project-level memory.
+    """
+    from app.services import handoff_service
+
+    stage = request.GET.get("stage")
+    task_filter = request.GET.get("task_id")
+    limit = int(request.GET.get("limit", 100))
+
+    db = next(get_db())
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return JsonResponse({"error": "Project not found"}, status=404)
+
+        handoffs = handoff_service.get_handoff_history(
+            db=db,
+            project_id=project_id,
+            task_id=int(task_filter) if task_filter else None,
+            stage=stage,
+            limit=limit
+        )
+
+        # Group by task for easier consumption
+        by_task = {}
+        for h in handoffs:
+            if h.task_id not in by_task:
+                by_task[h.task_id] = []
+            by_task[h.task_id].append(h.to_agent_context())
+
+        return JsonResponse({
+            "project_id": project_id,
+            "handoffs": [h.to_dict() for h in handoffs],
+            "by_task": by_task,
+            "count": len(handoffs)
+        })
     finally:
         db.close()
 
@@ -3129,5 +3806,927 @@ def project_delete(request, project_id):
     except Exception as e:
         db.rollback()
         return JsonResponse({"error": str(e)}, status=500)
+    finally:
+        db.close()
+
+
+# --- LLM Service Endpoints ---
+# Direct access to Docker Model Runner for lightweight completions without Goose
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def llm_models(request):
+    """List available LLM models from Docker Model Runner.
+
+    GET /api/llm/models
+    """
+    from app.services.llm_service import get_llm_service
+
+    try:
+        service = get_llm_service()
+        models = service.list_models()
+        return JsonResponse({"models": models})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=503)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def llm_complete(request):
+    """Generic LLM completion.
+
+    POST /api/llm/complete
+    Body: {"prompt": "...", "system_prompt": "...", "model": "...", "temperature": 0.7}
+    """
+    from app.services.llm_service import get_llm_service
+
+    data = _get_json_body(request)
+    if not data or "prompt" not in data:
+        return JsonResponse({"error": "prompt is required"}, status=400)
+
+    try:
+        service = get_llm_service()
+        content = service.complete(
+            prompt=data["prompt"],
+            system_prompt=data.get("system_prompt"),
+            model=data.get("model"),
+            temperature=data.get("temperature", 0.7),
+            max_tokens=data.get("max_tokens")
+        )
+        return JsonResponse({
+            "content": content,
+            "model": data.get("model", service.default_model)
+        })
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=503)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def llm_chat(request):
+    """LLM chat completion with message history.
+
+    POST /api/llm/chat
+    Body: {"messages": [{"role": "user", "content": "..."}], "model": "...", "temperature": 0.7}
+    """
+    from app.services.llm_service import get_llm_service
+
+    data = _get_json_body(request)
+    if not data or "messages" not in data:
+        return JsonResponse({"error": "messages array is required"}, status=400)
+
+    try:
+        service = get_llm_service()
+        content = service.chat(
+            messages=data["messages"],
+            model=data.get("model"),
+            temperature=data.get("temperature", 0.7),
+            max_tokens=data.get("max_tokens")
+        )
+        return JsonResponse({
+            "content": content,
+            "model": data.get("model", service.default_model)
+        })
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=503)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def llm_enrich_docs(request):
+    """Enrich code with documentation.
+
+    POST /api/llm/enrich-docs
+    Body: {"code": "...", "language": "python", "include_examples": true}
+    """
+    from app.services.llm_service import get_llm_service
+
+    data = _get_json_body(request)
+    if not data or "code" not in data:
+        return JsonResponse({"error": "code is required"}, status=400)
+
+    try:
+        service = get_llm_service()
+        docs = service.enrich_documentation(
+            code=data["code"],
+            language=data.get("language", "python"),
+            include_examples=data.get("include_examples", True)
+        )
+        return JsonResponse({"documentation": docs})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=503)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def llm_review_code(request):
+    """Get code review suggestions.
+
+    POST /api/llm/review-code
+    Body: {"code": "...", "context": "...", "focus_areas": ["bugs", "security"]}
+    """
+    from app.services.llm_service import get_llm_service
+
+    data = _get_json_body(request)
+    if not data or "code" not in data:
+        return JsonResponse({"error": "code is required"}, status=400)
+
+    try:
+        service = get_llm_service()
+        review = service.review_code(
+            code=data["code"],
+            context=data.get("context", ""),
+            focus_areas=data.get("focus_areas")
+        )
+        return JsonResponse({"review": review})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=503)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def llm_requirements(request):
+    """Generate requirements from description.
+
+    POST /api/llm/requirements
+    Body: {"description": "...", "output_format": "json"}
+    """
+    from app.services.llm_service import get_llm_service
+
+    data = _get_json_body(request)
+    if not data or "description" not in data:
+        return JsonResponse({"error": "description is required"}, status=400)
+
+    try:
+        service = get_llm_service()
+        requirements = service.generate_requirements(
+            description=data["description"],
+            output_format=data.get("output_format", "json")
+        )
+        return JsonResponse({"requirements": requirements})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=503)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def llm_summarize(request):
+    """Summarize text.
+
+    POST /api/llm/summarize
+    Body: {"text": "...", "max_sentences": 3, "style": "concise"}
+    """
+    from app.services.llm_service import get_llm_service
+
+    data = _get_json_body(request)
+    if not data or "text" not in data:
+        return JsonResponse({"error": "text is required"}, status=400)
+
+    try:
+        service = get_llm_service()
+        summary = service.summarize(
+            text=data["text"],
+            max_sentences=data.get("max_sentences", 3),
+            style=data.get("style", "concise")
+        )
+        return JsonResponse({"summary": summary})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=503)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def llm_extract_json(request):
+    """Extract structured JSON from text.
+
+    POST /api/llm/extract-json
+    Body: {"text": "...", "schema_hint": "..."}
+    """
+    from app.services.llm_service import get_llm_service
+
+    data = _get_json_body(request)
+    if not data or "text" not in data:
+        return JsonResponse({"error": "text is required"}, status=400)
+
+    try:
+        service = get_llm_service()
+        extracted = service.extract_json(
+            text=data["text"],
+            schema_hint=data.get("schema_hint")
+        )
+        return JsonResponse({"data": extracted})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=503)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def llm_query(request):
+    """Dynamic LLM query with automatic context building.
+
+    POST /api/llm/query
+
+    This is the main flexible endpoint for LLM queries. It automatically
+    builds context from project/run/task IDs and can optionally save
+    results directly to entity fields.
+
+    Body:
+    {
+        "prompt": "Your query here",
+        "project_id": 741,           // Optional - adds project context
+        "run_id": 45,                // Optional - adds run context
+        "task_id": 123,              // Optional - adds task context
+        "role": "qa",                // Optional - use RoleConfig from DB (dev, qa, security, etc.)
+        "session": "task_123",       // Optional - enable session-based conversation
+        "system_prompt": "...",      // Optional - system instructions (combined with role if both set)
+        "save_to": "project.741.description",  // Optional - flexible targeting (see formats below)
+        "include_context": true,     // Optional - default true
+        "temperature": 0.7,          // Optional - default 0.7
+        "model": "ai/qwen3-coder",   // Optional - model to use
+        "output_json": false         // Optional - parse result as JSON
+    }
+
+    Returns:
+    {
+        "content": "Generated text...",
+        "context": {"project": {...}, "run": {...}, "task": {...}},
+        "saved": true,
+        "saved_to": {"entity": "project", "field": "description"},
+        "model": "ai/qwen3-coder",
+        "tokens_estimate": 1234,
+        "parsed": {...},  // If output_json=true
+        "session": {"id": 1, "name": "task_123", "message_count": 4, "resumed": true}  // If session used
+    }
+
+    Examples:
+        # Summarize a project
+        curl -X POST http://localhost:8000/api/llm/query -d '{
+            "prompt": "Summarize this project in 3 sentences",
+            "project_id": 741
+        }'
+
+        # Generate and save objectives (uses project_id from context)
+        curl -X POST http://localhost:8000/api/llm/query -d '{
+            "prompt": "Generate 5 project objectives as a bullet list",
+            "project_id": 741,
+            "save_to": "objectives"
+        }'
+
+        # Save with explicit targeting
+        curl -X POST http://localhost:8000/api/llm/query -d '{
+            "prompt": "Generate tech stack description",
+            "save_to": "project.741.tech_stack"
+        }'
+
+        # Save with filter (finds by name)
+        curl -X POST http://localhost:8000/api/llm/query -d '{
+            "prompt": "Generate description",
+            "save_to": "project[name=Workflow Hub].description"
+        }'
+
+        # Generate test cases for a task
+        curl -X POST http://localhost:8000/api/llm/query -d '{
+            "prompt": "Generate unit test cases for this task",
+            "task_id": 123,
+            "system_prompt": "You are a QA engineer specializing in Python testing"
+        }'
+    """
+    from app.services.llm_service import query_llm, LLMQuery
+
+    data = _get_json_body(request)
+    if not data or "prompt" not in data:
+        return JsonResponse({"error": "prompt is required"}, status=400)
+
+    db = next(get_db())
+    try:
+        # Use the fluent API for more control
+        query = LLMQuery(
+            project_id=data.get("project_id"),
+            run_id=data.get("run_id"),
+            task_id=data.get("task_id"),
+            db_session=db
+        )
+
+        query.prompt(data["prompt"])
+
+        if data.get("system_prompt"):
+            query.system(data["system_prompt"])
+
+        # Flexible save targeting - supports multiple formats:
+        # - "field" (uses context IDs)
+        # - "table.field" (uses context ID for table)
+        # - "table.123.field" (explicit ID)
+        # - "table[col=val].field" (where clause - ORM parameterized, SQL-injection safe)
+        if data.get("save_to"):
+            query.save_to(data["save_to"])
+
+        query.with_context(data.get("include_context", True))
+        query.temperature(data.get("temperature", 0.7))
+
+        if data.get("max_tokens"):
+            query.max_tokens(data["max_tokens"])
+
+        if data.get("model"):
+            query.model(data["model"])
+
+        # Set role if specified - uses RoleConfig from database
+        if data.get("role"):
+            query.role(data["role"])
+
+        # Enable session for conversation persistence
+        if data.get("session"):
+            query.session(data["session"])
+
+        # Execute with JSON parsing if requested
+        if data.get("output_json"):
+            result = query.execute_json(schema_hint=data.get("schema_hint"))
+        else:
+            result = query.execute()
+
+        return JsonResponse(result)
+
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=503)
+    finally:
+        db.close()
+
+
+def build_agent_prompt_view(request, task_id):
+    """Build a complete agent prompt with project context for a task.
+
+    GET /api/tasks/{task_id}/agent-prompt?role=dev
+
+    Returns a structured prompt with:
+    1. PROJECT DOCUMENTATION - What the project is, how it works
+    2. CODING PRINCIPLES - Standards and practices to follow
+    3. CURRENT STATE - Todo list, active tasks, recent changes
+    4. AVAILABLE COMMANDS - Shell and API commands
+    5. TASK ASSIGNMENT - The specific task to perform
+
+    Query params:
+    - role: Agent role (dev, qa, sec, docs) - default: dev
+    - include_files: Comma-separated list of files to include
+    """
+    import os
+    from app.services.llm_service import build_agent_prompt
+    from app.models import RoleConfig
+
+    role = request.GET.get("role", "dev")
+    include_files = request.GET.get("include_files")
+    if include_files:
+        include_files = [f.strip() for f in include_files.split(",")]
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        project = task.project
+        if not project:
+            return JsonResponse({"error": "Task has no project"}, status=400)
+
+        # Fetch role configuration from database
+        role_config_obj = db.query(RoleConfig).filter(
+            RoleConfig.role == role,
+            RoleConfig.active == True
+        ).first()
+        role_config = role_config_obj.to_dict() if role_config_obj else None
+
+        # Build project context (similar to orchestrator_context)
+        project_context = {
+            "project": project.to_dict(),
+            "commands": {
+                "build": project.build_command,
+                "test": project.test_command,
+                "run": project.run_command,
+                "deploy": project.deploy_command,
+                **(project.additional_commands or {})
+            },
+            "files": {}
+        }
+
+        # Load key files from disk
+        if project.repo_path and os.path.isdir(project.repo_path):
+            priority_files = include_files or [
+                "CLAUDE.md",
+                "coding_principles.md",
+                "todo.json",
+                "_spec/BRIEF.md",
+                "_spec/HANDOFF.md",
+                "_spec/SESSION_CONTEXT.md"
+            ]
+
+            for filename in priority_files:
+                filepath = os.path.join(project.repo_path, filename)
+                if os.path.isfile(filepath):
+                    try:
+                        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                            project_context["files"][filename] = {
+                                "content": f.read()
+                            }
+                    except Exception as e:
+                        project_context["files"][filename] = {"error": str(e)}
+
+        # Fetch task history (handoffs and proofs)
+        from app.models import Handoff, Proof
+
+        # Get handoff history for this task
+        handoffs = db.query(Handoff).filter(
+            Handoff.task_id == task_id
+        ).order_by(Handoff.created_at.desc()).limit(10).all()
+
+        task_history = []
+        for h in handoffs:
+            task_history.append({
+                "id": h.id,
+                "from_role": h.from_role,
+                "to_role": h.to_role,
+                "stage": h.stage,
+                "status": h.status.value if h.status else None,
+                "report_status": h.report_status,
+                "report_summary": h.report_summary,
+                "created_at": h.created_at.isoformat() if h.created_at else None,
+                "completed_at": h.completed_at.isoformat() if h.completed_at else None,
+            })
+
+        # Get proofs for this task
+        proofs = db.query(Proof).filter(
+            Proof.task_id == task_id
+        ).order_by(Proof.created_at.desc()).limit(10).all()
+
+        task_proofs = []
+        for p in proofs:
+            task_proofs.append({
+                "id": p.id,
+                "proof_type": p.proof_type,
+                "filename": p.filename,
+                "summary": p.summary,
+                "stage": p.stage,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            })
+
+        project_context["task_history"] = task_history
+        project_context["task_proofs"] = task_proofs
+
+        # Build the prompt
+        prompt = build_agent_prompt(
+            project_context=project_context,
+            task=task.to_dict(),
+            agent_role=role,
+            include_files=include_files,
+            role_config=role_config
+        )
+
+        return JsonResponse({
+            "prompt": prompt,
+            "task_id": task_id,
+            "project_id": project.id,
+            "role": role,
+            "role_config_id": role_config_obj.id if role_config_obj else None,
+            "token_estimate": len(prompt) // 4  # Rough estimate
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def project_enrich(request, project_id):
+    """Enrich project documentation using LLM for agent-ready context.
+
+    POST /api/projects/{id}/enrich
+
+    Generates comprehensive documentation including:
+    - Enhanced description
+    - Project objectives
+    - Success criteria
+    - Agent workflow guidelines
+    - Key commands and API endpoints
+
+    Query params:
+    - apply: true/false (default false) - whether to save to database
+    - model: LLM model to use (optional)
+
+    Returns enriched documentation that can be reviewed before applying.
+    """
+    import os
+    from app.services.llm_service import get_llm_service
+
+    apply_changes = request.GET.get("apply", "false").lower() == "true"
+    model = request.GET.get("model")
+
+    db = next(get_db())
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return JsonResponse({"error": "Project not found"}, status=404)
+
+        # Build comprehensive project context
+        context_parts = []
+
+        # --- Project Metadata ---
+        context_parts.append("=== PROJECT METADATA ===")
+        context_parts.append(f"Name: {project.name}")
+        context_parts.append(f"Repo Path: {project.repo_path or 'Not set'}")
+        context_parts.append(f"Repository URL: {project.repository_url or 'Not set'}")
+        context_parts.append(f"Primary Branch: {project.primary_branch or 'main'}")
+        context_parts.append(f"Entry Point: {project.entry_point or 'Not set'}")
+        context_parts.append(f"Default Port: {project.default_port or 'Not set'}")
+        context_parts.append("")
+
+        # --- Tech Stack ---
+        context_parts.append("=== TECH STACK ===")
+        context_parts.append(f"Languages: {', '.join(project.languages or []) or 'Not specified'}")
+        context_parts.append(f"Frameworks: {', '.join(project.frameworks or []) or 'Not specified'}")
+        context_parts.append(f"Databases: {', '.join(project.databases or []) or 'Not specified'}")
+        context_parts.append(f"Python Version: {project.python_version or 'Not specified'}")
+        context_parts.append(f"Node Version: {project.node_version or 'Not specified'}")
+        context_parts.append("")
+
+        # --- Current Description ---
+        context_parts.append("=== CURRENT DESCRIPTION ===")
+        context_parts.append(project.description or "No description provided")
+        context_parts.append("")
+
+        # --- Commands ---
+        all_commands = {
+            "build": project.build_command,
+            "test": project.test_command,
+            "run": project.run_command,
+            "deploy": project.deploy_command,
+            **(project.additional_commands or {})
+        }
+        context_parts.append(f"=== AVAILABLE COMMANDS ({len([c for c in all_commands.values() if c])} defined) ===")
+        for name, value in sorted(all_commands.items()):
+            if value is None:
+                continue
+            if isinstance(value, dict):
+                desc = value.get("description", "")
+                cmd = value.get("command", "")
+                context_parts.append(f"- {name}: {desc}")
+                context_parts.append(f"    Command: {cmd}")
+            else:
+                context_parts.append(f"- {name}: {value}")
+        context_parts.append("")
+
+        # --- Key Files ---
+        context_parts.append("=== KEY FILES ===")
+        for f in (project.key_files or []):
+            context_parts.append(f"- {f}")
+        context_parts.append("")
+
+        # --- Config Files ---
+        context_parts.append("=== CONFIG FILES ===")
+        for f in (project.config_files or []):
+            context_parts.append(f"- {f}")
+        context_parts.append("")
+
+        # --- Read key files if available ---
+        file_contents = {}
+        if project.repo_path and os.path.isdir(project.repo_path):
+            priority_files = ["README.md", "CLAUDE.md", "requirements.txt", "package.json", "setup.py", "pyproject.toml"]
+            for filename in priority_files:
+                filepath = os.path.join(project.repo_path, filename)
+                if os.path.isfile(filepath):
+                    try:
+                        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                            content = f.read()
+                            if len(content) < 10000:  # Only include if reasonable size
+                                file_contents[filename] = content
+                    except:
+                        pass
+
+            if file_contents:
+                context_parts.append("=== FILE CONTENTS (for context) ===")
+                for fname, content in file_contents.items():
+                    context_parts.append(f"\n--- {fname} ---")
+                    context_parts.append(content[:5000])  # Limit per file
+                context_parts.append("")
+
+        # --- Existing Tasks ---
+        tasks = db.query(Task).filter(Task.project_id == project_id).limit(10).all()
+        if tasks:
+            context_parts.append(f"=== EXISTING TASKS ({len(tasks)} shown) ===")
+            for t in tasks:
+                context_parts.append(f"- [{t.task_id}] {t.title} ({t.status.value if t.status else 'unknown'})")
+            context_parts.append("")
+
+        project_context = "\n".join(context_parts)
+
+        # Build the enrichment prompt
+        enrichment_prompt = f"""You are a technical documentation expert preparing a project for AI agent collaboration.
+
+Analyze this project and generate comprehensive documentation that will help AI agents understand and work on this codebase effectively.
+
+{project_context}
+
+=== GENERATE THE FOLLOWING ===
+
+1. **ENHANCED DESCRIPTION** (2-3 paragraphs)
+   - What the project does and its purpose
+   - Architecture and key technologies
+   - How agents interact with it (API, CLI, etc.)
+
+2. **PROJECT OBJECTIVES** (5-10 bullet points)
+   - Clear, measurable goals for the project
+   - Both short-term and long-term objectives
+
+3. **SUCCESS CRITERIA** (5-10 bullet points)
+   - How to know if work is done correctly
+   - Quality standards and requirements
+   - Testing expectations
+
+4. **AGENT WORKFLOW GUIDE**
+   - Step-by-step process for agents to:
+     a) Understand the codebase
+     b) Pick up a task
+     c) Implement changes
+     d) Submit work for review
+   - Include specific commands and API endpoints to use
+
+5. **KEY COMMANDS REFERENCE**
+   - Most important commands for daily development
+   - Grouped by category (setup, test, deploy, etc.)
+
+6. **GETTING STARTED CHECKLIST**
+   - First steps for a new agent joining the project
+   - Required setup and configuration
+
+Format the output as structured markdown that can be stored in the project description or a separate agent guide document.
+"""
+
+        # Call LLM service
+        try:
+            service = get_llm_service()
+            enriched_content = service.complete(
+                prompt=enrichment_prompt,
+                system_prompt="You are a senior technical writer creating documentation for AI coding agents. Be comprehensive, precise, and actionable. Structure your output clearly with markdown headers.",
+                model=model,
+                temperature=0.4,
+                max_tokens=4000
+            )
+        except Exception as e:
+            return JsonResponse({
+                "error": f"LLM service error: {str(e)}",
+                "hint": "Ensure Docker Model Runner is running"
+            }, status=503)
+
+        result = {
+            "project_id": project_id,
+            "project_name": project.name,
+            "enriched_documentation": enriched_content,
+            "context_used": {
+                "commands_count": len([c for c in all_commands.values() if c]),
+                "key_files_count": len(project.key_files or []),
+                "files_read": list(file_contents.keys()),
+                "tasks_count": len(tasks)
+            },
+            "applied": False
+        }
+
+        # Apply changes if requested
+        if apply_changes:
+            # Extract just the enhanced description for the description field
+            # Store full enrichment in a separate field or file
+            project.description = enriched_content
+            db.commit()
+            result["applied"] = True
+            result["message"] = "Enriched documentation saved to project description"
+
+            log_event(db, "system", "enrich", "project", project_id, {
+                "action": "llm_enrichment",
+                "model": model or "default"
+            })
+
+        return JsonResponse(result)
+    except Exception as e:
+        db.rollback()
+        return JsonResponse({"error": str(e)}, status=500)
+    finally:
+        db.close()
+
+
+# =============================================================================
+# LLM Session Management
+# =============================================================================
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def llm_sessions_list(request):
+    """List LLM sessions with optional filtering.
+
+    GET /api/llm/sessions
+
+    Query params:
+    - project_id: Filter by project
+    - task_id: Filter by task
+    - run_id: Filter by run
+    - active: Filter by active status (true/false)
+    - limit: Max results (default 50)
+
+    Returns:
+    {
+        "sessions": [...],
+        "count": 10
+    }
+    """
+    from app.models import LLMSession
+
+    project_id = request.GET.get("project_id")
+    task_id = request.GET.get("task_id")
+    run_id = request.GET.get("run_id")
+    active = request.GET.get("active")
+    limit = int(request.GET.get("limit", 50))
+
+    db = next(get_db())
+    try:
+        query = db.query(LLMSession)
+
+        if project_id:
+            query = query.filter(LLMSession.project_id == int(project_id))
+        if task_id:
+            query = query.filter(LLMSession.task_id == int(task_id))
+        if run_id:
+            query = query.filter(LLMSession.run_id == int(run_id))
+        if active is not None:
+            query = query.filter(LLMSession.active == (active.lower() == "true"))
+
+        sessions = query.order_by(LLMSession.updated_at.desc()).limit(limit).all()
+
+        return JsonResponse({
+            "sessions": [s.to_dict() for s in sessions],
+            "count": len(sessions)
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["GET", "DELETE"])
+def llm_session_detail(request, session_id):
+    """Get or delete a specific LLM session.
+
+    GET /api/llm/sessions/{id}
+    DELETE /api/llm/sessions/{id}
+
+    GET Query params:
+    - messages: Include messages (true/false, default false)
+    - last_n: Only include last N messages
+
+    Returns (GET):
+    {
+        "session": {...},
+        "messages": [...]  // If requested
+    }
+    """
+    from app.models import LLMSession
+
+    db = next(get_db())
+    try:
+        session = db.query(LLMSession).filter(LLMSession.id == session_id).first()
+        if not session:
+            return JsonResponse({"error": "Session not found"}, status=404)
+
+        if request.method == "DELETE":
+            db.delete(session)
+            db.commit()
+            return JsonResponse({"success": True, "deleted": session_id})
+
+        # GET request
+        include_messages = request.GET.get("messages", "false").lower() == "true"
+        last_n = request.GET.get("last_n")
+
+        if include_messages:
+            if last_n:
+                result = session.to_dict_with_messages(int(last_n))
+            else:
+                result = session.to_dict_with_messages()
+        else:
+            result = session.to_dict()
+
+        return JsonResponse({"session": result})
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def llm_session_clear(request, session_id):
+    """Clear a session's message history.
+
+    POST /api/llm/sessions/{id}/clear
+
+    Body:
+    {
+        "keep_system": true  // Optional - keep system messages (default true)
+    }
+
+    Returns:
+    {
+        "success": true,
+        "session": {...}
+    }
+    """
+    from app.models import LLMSession
+
+    data = _get_json_body(request) or {}
+
+    db = next(get_db())
+    try:
+        session = db.query(LLMSession).filter(LLMSession.id == session_id).first()
+        if not session:
+            return JsonResponse({"error": "Session not found"}, status=404)
+
+        keep_system = data.get("keep_system", True)
+        session.clear_messages(keep_system=keep_system)
+        db.commit()
+
+        return JsonResponse({
+            "success": True,
+            "session": session.to_dict()
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def llm_session_export(request, session_id):
+    """Export a session in Goose-compatible JSON format.
+
+    GET /api/llm/sessions/{id}/export
+
+    Returns:
+    {
+        "id": 1,
+        "name": "task_123",
+        "working_dir": "/path/to/project",
+        "created_at": "...",
+        "total_tokens": 1234,
+        "input_tokens": 567,
+        "output_tokens": 678,
+        "provider_name": "docker",
+        "model_config": {"model_name": "ai/qwen3-coder"},
+        "conversation": [...],
+        "metadata": {"project_id": 1, "task_id": 123, "run_id": null}
+    }
+    """
+    from app.models import LLMSession
+
+    db = next(get_db())
+    try:
+        session = db.query(LLMSession).filter(LLMSession.id == session_id).first()
+        if not session:
+            return JsonResponse({"error": "Session not found"}, status=404)
+
+        return JsonResponse(session.to_export_format())
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def llm_session_by_name(request, name):
+    """Get a session by name.
+
+    GET /api/llm/sessions/name/{name}
+
+    Query params:
+    - project_id: Required if multiple sessions share the same name
+    - messages: Include messages (true/false)
+
+    Returns:
+    {
+        "session": {...}
+    }
+    """
+    from app.models import LLMSession
+
+    project_id = request.GET.get("project_id")
+    include_messages = request.GET.get("messages", "false").lower() == "true"
+
+    db = next(get_db())
+    try:
+        query = db.query(LLMSession).filter(
+            LLMSession.name == name,
+            LLMSession.active == True
+        )
+
+        if project_id:
+            query = query.filter(LLMSession.project_id == int(project_id))
+
+        session = query.order_by(LLMSession.updated_at.desc()).first()
+        if not session:
+            return JsonResponse({"error": "Session not found"}, status=404)
+
+        if include_messages:
+            result = session.to_dict_with_messages()
+        else:
+            result = session.to_dict()
+
+        return JsonResponse({"session": result})
     finally:
         db.close()

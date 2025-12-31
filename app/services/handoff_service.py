@@ -159,11 +159,95 @@ def build_handoff_context(
     # Build context sections
     sections = []
 
+    # Check for loopback situation (QA/SEC failure that looped back to DEV)
+    is_loopback = False
+    failed_report = None
+    loopback_stage = None
+
+    for report in reports:
+        if report.status and report.status.value == "fail":
+            if report.role == AgentRole.QA:
+                is_loopback = True
+                failed_report = report
+                loopback_stage = "QA"
+            elif report.role == AgentRole.SECURITY:
+                is_loopback = True
+                failed_report = report
+                loopback_stage = "SECURITY"
+
     # Header
     task_label = f" | Task: {task_id}" if task_id else ""
     sections.append(f"""# Handoff Context
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 Run ID: {run_id} | Project: {project.name}{task_label}
+""")
+
+    # PROMINENT LOOPBACK WARNING for DEV agent
+    if is_loopback and role == "dev" and failed_report:
+        sections.append(f"""
+## ⚠️ LOOPBACK - FIX REQUIRED ⚠️
+
+**{loopback_stage} AGENT FOUND ISSUES THAT MUST BE FIXED**
+
+This is NOT a fresh implementation. The code has already been through the pipeline
+and {loopback_stage} found problems. Your job is to FIX these specific issues.
+
+### {loopback_stage} Failure Report
+**Status**: FAILED
+**Summary**: {failed_report.summary or 'No summary provided'}
+""")
+        # Show full details of what failed
+        if failed_report.details:
+            sections.append("### Issues to Fix:")
+            details = failed_report.details
+
+            # Handle different report formats
+            if isinstance(details, dict):
+                # Look for common keys
+                for key in ['failing_tests', 'failures', 'errors', 'issues',
+                           'vulnerabilities', 'findings', 'bugs']:
+                    if key in details and details[key]:
+                        items = details[key]
+                        if isinstance(items, list):
+                            for item in items:
+                                if isinstance(item, dict):
+                                    # Format dict items nicely
+                                    title = item.get('title') or item.get('name') or item.get('issue') or str(item)
+                                    desc = item.get('description') or item.get('details') or item.get('recommendation') or ''
+                                    sections.append(f"- **{title}**")
+                                    if desc:
+                                        sections.append(f"  {desc}")
+                                else:
+                                    sections.append(f"- {item}")
+                        else:
+                            sections.append(f"- {key}: {items}")
+
+                # Show any other details
+                for key, value in details.items():
+                    if key not in ['failing_tests', 'failures', 'errors', 'issues',
+                                  'vulnerabilities', 'findings', 'bugs', 'status', 'summary']:
+                        if value:
+                            sections.append(f"- **{key}**: {value}")
+            else:
+                sections.append(f"```\n{details}\n```")
+
+        # Show fix tasks created from findings
+        fix_tasks = [t for t in tasks if t.title and ('fix' in t.title.lower() or 'vulnerability' in t.title.lower() or 'security' in t.title.lower())]
+        if fix_tasks:
+            sections.append("\n### Fix Tasks Created:")
+            for t in fix_tasks:
+                status = t.status.value if t.status else "unknown"
+                sections.append(f"- [{status}] **{t.title}**: {t.description or 'No description'}")
+
+        sections.append("""
+### Your Task
+1. Read the failure details above carefully
+2. Find and fix each issue mentioned
+3. Run tests to verify fixes
+4. Commit your fixes with a descriptive message
+5. Do NOT introduce new features - only fix the reported issues
+
+---
 """)
 
     # Extract goal from pm_result if available
@@ -339,7 +423,8 @@ def get_handoff_for_prompt(
     role: str,
     project_path: str,
     task_id: Optional[str] = None,
-    write_file: bool = True
+    write_file: bool = True,
+    include_images: bool = None
 ) -> str:
     """Get handoff context and optionally write to task-specific file.
 
@@ -353,11 +438,28 @@ def get_handoff_for_prompt(
         project_path: Path to project
         task_id: Optional task ID for task-specific context
         write_file: Whether to write handoff file
+        include_images: Whether to enrich with image descriptions (None = check settings)
 
     Returns:
         Context string for agent prompt
     """
     context = build_handoff_context(db, run_id, role, task_id=task_id, include_raw_output=False)
+
+    # Enrich with image descriptions if enabled
+    if include_images is None:
+        # Check director settings for include_images flag
+        try:
+            from app.views.api import _director_settings
+            include_images = _director_settings.get("include_images", False)
+        except ImportError:
+            include_images = False
+
+    if include_images:
+        try:
+            from app.services.llm_service import enrich_text_with_image_descriptions
+            context = enrich_text_with_image_descriptions(context)
+        except Exception as e:
+            print(f"Warning: Could not enrich with image descriptions: {e}")
 
     if write_file:
         try:
@@ -370,3 +472,264 @@ def get_handoff_for_prompt(
             print(f"Warning: Could not write handoff file: {e}")
 
     return context
+
+
+# =============================================================================
+# Handoff CRUD Operations (Database-backed)
+# =============================================================================
+
+def create_handoff(
+    db: Session,
+    task_id: int,
+    to_role: str,
+    stage: str,
+    project_id: int = None,
+    run_id: int = None,
+    from_role: str = None,
+    created_by: str = "system",
+    write_file: bool = True
+) -> "Handoff":
+    """Create a new handoff for a task.
+
+    Builds context from previous handoffs, reports, and proofs,
+    then stores in DB and optionally writes to file.
+
+    Args:
+        db: SQLAlchemy session
+        task_id: Task to create handoff for
+        to_role: Agent role that should pick this up
+        stage: Pipeline stage (dev, qa, sec, docs, pm)
+        project_id: Project ID (auto-detected from task if not provided)
+        run_id: Optional run ID for context
+        from_role: Previous agent role (null if first handoff)
+        created_by: Who created this (system, human, auto-trigger)
+        write_file: Whether to write context to file
+
+    Returns:
+        Created Handoff record
+    """
+    from app.models.handoff import Handoff, HandoffStatus
+    from app.models.task import Task
+
+    # Get task to auto-fill project_id if needed
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise ValueError(f"Task {task_id} not found")
+
+    if project_id is None:
+        project_id = task.project_id
+
+    # Build context markdown using existing function
+    context_markdown = build_handoff_context(
+        db=db,
+        run_id=run_id or 0,  # Use 0 if no run, will still get task context
+        role=to_role,
+        task_id=task.task_id,
+        include_raw_output=True
+    )
+
+    # Build structured context for JSON
+    context = {
+        "task_id": task_id,
+        "task_title": task.title,
+        "stage": stage,
+        "to_role": to_role,
+        "from_role": from_role,
+        "project_id": project_id,
+        "run_id": run_id,
+    }
+
+    # Optionally write to file
+    context_file = None
+    if write_file and task.project and task.project.repo_path:
+        try:
+            context_file = write_handoff_file(
+                db=db,
+                run_id=run_id or 0,
+                role=to_role,
+                project_path=task.project.repo_path,
+                task_id=task.task_id,
+                include_raw_output=True
+            )
+        except Exception as e:
+            print(f"Warning: Could not write handoff file: {e}")
+
+    # Create handoff record
+    handoff = Handoff(
+        project_id=project_id,
+        task_id=task_id,
+        run_id=run_id,
+        from_role=from_role,
+        to_role=to_role,
+        stage=stage,
+        status=HandoffStatus.PENDING,
+        context=context,
+        context_markdown=context_markdown,
+        context_file=context_file,
+        created_by=created_by
+    )
+
+    db.add(handoff)
+    db.commit()
+    db.refresh(handoff)
+
+    return handoff
+
+
+def get_current_handoff(db: Session, task_id: int) -> "Handoff":
+    """Get the current pending/in_progress handoff for a task.
+
+    Returns the most recent handoff that is not yet completed.
+    """
+    from app.models.handoff import Handoff, HandoffStatus
+
+    return db.query(Handoff).filter(
+        Handoff.task_id == task_id,
+        Handoff.status.in_([HandoffStatus.PENDING, HandoffStatus.IN_PROGRESS])
+    ).order_by(Handoff.created_at.desc()).first()
+
+
+def get_handoff_by_id(db: Session, handoff_id: int) -> "Handoff":
+    """Get a specific handoff by ID."""
+    from app.models.handoff import Handoff
+    return db.query(Handoff).filter(Handoff.id == handoff_id).first()
+
+
+def accept_handoff(db: Session, handoff_id: int) -> "Handoff":
+    """Mark a handoff as accepted (agent starting work).
+
+    Args:
+        db: SQLAlchemy session
+        handoff_id: Handoff to accept
+
+    Returns:
+        Updated Handoff record
+
+    Raises:
+        ValueError: If handoff not found or not in PENDING state
+    """
+    from app.models.handoff import Handoff, HandoffStatus
+    from datetime import datetime
+
+    handoff = db.query(Handoff).filter(Handoff.id == handoff_id).first()
+    if not handoff:
+        raise ValueError(f"Handoff {handoff_id} not found")
+
+    if handoff.status != HandoffStatus.PENDING:
+        raise ValueError(f"Handoff {handoff_id} is not pending (status: {handoff.status.value})")
+
+    handoff.status = HandoffStatus.IN_PROGRESS
+    handoff.accepted_at = datetime.utcnow()
+    db.commit()
+    db.refresh(handoff)
+
+    return handoff
+
+
+def complete_handoff(
+    db: Session,
+    handoff_id: int,
+    report_status: str,
+    report_summary: str = None,
+    report_details: dict = None,
+    agent_report_id: int = None
+) -> "Handoff":
+    """Complete a handoff with the agent's report.
+
+    Args:
+        db: SQLAlchemy session
+        handoff_id: Handoff to complete
+        report_status: "pass" or "fail"
+        report_summary: Summary of what agent did
+        report_details: Full report details (JSON)
+        agent_report_id: Optional link to AgentReport record
+
+    Returns:
+        Updated Handoff record
+
+    Raises:
+        ValueError: If handoff not found or not in IN_PROGRESS state
+    """
+    from app.models.handoff import Handoff, HandoffStatus
+    from datetime import datetime
+
+    handoff = db.query(Handoff).filter(Handoff.id == handoff_id).first()
+    if not handoff:
+        raise ValueError(f"Handoff {handoff_id} not found")
+
+    if handoff.status != HandoffStatus.IN_PROGRESS:
+        raise ValueError(f"Handoff {handoff_id} is not in progress (status: {handoff.status.value})")
+
+    handoff.status = HandoffStatus.COMPLETED
+    handoff.completed_at = datetime.utcnow()
+    handoff.report_status = report_status
+    handoff.report_summary = report_summary
+    handoff.report = report_details
+    handoff.agent_report_id = agent_report_id
+
+    db.commit()
+    db.refresh(handoff)
+
+    return handoff
+
+
+def fail_handoff(db: Session, handoff_id: int, reason: str = None) -> "Handoff":
+    """Mark a handoff as failed (timeout, error, etc.).
+
+    Args:
+        db: SQLAlchemy session
+        handoff_id: Handoff to fail
+        reason: Optional reason for failure
+
+    Returns:
+        Updated Handoff record
+    """
+    from app.models.handoff import Handoff, HandoffStatus
+    from datetime import datetime
+
+    handoff = db.query(Handoff).filter(Handoff.id == handoff_id).first()
+    if not handoff:
+        raise ValueError(f"Handoff {handoff_id} not found")
+
+    handoff.status = HandoffStatus.FAILED
+    handoff.completed_at = datetime.utcnow()
+    handoff.report_status = "fail"
+    handoff.report_summary = reason or "Handoff failed"
+
+    db.commit()
+    db.refresh(handoff)
+
+    return handoff
+
+
+def get_handoff_history(
+    db: Session,
+    task_id: int = None,
+    project_id: int = None,
+    stage: str = None,
+    limit: int = 50
+) -> list:
+    """Get handoff history for a task or project.
+
+    Args:
+        db: SQLAlchemy session
+        task_id: Filter by task
+        project_id: Filter by project
+        stage: Filter by pipeline stage
+        limit: Max results
+
+    Returns:
+        List of Handoff records
+    """
+    from app.models.handoff import Handoff
+
+    query = db.query(Handoff)
+
+    if task_id:
+        query = query.filter(Handoff.task_id == task_id)
+    if project_id:
+        query = query.filter(Handoff.project_id == project_id)
+    if stage:
+        query = query.filter(Handoff.stage == stage)
+
+    return query.order_by(Handoff.created_at.desc()).limit(limit).all()

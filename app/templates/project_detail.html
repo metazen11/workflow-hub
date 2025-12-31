@@ -214,6 +214,15 @@
                     <span class="detail-label">Default Port</span>
                     <span class="detail-value editable" data-field="default_port" data-type="number">{{ project.default_port|default:"-" }}</span>
                 </div>
+                <!-- Additional Commands -->
+                <div id="additional-commands-view">
+                    {% for cmd_name, cmd_value in project.additional_commands.items %}
+                    <div class="detail-row">
+                        <span class="detail-label" style="text-transform: capitalize;">{{ cmd_name|cut:"_" }}</span>
+                        <code class="detail-value">{{ cmd_value }}</code>
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
             <form class="card-body edit-form" id="commands-edit" style="display: none;">
                 <div class="form-group">
@@ -241,7 +250,19 @@
                     <input type="number" name="default_port" value="{{ project.default_port|default:'' }}"
                         placeholder="8000">
                 </div>
-                <div class="form-actions">
+                <hr style="margin: 16px 0; border-color: var(--border);">
+                <h4 style="margin-bottom: 12px; color: var(--text-secondary);">Additional Commands</h4>
+                <div id="additional-commands-edit">
+                    {% for cmd_name, cmd_value in project.additional_commands.items %}
+                    <div class="form-group additional-cmd-row" style="display: flex; gap: 8px; align-items: flex-start;">
+                        <input type="text" class="cmd-name" value="{{ cmd_name }}" placeholder="command_name" style="width: 150px;">
+                        <input type="text" class="cmd-value" value="{{ cmd_value }}" placeholder="command" style="flex: 1;">
+                        <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">×</button>
+                    </div>
+                    {% endfor %}
+                </div>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="addCommandRow()" style="margin-top: 8px;">+ Add Command</button>
+                <div class="form-actions" style="margin-top: 16px;">
                     <button type="button" class="btn btn-secondary" onclick="toggleEdit('commands')">Cancel</button>
                     <button type="button" class="btn btn-primary" onclick="saveCommands({{ project.id }})">Save</button>
                 </div>
@@ -694,6 +715,17 @@
                     <label>Description</label>
                     <textarea name="description" rows="4"></textarea>
                 </div>
+                <div class="form-group">
+                    <label>Attachments</label>
+                    <div id="project-task-dropzone" class="dropzone-area">
+                        <input type="file" id="project-task-files" multiple accept="image/*,.pdf,.txt,.md,.json,.log">
+                        <div class="dropzone-prompt">
+                            <span class="dropzone-icon">📎</span>
+                            <span>Drop files here or <u>click to browse</u></span>
+                        </div>
+                        <div id="project-task-previews" class="file-previews"></div>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="hideModal('add-task-modal')">Cancel</button>
@@ -703,6 +735,52 @@
     </div>
 </div>
 
+<style>
+/* Dropzone styles */
+.dropzone-area {
+    border: 2px dashed var(--border, #dee2e6);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    min-height: 80px;
+}
+.dropzone-area:hover, .dropzone-area.dragover {
+    border-color: var(--primary, #4f46e5);
+    background: rgba(79, 70, 229, 0.05);
+}
+.dropzone-area input[type="file"] {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+.dropzone-prompt { color: var(--text-muted, #6c757d); font-size: 14px; }
+.dropzone-icon { font-size: 24px; display: block; margin-bottom: 8px; }
+.file-previews { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; justify-content: center; }
+.file-preview {
+    position: relative;
+    width: 60px; height: 60px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border, #dee2e6);
+}
+.file-preview img { width: 100%; height: 100%; object-fit: cover; }
+.file-preview .file-icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%; background: var(--bg-secondary, #f8f9fa); font-size: 24px;
+}
+.file-preview .remove-btn {
+    position: absolute; top: 2px; right: 2px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: rgba(0,0,0,0.6); color: white;
+    border: none; cursor: pointer; font-size: 12px; line-height: 1;
+}
+</style>
+
+<script src="/static/js/task-modal.js"></script>
 <script src="/static/js/inline-edit.js"></script>
 <script>
     // Initialize inline editing
@@ -878,12 +956,37 @@
         const form = document.getElementById('commands-edit');
         const data = Object.fromEntries(new FormData(form));
         if (data.default_port) data.default_port = parseInt(data.default_port);
+
+        // Collect additional commands
+        const additionalCmds = {};
+        document.querySelectorAll('#additional-commands-edit .additional-cmd-row').forEach(row => {
+            const name = row.querySelector('.cmd-name').value.trim();
+            const value = row.querySelector('.cmd-value').value.trim();
+            if (name && value) {
+                additionalCmds[name] = value;
+            }
+        });
+        data.additional_commands = additionalCmds;
+
         const result = await apiCall('/api/projects/' + projectId + '/update', 'PATCH', data);
         if (result.project || result.status === 'success') {
             location.reload();
         } else {
             alert('Error: ' + (result.error || 'Unknown error'));
         }
+    }
+
+    function addCommandRow() {
+        const container = document.getElementById('additional-commands-edit');
+        const row = document.createElement('div');
+        row.className = 'form-group additional-cmd-row';
+        row.style.cssText = 'display: flex; gap: 8px; align-items: flex-start;';
+        row.innerHTML = `
+            <input type="text" class="cmd-name" placeholder="command_name" style="width: 150px;">
+            <input type="text" class="cmd-value" placeholder="command" style="flex: 1;">
+            <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">×</button>
+        `;
+        container.appendChild(row);
     }
 
     async function saveKeyFiles(projectId) {
@@ -999,6 +1102,7 @@
     async function saveTask(projectId) {
         const form = document.getElementById('add-task-form');
         const formData = new FormData(form);
+        const files = document.getElementById('project-task-files').files;
         const data = {
             task_id: formData.get('task_id'),
             title: formData.get('title'),
@@ -1007,6 +1111,11 @@
         };
         const result = await apiCall('/api/projects/' + projectId + '/tasks/create', 'POST', data);
         if (result.task || result.status === 'success') {
+            // Upload files if any
+            const taskId = result.task ? result.task.id : result.id;
+            if (files.length > 0 && taskId) {
+                await uploadTaskFiles(taskId, files);
+            }
             hideModal('add-task-modal');
             location.reload();
         } else {
@@ -1022,5 +1131,8 @@
             }
         });
     });
+
+    // Initialize dropzone for add task modal
+    const projectTaskDropzone = initDropzone('project-task-dropzone', 'project-task-files', 'project-task-previews');
 </script>
 {% endblock %}

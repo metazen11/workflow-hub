@@ -41,6 +41,10 @@ class Project(Base):
     run_command = Column(Text, nullable=True)  # "python app.py"
     deploy_command = Column(Text, nullable=True)  # "docker-compose up -d"
 
+    # Additional Commands (JSON key-value pairs for flexibility)
+    # Example: {"db_start": "docker compose up -d", "migrate": "alembic upgrade head", ...}
+    additional_commands = Column(JSON, default=dict)
+
     # Development Settings
     default_port = Column(Integer, nullable=True)  # 5051
     python_version = Column(String(20), nullable=True)  # "3.11"
@@ -88,6 +92,7 @@ class Project(Base):
             "test_command": self.test_command,
             "run_command": self.run_command,
             "deploy_command": self.deploy_command,
+            "additional_commands": self.additional_commands or {},
             # Development
             "default_port": self.default_port,
             "python_version": self.python_version,

@@ -4,12 +4,13 @@
 {% block page_title %}{{ task.title }}{% endblock %}
 
 {% block content %}
+<!-- Toast Container -->
+<div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 1050;"></div>
+
 <div class="card">
     <div class="card-header">
-        <span class="badge badge-{{ task.status_class }}" style="font-size: 0.9rem;">{{ task.status|upper }}</span>
-        {% if task.priority %}
-        <span class="badge badge-secondary" style="margin-left: 8px;">Priority: {{ task.priority }}</span>
-        {% endif %}
+        <span id="status-badge" class="badge badge-{{ task.status_class }}" style="font-size: 0.9rem;" data-status="{{ task.status }}">{{ task.status|upper }}</span>
+        <span id="priority-badge" class="badge badge-secondary" style="margin-left: 8px;">Priority: <span id="priority-value">{{ task.priority|default:5 }}</span></span>
     </div>
     <div class="card-body">
         <!-- Meta information -->
@@ -94,9 +95,8 @@
 
         <!-- Attachments -->
         <div class="section">
-            <h4 class="section-title">Attachments</h4>
-            {% if attachments %}
-            <div class="attachments-grid">
+            <h4 class="section-title">Attachments <span id="attachments-count" class="badge badge-secondary" style="font-size: 0.7rem;">{{ attachments|length }}</span></h4>
+            <div id="attachments-grid" class="attachments-grid" {% if not attachments %}style="display: none;"{% endif %}>
                 {% for att in attachments %}
                 <div class="attachment-card">
                     {% if att.attachment_type == 'image' %}
@@ -131,9 +131,7 @@
                 </div>
                 {% endfor %}
             </div>
-            {% else %}
-            <p style="color: var(--text-muted); font-style: italic;">No attachments</p>
-            {% endif %}
+            <p id="no-attachments-msg" style="color: var(--text-muted); font-style: italic; {% if attachments %}display: none;{% endif %}">No attachments</p>
 
             <!-- Upload Form -->
             <div class="upload-section">
@@ -177,7 +175,7 @@
                 <div style="flex-grow: 1;">
                     <label
                         style="display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">Current
-                        Stage: <strong>{{ task.pipeline_stage|upper }}</strong></label>
+                        Stage: <strong id="current-stage-label">{{ task.pipeline_stage|upper }}</strong></label>
                     <select id="stage-select" class="form-select" style="width: 100%;">
                         {% for stage in pipeline_stages %}
                         <option value="{{ stage.value }}" {% if task.pipeline_stage == stage.value %}selected{% endif %}>{{ stage.label }}</option>
@@ -197,8 +195,16 @@
                         </svg>
                         Prepare
                     </button>
-                    <!-- React-powered Run Agent button -->
-                    <div id="run-agent-container"></div>
+                    <!-- Run Agent button (React with fallback) -->
+                    <div id="run-agent-container">
+                        <!-- Fallback button shown until React mounts -->
+                        <button id="run-agent-fallback" class="btn btn-primary" onclick="triggerAgent({{ task.id }})">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;">
+                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                            </svg>
+                            Run {{ task.pipeline_stage|upper }} Agent
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -240,6 +246,36 @@
             </div>
         </div>
 
+        <!-- Handoff History -->
+        <div class="section">
+            <h4 class="section-title">Handoff History <span id="handoff-count" class="badge badge-secondary" style="font-size: 0.7rem;">0</span></h4>
+            <div id="handoff-history-container">
+                <p style="color: var(--text-muted); font-style: italic;">Loading handoff history...</p>
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="section">
+            <h4 class="section-title">Activity Log</h4>
+            <div id="activity-log-container">
+                <p style="color: var(--text-muted); font-style: italic;">Loading activity...</p>
+            </div>
+        </div>
+
+        <!-- Proof Viewer Modal -->
+        <div id="proof-viewer-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; overflow: auto;">
+            <div style="background: var(--bg-primary); margin: 40px auto; max-width: 900px; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border);">
+                    <h4 id="proof-viewer-title" style="margin: 0;"></h4>
+                    <div style="display: flex; gap: 8px;">
+                        <a id="proof-download-btn" href="#" download class="btn btn-secondary btn-sm">Download</a>
+                        <button onclick="closeProofViewer()" class="btn btn-sm" style="font-size: 20px; line-height: 1;">&times;</button>
+                    </div>
+                </div>
+                <div id="proof-viewer-content" style="padding: 20px; max-height: 70vh; overflow: auto;"></div>
+            </div>
+        </div>
+
         <!-- Danger Zone -->
         <div class="section" style="margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border);">
             <h4 class="section-title" style="color: var(--danger);">Danger Zone</h4>
@@ -255,78 +291,284 @@
 </div>
 
 <script>
-    // Delete button handler is in /static/js/task-actions.js (DRY)
+    // ============================================
+    // Toast Notification System
+    // ============================================
+    function showToast(message, type = 'success', duration = 3000) {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        const bgColor = type === 'success' ? 'var(--success, #28a745)' :
+                       type === 'error' ? 'var(--danger, #dc3545)' :
+                       type === 'warning' ? 'var(--warning, #ffc107)' : 'var(--info, #17a2b8)';
+        const textColor = type === 'warning' ? '#000' : '#fff';
+
+        toast.style.cssText = `
+            background: ${bgColor}; color: ${textColor}; padding: 12px 20px;
+            border-radius: 8px; margin-bottom: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            animation: slideIn 0.3s ease; font-size: 0.9rem; max-width: 350px;
+        `;
+        toast.textContent = message;
+        container.appendChild(toast);
+
+        setTimeout(() => {
+            toast.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
+
+    // Add toast animations to page
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
+        .status-btn.active { ring: 2px solid var(--primary); transform: scale(1.05); }
+    `;
+    document.head.appendChild(style);
+
+    // ============================================
+    // Proof Viewer Functions
+    // ============================================
+    function openProof(url, filename, isImage, isViewable) {
+        if (isImage) {
+            window.open(url);
+        } else if (isViewable) {
+            showProofViewer(url, filename);
+        } else {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+        }
+    }
+
+    async function showProofViewer(url, filename) {
+        const modal = document.getElementById('proof-viewer-modal');
+        const title = document.getElementById('proof-viewer-title');
+        const content = document.getElementById('proof-viewer-content');
+        const downloadBtn = document.getElementById('proof-download-btn');
+
+        title.textContent = filename;
+        downloadBtn.href = url;
+        content.innerHTML = '<p style="color: var(--text-muted);">Loading...</p>';
+        modal.style.display = 'block';
+
+        try {
+            const res = await fetch(url);
+            const text = await res.text();
+            const ext = filename.split('.').pop().toLowerCase();
+
+            if (ext === 'md') {
+                content.innerHTML = window.marked
+                    ? '<div class="markdown-body">' + marked.parse(text) + '</div>'
+                    : `<pre style="white-space: pre-wrap; font-family: inherit; margin: 0;">${escapeHtml(text)}</pre>`;
+            } else if (ext === 'html') {
+                content.innerHTML = `<iframe srcdoc="${escapeHtml(text)}" style="width: 100%; height: 60vh; border: 1px solid var(--border); border-radius: 4px;"></iframe>`;
+            } else if (ext === 'json') {
+                try {
+                    const pretty = JSON.stringify(JSON.parse(text), null, 2);
+                    content.innerHTML = `<pre style="white-space: pre-wrap; background: var(--bg-secondary); padding: 16px; border-radius: 8px; overflow: auto; font-size: 0.85rem;">${escapeHtml(pretty)}</pre>`;
+                } catch {
+                    content.innerHTML = `<pre style="white-space: pre-wrap;">${escapeHtml(text)}</pre>`;
+                }
+            } else {
+                content.innerHTML = `<pre style="white-space: pre-wrap; background: var(--bg-secondary); padding: 16px; border-radius: 8px; overflow: auto; font-size: 0.85rem;">${escapeHtml(text)}</pre>`;
+            }
+        } catch (err) {
+            content.innerHTML = `<p style="color: var(--danger);">Error loading file: ${err.message}</p>`;
+        }
+    }
+
+    function closeProofViewer() {
+        document.getElementById('proof-viewer-modal').style.display = 'none';
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Close modal on escape or click outside
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProofViewer(); });
+    document.getElementById('proof-viewer-modal').addEventListener('click', e => {
+        if (e.target.id === 'proof-viewer-modal') closeProofViewer();
+    });
+
+    // ============================================
+    // Status Update (No Reload)
+    // ============================================
+    const statusClasses = {
+        'backlog': 'secondary', 'in_progress': 'info', 'blocked': 'danger', 'done': 'success'
+    };
 
     function updateTaskStatus(taskId, status) {
+        const badge = document.getElementById('status-badge');
+        const oldStatus = badge.dataset.status;
+
+        // Optimistic UI update
+        badge.textContent = status.toUpperCase().replace('_', ' ');
+        badge.className = `badge badge-${statusClasses[status] || 'secondary'}`;
+        badge.dataset.status = status;
+
+        // Highlight active button
+        document.querySelectorAll('.status-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelector(`.status-btn.${status}`)?.classList.add('active');
+
         fetch(`/api/tasks/${taskId}/status`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: status })
         })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    window.location.reload();
-                } else {
-                    alert('Error: ' + (data.error || 'Failed to update status'));
-                }
-            })
-            .catch(err => alert('Error updating status'));
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showToast(`Status updated to ${status.replace('_', ' ')}`);
+                loadActivityLog(); // Refresh activity
+            } else {
+                // Revert on error
+                badge.textContent = oldStatus.toUpperCase().replace('_', ' ');
+                badge.className = `badge badge-${statusClasses[oldStatus] || 'secondary'}`;
+                badge.dataset.status = oldStatus;
+                showToast(data.error || 'Failed to update status', 'error');
+            }
+        })
+        .catch(err => {
+            badge.textContent = oldStatus.toUpperCase().replace('_', ' ');
+            badge.className = `badge badge-${statusClasses[oldStatus] || 'secondary'}`;
+            badge.dataset.status = oldStatus;
+            showToast('Error updating status', 'error');
+        });
     }
 
-    // Move Stage button handler - uses event delegation to survive auto-refresh
-    document.addEventListener('click', function (e) {
-        var btn = e.target.closest('#move-stage-btn');
-        if (!btn) return;
+    // ============================================
+    // Stage Change (No Reload)
+    // ============================================
+    document.getElementById('move-stage-btn').addEventListener('click', function() {
+        const taskId = this.dataset.taskId;
+        const stageSelect = document.getElementById('stage-select');
+        const stage = stageSelect.value;
+        const stageLabel = document.getElementById('current-stage-label');
+        const oldStage = stageLabel.textContent;
 
-        var taskId = btn.dataset.taskId;
-        var stageSelect = document.getElementById('stage-select');
-        if (!taskId || !stageSelect) return;
+        // Optimistic update
+        stageLabel.textContent = stage.toUpperCase();
 
-        var stage = stageSelect.value;
-
-        fetch('/api/tasks/' + taskId + '/set-stage', {
+        fetch(`/api/tasks/${taskId}/set-stage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ stage: stage })
         })
-            .then(function (response) { return response.json(); })
-            .then(function (data) {
-                if (data.success) {
-                    window.location.reload();
-                } else {
-                    alert('Error: ' + (data.error || 'Failed to set stage'));
-                }
-            })
-            .catch(function (err) {
-                console.error('Error setting stage:', err);
-                alert('Error setting stage');
-            });
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showToast(`Moved to ${stage.toUpperCase()} stage`);
+                loadActivityLog();
+            } else {
+                stageLabel.textContent = oldStage;
+                showToast(data.error || 'Failed to set stage', 'error');
+            }
+        })
+        .catch(err => {
+            stageLabel.textContent = oldStage;
+            showToast('Error setting stage', 'error');
+        });
     });
 
-    // Mount React-powered Run Agent button
+    // ============================================
+    // Run Agent Button (React with fallback)
+    // ============================================
+    function triggerAgent(taskId) {
+        if (!confirm('Run {{ task.pipeline_stage|upper }} agent for this task?')) return;
+
+        const btn = document.getElementById('run-agent-fallback');
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-sm"></span> Starting...';
+
+        fetch(`/api/tasks/${taskId}/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.run_id) {
+                showToast(`Agent started! Run #${data.run_id}`);
+                btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Running...`;
+                // Poll for status
+                pollAgentStatus(data.run_id, btn, originalText);
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                showToast(data.error || 'Failed to start agent', 'error');
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+            showToast('Error starting agent', 'error');
+        });
+    }
+
+    function pollAgentStatus(runId, btn, originalText) {
+        const finalStates = ['deployed', 'merged', 'ready_for_deploy', 'ready_for_commit', 'killed', 'complete'];
+        const failedStates = ['qa_failed', 'sec_failed', 'testing_failed'];
+
+        const poll = setInterval(() => {
+            fetch(`/api/runs/${runId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.run) {
+                    clearInterval(poll);
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    return;
+                }
+                const state = data.run.state;
+                btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> ${state.toUpperCase()}`;
+
+                if (finalStates.includes(state) || data.run.killed) {
+                    clearInterval(poll);
+                    showToast(`Agent completed: ${state.toUpperCase()}`);
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    loadProofs();
+                    loadActivityLog();
+                } else if (failedStates.includes(state)) {
+                    clearInterval(poll);
+                    showToast(`Agent failed: ${state.toUpperCase()}`, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    loadActivityLog();
+                }
+            });
+        }, 3000);
+    }
+
+    // Try to mount React button (replaces fallback)
     if (window.WH && window.WH.React) {
         window.WH.React.mountRunAgentButton(
             {{ task.id }},
             '{{ task.pipeline_stage }}',
             'run-agent-container',
-            {{ task.run_id|default:'null' }}  // Pass existing run_id if task has one
+            {{ task.run_id|default:'null' }}
         );
     }
 
-    // Prepare Task button handler - Director enrichment
+    // ============================================
+    // Prepare Task Button
+    // ============================================
     document.getElementById('prepare-task-btn').addEventListener('click', function() {
         const taskId = this.dataset.taskId;
         const btn = this;
         const originalText = btn.innerHTML;
 
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-sm" style="margin-right: 4px;"></span>Preparing...';
+        btn.innerHTML = '<span class="spinner-sm"></span> Preparing...';
 
         fetch(`/api/tasks/${taskId}/director/prepare`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ auto_trigger: false })  // Just enrich, don't run agent
+            body: JSON.stringify({ auto_trigger: false })
         })
         .then(r => r.json())
         .then(data => {
@@ -334,21 +576,28 @@
             btn.innerHTML = originalText;
 
             if (data.enriched) {
-                alert('Task prepared! ' + data.message);
-                window.location.reload();  // Refresh to show new acceptance criteria
+                showToast('Task prepared! ' + data.message);
+                // Update description field if enriched
+                if (data.task && data.task.description) {
+                    document.getElementById('task-description').value = data.task.description;
+                }
+                loadActivityLog();
             } else if (data.issues && data.issues.length > 0) {
-                alert('Task needs attention:\n- ' + data.issues.join('\n- '));
+                showToast('Task needs attention', 'warning');
             } else {
-                alert(data.message || 'Task is ready for agent execution');
+                showToast(data.message || 'Task is ready', 'info');
             }
         })
         .catch(err => {
             btn.disabled = false;
             btn.innerHTML = originalText;
-            alert('Error preparing task: ' + err.message);
+            showToast('Error preparing task', 'error');
         });
     });
 
+    // ============================================
+    // Save Task Details (No Reload)
+    // ============================================
     function saveTaskDetails(taskId) {
         const title = document.getElementById('task-title').value;
         const description = document.getElementById('task-description').value;
@@ -357,82 +606,165 @@
         fetch(`/api/tasks/${taskId}/update`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                title: title,
-                description: description,
-                priority: priority
-            })
+            body: JSON.stringify({ title, description, priority })
         })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    // Optional: Show a subtle toast instead of reload, but reload ensures consistency
-                    window.location.reload();
-                } else {
-                    alert('Error: ' + (data.error || 'Failed to update task'));
-                }
-            })
-            .catch(err => alert('Error updating task'));
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                // Update priority badge
+                document.getElementById('priority-value').textContent = priority;
+                // Update page title
+                document.querySelector('h1')?.childNodes[0] && (document.title = `Task: ${title} - Workflow Hub`);
+                showToast('Task details saved');
+                loadActivityLog();
+            } else {
+                showToast(data.error || 'Failed to update task', 'error');
+            }
+        })
+        .catch(err => showToast('Error updating task', 'error'));
     }
 
-    document.getElementById('upload-form').addEventListener('submit', function (e) {
+    // ============================================
+    // Attachment Upload (No Reload)
+    // ============================================
+    document.getElementById('upload-form').addEventListener('submit', function(e) {
         e.preventDefault();
         const fileInput = document.getElementById('file-input');
         if (!fileInput.files.length) {
-            alert('Please select a file');
+            showToast('Please select a file', 'warning');
             return;
         }
 
+        const file = fileInput.files[0];
         const formData = new FormData();
-        formData.append('file', fileInput.files[0]);
+        formData.append('file', file);
 
         fetch(`/api/tasks/{{ task.id }}/attachments/upload`, {
             method: 'POST',
             body: formData
         })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    window.location.reload();
-                } else {
-                    alert('Error: ' + (data.error || 'Failed to upload file'));
-                }
-            })
-            .catch(err => alert('Error uploading file'));
+        .then(r => r.json())
+        .then(data => {
+            if (data.success && data.attachment) {
+                const att = data.attachment;
+                const grid = document.getElementById('attachments-grid');
+                const noMsg = document.getElementById('no-attachments-msg');
+                const countEl = document.getElementById('attachments-count');
+
+                // Create new attachment card
+                const card = document.createElement('div');
+                card.className = 'attachment-card';
+                const isImage = att.attachment_type === 'image';
+                card.innerHTML = `
+                    ${isImage ? `<div class="attachment-preview"><img src="/api/tasks/{{ task.id }}/attachments/${att.id}/download" alt="${att.filename}"></div>` :
+                    `<div class="attachment-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></div>`}
+                    <div class="attachment-info">
+                        <span class="attachment-name">${att.filename}</span>
+                        <span class="attachment-size">${formatFileSize(att.file_size)}</span>
+                    </div>
+                    <a href="/api/tasks/{{ task.id }}/attachments/${att.id}/download" class="btn btn-sm" download>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg> Download
+                    </a>
+                `;
+
+                grid.appendChild(card);
+                grid.style.display = '';
+                noMsg.style.display = 'none';
+                countEl.textContent = parseInt(countEl.textContent) + 1;
+
+                fileInput.value = '';
+                showToast(`Uploaded ${att.filename}`);
+                loadActivityLog();
+            } else {
+                showToast(data.error || 'Failed to upload file', 'error');
+            }
+        })
+        .catch(err => showToast('Error uploading file', 'error'));
     });
 
-    // Proof-of-Work functionality
-    function loadProofs() {
-        fetch(`/api/tasks/{{ task.id }}/proofs`)
-            .then(r => r.json())
-            .then(data => {
-                const container = document.getElementById('proofs-container');
-                if (data.proofs && data.proofs.length > 0) {
-                    let html = '<div class="proofs-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">';
-                    data.proofs.forEach(proof => {
-                        const isImage = proof.filename.match(/\.(png|jpg|jpeg|gif|webp)$/i);
-                        const icon = proof.proof_type === 'screenshot' ? '📸' : proof.proof_type === 'log' ? '📄' : '📋';
-                        html += `
-                            <div class="proof-card" style="background: var(--bg-secondary); border-radius: 8px; padding: 12px; border: 1px solid var(--border);">
-                                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-                                    <span class="badge badge-secondary">${proof.stage || 'N/A'}</span>
-                                    <span style="font-size: 1.2rem;">${icon}</span>
-                                </div>
-                                ${isImage ? `<img src="/api/tasks/{{ task.id }}/proofs/${proof.stage}/${proof.filename}" style="width: 100%; border-radius: 4px; margin-bottom: 8px; cursor: pointer;" onclick="window.open(this.src)">` : ''}
-                                <div style="font-size: 0.8rem; color: var(--text-muted); word-break: break-all;">${proof.filename}</div>
-                                <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">${proof.proof_type} · ${Math.round(proof.size / 1024)}KB</div>
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // Proof-of-Work functionality - loads both task and run proofs
+    async function loadProofs() {
+        const container = document.getElementById('proofs-container');
+        const runId = {{ task.run_id|default:'null' }};
+
+        try {
+            // Fetch task proofs
+            const taskRes = await fetch(`/api/tasks/{{ task.id }}/proofs`);
+            const taskData = await taskRes.json();
+            let allProofs = (taskData.proofs || []).map(p => ({...p, source: 'task'}));
+
+            // Also fetch run proofs if task has an associated run
+            if (runId) {
+                const runRes = await fetch(`/api/runs/${runId}/proofs`);
+                const runData = await runRes.json();
+                const runProofs = (runData.proofs || []).map(p => ({...p, source: 'run', runId: runId}));
+                allProofs = [...allProofs, ...runProofs];
+            }
+
+            if (allProofs.length > 0) {
+                let html = '<div class="proofs-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">';
+                allProofs.forEach((proof, idx) => {
+                    const isImage = proof.filename.match(/\.(png|jpg|jpeg|gif|webp)$/i);
+                    const isViewable = proof.filename.match(/\.(md|txt|log|html|json|xml|csv)$/i);
+                    const icon = proof.proof_type === 'screenshot' ? '📸' : proof.proof_type === 'log' ? '📄' : '📋';
+                    const sourceLabel = proof.source === 'run' ? `<span class="badge badge-info" style="font-size: 0.6rem;">Run #${proof.runId}</span>` : '';
+                    const proofUrl = proof.source === 'run'
+                        ? `/api/runs/${proof.runId}/proofs/${proof.stage}/${proof.filename}`
+                        : `/api/tasks/{{ task.id }}/proofs/${proof.stage}/${proof.filename}`;
+                    html += `
+                        <div class="proof-card"
+                             data-url="${proofUrl.replace(/"/g, '&quot;')}"
+                             data-filename="${proof.filename.replace(/"/g, '&quot;')}"
+                             data-is-image="${!!isImage}"
+                             data-is-viewable="${!!isViewable}"
+                             style="background: var(--bg-secondary); border-radius: 8px; padding: 12px; border: 1px solid var(--border); cursor: pointer; transition: transform 0.1s, box-shadow 0.1s;">
+                            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                                <div><span class="badge badge-secondary">${proof.stage || 'N/A'}</span> ${sourceLabel}</div>
+                                <span style="font-size: 1.2rem;">${icon}</span>
                             </div>
-                        `;
+                            ${isImage ? `<img src="${proofUrl}" style="width: 100%; border-radius: 4px; margin-bottom: 8px;">` : ''}
+                            <div style="font-size: 0.8rem; color: var(--text-muted); word-break: break-all;">${proof.filename}</div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">${proof.proof_type} · ${Math.round(proof.size / 1024)}KB</div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                container.innerHTML = html;
+
+                // Add click handlers via event delegation
+                container.querySelectorAll('.proof-card').forEach(card => {
+                    card.addEventListener('click', () => {
+                        const url = card.dataset.url;
+                        const filename = card.dataset.filename;
+                        const isImage = card.dataset.isImage === 'true';
+                        const isViewable = card.dataset.isViewable === 'true';
+                        openProof(url, filename, isImage, isViewable);
                     });
-                    html += '</div>';
-                    container.innerHTML = html;
-                } else {
-                    container.innerHTML = '<p style="color: var(--text-muted); font-style: italic;">No proofs uploaded yet.</p>';
-                }
-            })
-            .catch(err => {
-                document.getElementById('proofs-container').innerHTML = '<p style="color: var(--text-muted);">Error loading proofs</p>';
-            });
+                    card.addEventListener('mouseover', () => {
+                        card.style.transform = 'translateY(-2px)';
+                        card.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+                    });
+                    card.addEventListener('mouseout', () => {
+                        card.style.transform = '';
+                        card.style.boxShadow = '';
+                    });
+                });
+            } else {
+                container.innerHTML = '<p style="color: var(--text-muted); font-style: italic;">No proofs uploaded yet.</p>';
+            }
+        } catch(err) {
+            container.innerHTML = '<p style="color: var(--text-muted);">Error loading proofs</p>';
+        }
     }
 
     document.getElementById('proof-upload-form').addEventListener('submit', function (e) {
@@ -466,5 +798,121 @@
 
     // Load proofs on page load
     loadProofs();
+
+    // Activity Log
+    function loadActivityLog() {
+        fetch(`/api/audit?entity_type=task&entity_id={{ task.id }}&limit=20`)
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('activity-log-container');
+                if (data.events && data.events.length > 0) {
+                    let html = '<div class="activity-list" style="font-size: 0.85rem;">';
+                    data.events.forEach(event => {
+                        const date = new Date(event.timestamp).toLocaleString();
+                        const actionIcon = {
+                            'create': '➕', 'update': '✏️', 'delete': '🗑️',
+                            'status_change': '🔄', 'stage_change': '📋', 'trigger': '▶️'
+                        }[event.action] || '•';
+                        html += `
+                            <div style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+                                <span style="margin-right: 8px;">${actionIcon}</span>
+                                <strong>${event.action}</strong>
+                                <span style="color: var(--text-muted);"> by ${event.actor || 'system'}</span>
+                                <span style="float: right; color: var(--text-muted); font-size: 0.75rem;">${date}</span>
+                                ${event.details ? `<div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 4px;">${JSON.stringify(event.details)}</div>` : ''}
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = '<p style="color: var(--text-muted); font-style: italic;">No activity recorded yet.</p>';
+                }
+            })
+            .catch(err => {
+                document.getElementById('activity-log-container').innerHTML = '<p style="color: var(--text-muted);">Error loading activity</p>';
+            });
+    }
+    loadActivityLog();
+
+    // Handoff History
+    function loadHandoffHistory() {
+        const taskId = {{ task.id }};
+        fetch(`/api/tasks/${taskId}/handoff/history`)
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('handoff-history-container');
+                const countBadge = document.getElementById('handoff-count');
+
+                if (data.handoffs && data.handoffs.length > 0) {
+                    countBadge.textContent = data.handoffs.length;
+
+                    let html = '<div class="handoff-timeline">';
+                    data.handoffs.forEach(h => {
+                        const created = new Date(h.created_at).toLocaleString();
+                        const completed = h.completed_at ? new Date(h.completed_at).toLocaleString() : null;
+
+                        // Status badge styling
+                        let statusClass = 'badge-secondary';
+                        let statusIcon = '';
+                        if (h.status === 'completed') {
+                            statusClass = h.report_status === 'pass' ? 'badge-success' : 'badge-danger';
+                            statusIcon = h.report_status === 'pass' ? '✓' : '✗';
+                        } else if (h.status === 'in_progress') {
+                            statusClass = 'badge-warning';
+                            statusIcon = '⟳';
+                        } else if (h.status === 'pending') {
+                            statusClass = 'badge-info';
+                            statusIcon = '○';
+                        } else if (h.status === 'failed') {
+                            statusClass = 'badge-danger';
+                            statusIcon = '!';
+                        }
+
+                        html += `
+                            <div class="handoff-item" style="padding: 12px; margin-bottom: 8px; background: var(--bg-secondary); border-radius: 8px; border-left: 4px solid ${h.report_status === 'pass' ? 'var(--success)' : h.report_status === 'fail' ? 'var(--danger)' : 'var(--border)'};">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <div>
+                                        <span class="badge ${statusClass}">${statusIcon} ${h.status.toUpperCase()}</span>
+                                        <span style="margin-left: 8px; font-weight: bold; text-transform: uppercase;">${h.to_role}</span>
+                                        <span style="color: var(--text-muted); margin-left: 4px;">→ ${h.stage}</span>
+                                        ${h.from_role ? `<span style="color: var(--text-muted); font-size: 0.8rem; margin-left: 8px;">(from: ${h.from_role})</span>` : ''}
+                                    </div>
+                                    <span style="color: var(--text-muted); font-size: 0.8rem;">${created}</span>
+                                </div>
+                                ${h.report_summary ? `
+                                    <div style="margin-top: 8px; padding: 8px; background: var(--bg-primary); border-radius: 4px; font-size: 0.9rem;">
+                                        <strong>${h.report_status === 'pass' ? 'Passed: ' : 'Failed: '}</strong>${h.report_summary}
+                                    </div>
+                                ` : ''}
+                                ${completed ? `
+                                    <div style="margin-top: 4px; color: var(--text-muted); font-size: 0.75rem;">
+                                        Completed: ${completed}
+                                    </div>
+                                ` : ''}
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    container.innerHTML = html;
+                } else {
+                    countBadge.textContent = '0';
+                    container.innerHTML = '<p style="color: var(--text-muted); font-style: italic;">No handoffs yet. Start the pipeline to create handoffs.</p>';
+                }
+            })
+            .catch(err => {
+                console.error('Error loading handoff history:', err);
+                document.getElementById('handoff-history-container').innerHTML = '<p style="color: var(--text-muted);">Error loading handoff history</p>';
+            });
+    }
+    loadHandoffHistory();
+
+    // Disable auto-refresh for task detail page (we have live updates)
+    if (window.pauseAutoRefresh) {
+        window.pauseAutoRefresh();
+        // Hide the refresh indicator
+        const indicator = document.getElementById('refresh-indicator');
+        if (indicator) indicator.style.display = 'none';
+    }
 </script>
 {% endblock %}

@@ -1,6 +1,143 @@
 # Handoff
 
-## Current Session Summary (2025-12-26 - Session 8)
+## Current Session Summary (2025-12-31 - Session 11)
+
+### GOOSE + VISION LLM INTEGRATION - IMPLEMENTED
+
+Fixed Goose agent execution and added multimodal vision support for screenshot analysis.
+
+**Key Fixes & Features:**
+
+1. **Fixed Goose Command Syntax** (`scripts/agent_runner.py`)
+   - Changed from `goose session start/resume` to `goose run -n <name> -t <prompt>`
+   - Fixed Project attribute names (git_url→repository_url, branch→primary_branch, etc.)
+   - Added task_id to format variables for prompt templates
+
+2. **Vision LLM Service** (`app/services/llm_service.py`)
+   - `get_image_description(image_path)` - Analyze images with Qwen3-VL
+   - `enrich_text_with_image_descriptions(text)` - Auto-find image paths and append descriptions
+   - Caching system in `.cache/image_descriptions/` (keyed by path + mtime)
+   - Prompts for error messages, all visible text, UI elements
+
+3. **Director Settings for Images** (`app/views/api.py`)
+   - Added `include_images` setting (bool) - Enable/disable image enrichment
+   - Added `vision_model` setting (string) - Model to use (default: ai/qwen3-vl)
+   - Settings persist in `_director_settings` dict
+
+4. **Handoff Integration** (`app/services/handoff_service.py`)
+   - `get_handoff_for_prompt()` now accepts `include_images` parameter
+   - When enabled, auto-enriches context with image descriptions from referenced paths
+   - Checks director settings if not explicitly passed
+
+5. **Models Downloaded**
+   - `ai/qwen3-vl` (8.19B) - Accurate vision model for screenshots
+   - `ai/gemma3` (3.88B) - Has vision but hallucinates significantly
+
+### Files Modified/Created
+| File | Change |
+|------|--------|
+| `scripts/agent_runner.py` | Fixed Goose commands, Project attributes, task_id |
+| `app/services/llm_service.py` | Added vision service functions |
+| `app/services/handoff_service.py` | Added image enrichment to handoff |
+| `app/views/api.py` | Added include_images/vision_model settings |
+| `.gitignore` | Added .cache/ |
+
+### Test Vision Service
+```bash
+# Enable images in director settings
+curl -X POST http://localhost:8000/api/director/settings \
+  -H "Content-Type: application/json" \
+  -d '{"include_images": true}'
+
+# Test image description
+python -c "
+from app.services.llm_service import get_image_description
+desc = get_image_description('/path/to/screenshot.png')
+print(desc)
+"
+
+# Test text enrichment
+python -c "
+from app.services.llm_service import enrich_text_with_image_descriptions
+text = 'Review /path/to/image.png'
+print(enrich_text_with_image_descriptions(text))
+"
+```
+
+### Pipeline Run Successful
+- Task 633 ran through full pipeline: DEV → QA → SEC → DOCS → READY_FOR_COMMIT
+- Run 683 completed successfully
+- Bug task 667 created for drag-drop file upload feature
+
+### TODO / What's Left
+1. **LLM Session Persistence** - The `set_state` API doesn't persist (needs investigation)
+2. **Goose Session Management** - Consider using task-based sessions instead of run-based
+3. **Image Processing in Agent Prompts** - Currently only enriches handoff, not the full agent prompt
+4. **Multimodal Model Auth** - Llama 3.2 Vision, LLaVA require Docker Hub auth
+
+---
+
+## Previous Session Summary (2025-12-30 - Session 10)
+
+### PROOF-OF-WORK DATABASE TRACKING - IMPLEMENTED
+
+Implemented hybrid proof storage: files in filesystem + metadata in database. This enables agents to query proof history for task context and memory.
+
+**Key Features:**
+1. **Proof Model** (`app/models/proof.py`)
+   - Task-centric design (task_id is required, run_id is optional context)
+   - ProofType enum: screenshot, log, report, test_result, code_diff, other
+   - `to_dict()` for API responses
+   - `to_agent_context()` for compact agent memory format
+
+2. **API Endpoints**
+   - `GET /api/tasks/{id}/proof-history` - All proofs for a task across all runs
+   - `GET /api/projects/{id}/proof-history` - Project-wide proof history
+   - `GET /api/tasks/{id}/proofs/{proof_id}/download` - Download by DB id
+
+3. **Proof Upload Integration**
+   - `proof_upload()` now saves metadata to database
+   - Existing filesystem storage unchanged
+   - Both agent and human uploads tracked
+
+4. **Backfill Script** (`scripts/backfill_proofs.py`)
+   - Migrates existing filesystem proofs to database
+   - Handles both task-level and run-level proofs
+   - Run with: `source .env && python scripts/backfill_proofs.py`
+
+### Files Modified/Created
+| File | Change |
+|------|--------|
+| `app/models/proof.py` | New model with ProofType enum |
+| `app/models/__init__.py` | Export Proof, ProofType |
+| `app/views/api.py` | Added proof history endpoints, download endpoint |
+| `app/urls.py` | Added routes for new endpoints |
+| `alembic/versions/d2657c9e4cb3_add_proofs_table.py` | Migration |
+| `scripts/backfill_proofs.py` | Backfill script |
+| `todo.json` | Added WH-030, WH-031, WH-032 |
+
+### New TODO Items Added
+| ID | Task | Priority |
+|----|------|----------|
+| WH-030 | AJAX-based component refresh (no full page reloads) | 2 |
+| WH-031 | Proof-of-work database tracking with task history API | 1 (done) |
+| WH-032 | Simple completion tool for agents (bypass Goose) | 3 |
+
+### Test the Proof History API
+```bash
+# Get all proofs for a task
+curl http://localhost:8000/api/tasks/666/proof-history
+
+# Get project-wide proofs
+curl http://localhost:8000/api/projects/730/proof-history
+
+# Download a proof by ID
+curl http://localhost:8000/api/tasks/666/proofs/4/download
+```
+
+---
+
+## Previous Session Summary (2025-12-26 - Session 8)
 
 ### DIRECTOR & ROLE CONFIG ARCHITECTURE - DESIGNED
 

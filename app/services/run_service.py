@@ -1,6 +1,7 @@
 """Run state machine and gate enforcement service."""
 import os
 import subprocess
+from datetime import datetime
 from typing import Optional, Tuple, List
 from app.models.run import Run, RunState, VALID_TRANSITIONS
 from app.models.project import Project
@@ -795,6 +796,7 @@ secrets.yaml
 
             # Only advance if behind target
             if current_index < target_index:
+                old_stage = task.pipeline_stage
                 task.pipeline_stage = target_stage
 
                 # Update task status
@@ -807,10 +809,63 @@ secrets.yaml
 
                 updated += 1
 
+                # Create handoff for the new stage (if not COMPLETE)
+                if target_stage != TaskPipelineStage.COMPLETE:
+                    self._create_task_handoff(
+                        task=task,
+                        run=run,
+                        to_role=self._stage_to_role(target_stage),
+                        from_role=self._stage_to_role(old_stage) if old_stage else None
+                    )
+
         if updated > 0:
             self.db.commit()
 
         return updated
+
+    def _stage_to_role(self, stage: TaskPipelineStage) -> Optional[str]:
+        """Map pipeline stage to agent role."""
+        stage_to_role = {
+            TaskPipelineStage.DEV: "dev",
+            TaskPipelineStage.QA: "qa",
+            TaskPipelineStage.SEC: "security",
+            TaskPipelineStage.DOCS: "docs",
+        }
+        return stage_to_role.get(stage)
+
+    def _create_task_handoff(
+        self,
+        task: Task,
+        run: Run,
+        to_role: str,
+        from_role: str = None
+    ) -> None:
+        """Create a handoff for a task when it advances to a new stage.
+
+        Uses handoff_service to build context and persist to DB.
+        """
+        if not to_role:
+            return
+
+        try:
+            from app.services import handoff_service
+
+            stage = task.pipeline_stage.value.lower() if task.pipeline_stage else to_role
+
+            handoff_service.create_handoff(
+                db=self.db,
+                task_id=task.id,
+                to_role=to_role,
+                stage=stage,
+                project_id=task.project_id,
+                run_id=run.id if run else None,
+                from_role=from_role,
+                created_by="state_machine",
+                write_file=True
+            )
+        except Exception as e:
+            # Log but don't fail the state transition
+            print(f"Warning: Could not create handoff for task {task.id}: {e}")
 
     def get_task_progress(self, run_id: int) -> dict:
         """Get task pipeline progress summary for a run.
