@@ -268,10 +268,32 @@
             </div>
         </div>
 
+        <!-- PM -->
+        <div class="kanban-column pm">
+            <div class="kanban-column-header">
+                <span class="kanban-column-title">PM</span>
+                <span class="kanban-column-count">{{ task_kanban.pm|length }}</span>
+            </div>
+            <div class="kanban-column-body">
+                {% for task in task_kanban.pm %}
+                <div class="kanban-card task-card" data-priority="{{ task.priority }}">
+                    <div class="kanban-card-header-row">
+                        <div class="kanban-card-title"><a href="/ui/task/{{ task.id }}/">{{ task.title }}</a></div>
+                    </div>
+                    <div class="kanban-card-meta">
+                        {{ task.project_name }} • <span class="badge {% if task.priority >= 8 %}badge-danger{% elif task.priority >= 5 %}badge-warning{% elif task.priority >= 3 %}badge-info{% else %}badge-secondary{% endif %}">{% if task.priority >= 8 %}Critical{% elif task.priority >= 5 %}High{% elif task.priority >= 3 %}Medium{% else %}Low{% endif %}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="kanban-empty">No items</div>
+                {% endfor %}
+            </div>
+        </div>
+
         <!-- Dev -->
         <div class="kanban-column dev">
             <div class="kanban-column-header">
-                <span class="kanban-column-title">Dev</span>
+                <span class="kanban-column-title">DEV</span>
                 <span class="kanban-column-count">{{ task_kanban.dev|length }}</span>
             </div>
             <div class="kanban-column-body">

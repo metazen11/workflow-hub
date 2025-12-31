@@ -133,14 +133,10 @@ def dashboard(request):
             p.run_count = db.query(Run).filter(Run.project_id == p.id).count()
 
         # Active Tasks - Group by Pipeline Stage for Kanban
-        task_kanban = {
-            'backlog': [],
-            'dev': [],
-            'qa': [],
-            'sec': [],
-            'docs': [],
-            'complete': []
-        }
+        # Build dict dynamically from TaskPipelineStage enum
+        task_kanban = {stage.value.lower(): [] for stage in TaskPipelineStage}
+        # Rename 'none' to 'backlog' for UI clarity
+        task_kanban['backlog'] = task_kanban.pop('none', [])
         
         # Fetch all non-archived tasks
         all_active_tasks = db.query(Task).filter(
