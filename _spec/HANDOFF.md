@@ -68,9 +68,10 @@ Fixed Goose agent execution and added multimodal vision support for screenshot a
    - When enabled, auto-enriches context with image descriptions from referenced paths
    - Checks director settings if not explicitly passed
 
-5. **Models Downloaded**
-   - `ai/qwen3-vl` (8.19B) - Accurate vision model for screenshots
-   - `ai/gemma3` (3.88B) - Has vision but hallucinates significantly
+5. **Models in Use**
+   - `ai/qwen3-coder:latest` - Default model for all agent code generation
+   - `ai/qwen3-vl` - Vision model for screenshot/image analysis
+   - `ai/gemma3` - Alternative (has vision but may hallucinate)
 
 ### Files Modified/Created
 | File | Change |

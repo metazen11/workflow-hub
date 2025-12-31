@@ -42,6 +42,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+### First-Time Setup
+```bash
+./scripts/install.sh  # Full installation (venv, deps, DB, models)
+```
+
 ### Quick Start (ALWAYS use this)
 ```bash
 # Start everything (order matters!)

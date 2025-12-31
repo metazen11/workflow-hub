@@ -16,15 +16,50 @@ A local-first web app for managing agentic software development cycles with expl
 ## Prerequisites
 
 - **Python 3.9+**
-- **PostgreSQL 14+** (via Docker or native)
-- **Ollama** (optional, for local LLM agents)
+- **Docker Desktop** (for PostgreSQL and LLM models)
+- **Goose CLI** (optional, for agent execution)
 
-## Installation
+## Quick Installation
+
+The fastest way to get started:
+
+```bash
+git clone https://github.com/metazen11/workflow-hub.git
+cd workflow-hub
+./scripts/install.sh
+```
+
+This script will:
+1. Check prerequisites (Python, Docker)
+2. Create Python virtual environment
+3. Install dependencies
+4. Configure environment (.env)
+5. Start PostgreSQL via Docker
+6. Run database migrations
+7. Seed agent role configurations
+8. Pull LLM models (qwen3-coder, qwen3-vl)
+
+**Options:**
+```bash
+./scripts/install.sh --skip-models   # Skip LLM model download
+./scripts/install.sh --skip-docker   # Skip Docker service startup
+```
+
+After installation:
+```bash
+source venv/bin/activate
+source .env
+python manage.py runserver 0.0.0.0:8000
+```
+
+Then open: http://localhost:8000/ui/
+
+## Manual Installation
 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/workflow-hub.git
+git clone https://github.com/metazen11/workflow-hub.git
 cd workflow-hub
 ```
 
@@ -66,16 +101,31 @@ python -c "from django.core.management.utils import get_random_secret_key; print
 
 ```bash
 source venv/bin/activate
+source .env
 alembic upgrade head
 ```
 
-### 6. Start the Server
+### 6. Seed Role Configurations
+
+```bash
+python scripts/seed_role_configs.py
+```
+
+### 7. Pull LLM Models (Optional)
+
+For agent execution via Docker Model Runner:
+```bash
+docker model pull ai/qwen3-coder    # Code generation
+docker model pull ai/qwen3-vl       # Vision/screenshots
+```
+
+### 8. Start the Server
 
 ```bash
 python manage.py runserver 0.0.0.0:8000
 ```
 
-### 7. Open the Dashboard
+### 9. Open the Dashboard
 
 Navigate to http://localhost:8000/ui/
 
@@ -334,8 +384,9 @@ docker/              # Docker compose files
 | `WORKFLOW_HUB_URL` | Hub URL for agents | `http://localhost:8000` |
 | `WORKFLOW_MAX_ITER` | Max retry iterations | `3` |
 | `GOOSE_PROVIDER` | LLM provider (ollama) | `ollama` |
-| `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Model to use | `qwen2.5-coder:14b` |
+| `OLLAMA_HOST` | Ollama/Docker Model Runner URL | `http://localhost:12434` |
+| `GOOSE_MODEL` | Model for agent code generation | `ai/qwen3-coder:latest` |
+| `VISION_MODEL` | Model for screenshot analysis | `ai/qwen3-vl` |
 
 ## License
 

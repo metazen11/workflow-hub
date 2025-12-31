@@ -38,17 +38,28 @@ Update your `.env` file to point to the Dockerized Ollama instance:
 # Agent Configuration
 AGENT_PROVIDER=goose
 GOOSE_PROVIDER=ollama
-GOOSE_MODEL=qwen2.5-coder:14b
+GOOSE_MODEL=ai/qwen3-coder:latest
 OLLAMA_HOST=http://localhost:11434
+
+# Vision Model (for screenshot analysis)
+VISION_MODEL=ai/qwen3-vl
 ```
 
-## 3. Pull the Model
+## 3. Pull the Models
 
-Start the Ollama container and pull your desired model (e.g., qwen2.5-coder).
+Start the Ollama container and pull the required models:
 
 ```bash
 docker compose up -d ollama
-docker exec -it wfhub-ollama ollama run qwen2.5-coder:14b "Hello"
+
+# Pull coding model (default for agents)
+docker exec -it wfhub-ollama ollama pull qwen3-coder:latest
+
+# Pull vision model (for screenshot analysis)
+docker exec -it wfhub-ollama ollama pull qwen3-vl
+
+# Test the model
+docker exec -it wfhub-ollama ollama run qwen3-coder:latest "Hello"
 ```
 
 ## 4. Configuring Goose
@@ -61,7 +72,7 @@ providers:
   my_ollama:
     type: ollama
     host: http://localhost:11434
-    model: qwen2.5-coder:14b
+    model: qwen3-coder:latest
 ```
 
 ## 5. Running Agents

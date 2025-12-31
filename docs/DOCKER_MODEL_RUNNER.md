@@ -252,13 +252,27 @@ Provide specific, actionable feedback."""
 
 ## Recommended Models
 
+### Current Production Models (Workflow Hub)
+
+| Model | Use Case | Pull Command | Notes |
+|-------|----------|--------------|-------|
+| **qwen3-coder-latest** | Code generation, tool calling | `docker model pull ai/qwen3-coder` | Default for all agents |
+| **qwen3-vl** | Vision/screenshots | `docker model pull ai/qwen3-vl` | Screenshot analysis, UI verification |
+
 ### For Coding Tasks (with Tool Calling)
 
 | Model | Size | Pull Command | Notes |
 |-------|------|--------------|-------|
-| Qwen3 (8B) | ~5GB | `docker model pull ai/qwen3-coder` | Best tool calling support |
+| Qwen3-Coder | ~5GB | `docker model pull ai/qwen3-coder` | **Default** - Best tool calling support |
 | Qwen3 (14B) | ~9GB | `docker model pull hf.co/bartowski/Qwen3-14B-Instruct-GGUF:Q4_K_M` | Higher quality |
 | Phi4 | ~8GB | `docker model pull ai/phi4` | Good balance |
+
+### For Vision/Multimodal Tasks
+
+| Model | Size | Pull Command | Notes |
+|-------|------|--------------|-------|
+| **Qwen3-VL** | ~8GB | `docker model pull ai/qwen3-vl` | **Default** - Best accuracy for screenshots |
+| Gemma3 | ~4GB | `docker model pull ai/gemma3` | Has vision but may hallucinate |
 
 ### For General Tasks (Documentation, Summaries)
 
@@ -346,6 +360,24 @@ GOOSE_MODEL: ai/qwen3-coder:latest
 ```
 
 Both Goose and direct API calls use the same Docker Model Runner backend and model.
+
+### Vision Model Configuration
+
+The vision model is configured in `.env` or via Director settings:
+```bash
+# Environment variable
+VISION_MODEL=ai/qwen3-vl
+
+# Or via API
+curl -X POST http://localhost:8000/api/director/settings \
+  -H "Content-Type: application/json" \
+  -d '{"include_images": true, "vision_model": "ai/qwen3-vl"}'
+```
+
+Vision capabilities are used for:
+- Screenshot analysis during QA/testing stages
+- UI verification and error detection
+- Enriching handoff context with image descriptions
 
 ---
 

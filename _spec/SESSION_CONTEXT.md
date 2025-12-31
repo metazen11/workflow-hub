@@ -27,8 +27,12 @@ Build a **simple kanban-style todo app** using the Workflow Hub to demonstrate e
 ## What's Running
 - Workflow Hub: http://localhost:8000/ui/
 - PostgreSQL: localhost:5432 (Docker)
-- Ollama: http://localhost:11434 (local LLM)
+- Docker Model Runner: http://localhost:12434 (local LLM API)
 - Goose: `/opt/homebrew/bin/goose`
+
+## LLM Models
+- **Code Generation**: `ai/qwen3-coder:latest` (default for all agents)
+- **Vision/Screenshots**: `ai/qwen3-vl` (image analysis, UI verification)
 
 ## Current Pipeline
 ```
