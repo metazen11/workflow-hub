@@ -322,7 +322,7 @@
     {
       "id": "WH-021",
       "title": "Role Config seeding and environment setup",
-      "status": "in_progress",
+      "status": "done",
       "priority": 1,
       "description": "Ensure role configurations (agent prompts) are seeded to DB during new environment setup. Reconcile coding_principles with seed script.",
       "acceptance_criteria": [
@@ -332,7 +332,8 @@
         "All 7 roles seeded: director, pm, dev, qa, security, docs, cicd",
         "coding_principles referenced in seed prompts"
       ],
-      "created": "2025-12-27"
+      "created": "2025-12-27",
+      "completed": "2025-12-31"
     },
     {
       "id": "WH-022",
@@ -457,6 +458,91 @@
       ],
       "created": "2025-12-27",
       "notes": "Inspired by ajaxCRUD PHP library - create Python equivalent for Django"
+    },
+    {
+      "id": "WH-030",
+      "title": "AJAX-based component refresh (no full page reloads)",
+      "status": "pending",
+      "priority": 2,
+      "description": "Each UI component should refresh individually via AJAX instead of full page reloads. Disable auto-refresh globally and implement targeted data fetching.",
+      "acceptance_criteria": [
+        "Disable auto-refresh on all views by default",
+        "Task status changes update badge in-place",
+        "Run state changes update status indicator only",
+        "Proof-of-work sections load/reload independently",
+        "Activity logs append new entries without refresh",
+        "Agent run status polls and updates specific elements",
+        "No full page reloads except navigation"
+      ],
+      "created": "2025-12-30"
+    },
+    {
+      "id": "WH-031",
+      "title": "Proof-of-work database tracking with task history API",
+      "status": "done",
+      "priority": 1,
+      "description": "Hybrid proof storage: files in filesystem + metadata in database. Proofs linked to tasks (not just runs) for agent memory. API provides task/project proof history.",
+      "acceptance_criteria": [
+        "Proof model with task_id as primary key",
+        "run_id optional for context",
+        "Upload saves metadata to DB",
+        "GET /api/tasks/{id}/proof-history returns all proofs for task",
+        "GET /api/projects/{id}/proof-history returns project-wide proofs",
+        "Backfill existing filesystem proofs to DB",
+        "Agent-friendly compact response format (to_agent_context)"
+      ],
+      "created": "2025-12-30",
+      "completed": "2025-12-31"
+    },
+    {
+      "id": "WH-032",
+      "title": "Simple completion tool for agents (bypass Goose)",
+      "status": "pending",
+      "priority": 3,
+      "description": "For simple tasks (docs enrichment, wizards, questions), agents should have a lightweight tool to get completions directly without invoking full Goose agent. Useful when agent needs feedback or has to ask a question.",
+      "acceptance_criteria": [
+        "MCP tool for simple LLM completions",
+        "Agent can call for quick answers/feedback",
+        "Does not spawn full agent process",
+        "Configurable model (haiku for simple, sonnet for complex)",
+        "Used for docs enrichment, wizard steps, clarification",
+        "Reduces latency and cost for simple operations"
+      ],
+      "created": "2025-12-30",
+      "notes": "Consider using Claude API directly or lightweight SDK call"
+    },
+    {
+      "id": "WH-033",
+      "title": "API-based Handoff system with DB tracking",
+      "status": "done",
+      "priority": 1,
+      "description": "Handoffs stored in database with full lifecycle tracking. Task-centric design allows tasks to progress independently through pipeline stages.",
+      "acceptance_criteria": [
+        "Handoff model with task_id as primary key",
+        "HandoffStatus enum: pending, in_progress, completed, failed, skipped",
+        "API endpoints: GET/POST handoff, accept, complete, fail, history",
+        "agent_runner.py integrated with handoff API",
+        "run_service creates handoffs on advance",
+        "UI shows handoff history in task detail page"
+      ],
+      "created": "2025-12-31",
+      "completed": "2025-12-31"
+    },
+    {
+      "id": "WH-034",
+      "title": "Vision LLM service for screenshot analysis",
+      "status": "done",
+      "priority": 2,
+      "description": "Service to analyze screenshots using multimodal vision models. Caching system avoids redundant API calls.",
+      "acceptance_criteria": [
+        "get_image_description() with caching",
+        "enrich_text_with_image_descriptions() for handoff context",
+        "Director settings: include_images, vision_model",
+        "Uses Docker Model Runner with qwen3-vl via base64 API",
+        "Cache in .cache/image_descriptions/ keyed by path+mtime"
+      ],
+      "created": "2025-12-31",
+      "completed": "2025-12-31"
     }
   ]
 }
