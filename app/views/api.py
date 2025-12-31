@@ -492,7 +492,23 @@ def tasks_list(request, project_id):
 @csrf_exempt
 @require_http_methods(["POST"])
 def task_create(request, project_id):
-    """Create a task for a project."""
+    """Create a task for a project.
+
+    Supports full task creation including pipeline_stage.
+    Auto-parses screenshot/image file paths from description and attaches them.
+
+    Body:
+        title (required): Task title
+        description: Task description (may contain file paths like /path/to/image.png)
+        priority: 1-10 (default 5)
+        pipeline_stage: none|pm|dev|qa|sec|docs|complete (default none)
+        blocked_by: List of blocking task IDs
+        acceptance_criteria: List of criteria strings
+        run_id: Associate with a run
+        auto_attach: If true, parse description for file paths and attach (default true)
+    """
+    import os
+    import re
     data = _get_json_body(request)
     if not data:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
@@ -510,6 +526,17 @@ def task_create(request, project_id):
             max_task = db.query(Task).filter(Task.project_id == project_id).count()
             task_id = f"T{max_task + 1:03d}"
 
+        # Parse pipeline_stage if provided
+        pipeline_stage = None
+        stage_str = data.get("pipeline_stage", data.get("stage"))
+        if stage_str:
+            stage_map = TaskPipelineStage.get_stage_map()
+            if stage_str.lower() in stage_map:
+                pipeline_stage = stage_map[stage_str.lower()]
+            # Accept 'backlog' as alias for 'none'
+            elif stage_str.lower() == 'backlog':
+                pipeline_stage = TaskPipelineStage.NONE
+
         task = Task(
             project_id=project_id,
             task_id=task_id,
@@ -519,13 +546,88 @@ def task_create(request, project_id):
             blocked_by=data.get("blocked_by", []),
             acceptance_criteria=data.get("acceptance_criteria", []),
             run_id=data.get("run_id"),
-            status=TaskStatus.BACKLOG
+            status=TaskStatus.BACKLOG,
+            pipeline_stage=pipeline_stage
         )
         db.add(task)
         db.commit()
         db.refresh(task)
+
+        # Auto-attach files referenced in description
+        attached_files = []
+        auto_attach = data.get("auto_attach", True)
+        description = data.get("description", "")
+
+        if auto_attach and description:
+            # Parse file paths from description - match paths like /path/to/file.png or ./file.png
+            # Supports: absolute paths, relative paths, and screenshot/image extensions
+            file_pattern = r'(?:^|\s)([/.][\w/.-]+\.(?:png|jpg|jpeg|gif|webp|pdf|txt|md|log))\b'
+            potential_files = re.findall(file_pattern, description, re.IGNORECASE)
+
+            for file_path in potential_files:
+                # Expand relative paths
+                if file_path.startswith('./') or not file_path.startswith('/'):
+                    # Try relative to project repo_path if available
+                    project = db.query(Project).filter(Project.id == project_id).first()
+                    if project and project.repo_path:
+                        full_path = os.path.join(project.repo_path, file_path)
+                    else:
+                        full_path = os.path.abspath(file_path)
+                else:
+                    full_path = file_path
+
+                # Check if file exists and try to attach it
+                if os.path.isfile(full_path):
+                    try:
+                        from app.models.attachment import TaskAttachment, validate_file_security
+                        import uuid
+
+                        with open(full_path, 'rb') as f:
+                            content = f.read()
+
+                        filename = os.path.basename(full_path)
+                        validation = validate_file_security(content, filename)
+
+                        # Create stored filename with UUID
+                        stored_filename = f"{uuid.uuid4().hex}_{filename}"
+
+                        # Ensure uploads directory exists
+                        upload_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads', 'tasks', str(task.id))
+                        os.makedirs(upload_dir, exist_ok=True)
+
+                        # Save file
+                        storage_path = os.path.join('tasks', str(task.id), stored_filename)
+                        full_storage_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads', storage_path)
+                        with open(full_storage_path, 'wb') as f:
+                            f.write(content)
+
+                        # Create attachment record
+                        attachment = TaskAttachment(
+                            task_id=task.id,
+                            filename=filename,
+                            stored_filename=stored_filename,
+                            mime_type=validation['mime_type'],
+                            attachment_type=validation['attachment_type'],
+                            size=validation['size'],
+                            checksum=TaskAttachment.compute_checksum(content),
+                            storage_path=storage_path,
+                            uploaded_by='auto'
+                        )
+                        db.add(attachment)
+                        attached_files.append(filename)
+                    except Exception as e:
+                        # Log but don't fail task creation
+                        print(f"Warning: Could not auto-attach {full_path}: {e}")
+
+            if attached_files:
+                db.commit()
+
         log_event(db, "human", "create", "task", task.id, {"task_id": task.task_id})
-        return JsonResponse({"task": task.to_dict()}, status=201)
+
+        result = {"task": task.to_dict()}
+        if attached_files:
+            result["auto_attached"] = attached_files
+        return JsonResponse(result, status=201)
     finally:
         db.close()
 

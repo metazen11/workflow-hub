@@ -43,6 +43,7 @@ def _get_pipeline_stage_class(stage_value):
     """Map pipeline stage to CSS class."""
     mapping = {
         "none": "secondary",
+        "pm": "primary",
         "dev": "info",
         "qa": "warning",
         "sec": "purple",
@@ -220,6 +221,106 @@ def dashboard(request):
         }
 
         return render(request, 'dashboard.html', context)
+    finally:
+        db.close()
+
+
+def tasks_list(request):
+    """Tasks list view with project filtering and robust task creation."""
+    db = next(get_db())
+    try:
+        # Get query parameters
+        project_id = request.GET.get('project')
+        stage_filter = request.GET.get('stage')
+        status_filter = request.GET.get('status')
+
+        # Get all projects for the filter dropdown
+        projects = db.query(Project).filter(Project.is_active == True).order_by(Project.name).all()
+
+        # Build task query
+        query = db.query(Task)
+
+        if project_id:
+            query = query.filter(Task.project_id == int(project_id))
+
+        if stage_filter and stage_filter != 'all':
+            stage_map = TaskPipelineStage.get_stage_map()
+            stage_key = stage_filter.upper()
+            if stage_key in stage_map:
+                query = query.filter(Task.pipeline_stage == stage_map[stage_key])
+
+        if status_filter and status_filter != 'all':
+            try:
+                query = query.filter(Task.status == TaskStatus(status_filter))
+            except ValueError:
+                pass
+
+        # Order by priority (high first), then by created date
+        tasks = query.order_by(Task.priority.desc(), Task.created_at.desc()).all()
+
+        # Stats
+        all_tasks = db.query(Task).all()
+        stats = {
+            'total': len(all_tasks),
+            'backlog': sum(1 for t in all_tasks if t.status == TaskStatus.BACKLOG),
+            'in_progress': sum(1 for t in all_tasks if t.status == TaskStatus.IN_PROGRESS),
+            'done': sum(1 for t in all_tasks if t.status == TaskStatus.DONE),
+            'blocked': sum(1 for t in all_tasks if t.status == TaskStatus.BLOCKED),
+        }
+
+        # Format tasks for template
+        task_list = [{
+            'id': t.id,
+            'task_id': t.task_id,
+            'title': t.title,
+            'description': t.description[:200] + '...' if t.description and len(t.description) > 200 else t.description,
+            'priority': t.priority,
+            'priority_label': 'High' if t.priority >= 8 else 'Medium' if t.priority >= 4 else 'Low',
+            'priority_class': 'danger' if t.priority >= 8 else 'warning' if t.priority >= 4 else 'success',
+            'status': t.status.value,
+            'status_class': _get_status_class(t.status.value),
+            'pipeline_stage': t.pipeline_stage.value.lower() if t.pipeline_stage else 'none',
+            'pipeline_stage_class': _get_pipeline_stage_class(t.pipeline_stage.value.lower() if t.pipeline_stage else 'none'),
+            'project_id': t.project_id,
+            'project_name': t.project.name if t.project else 'Unknown',
+            'created_at': t.created_at.strftime('%Y-%m-%d %H:%M') if t.created_at else '',
+            'attachment_count': len(t.attachments) if hasattr(t, 'attachments') else 0,
+        } for t in tasks]
+
+        # Get pipeline stages for dropdown
+        pipeline_stages = [
+            {'value': 'none', 'label': 'Backlog'},
+            {'value': 'pm', 'label': 'PM'},
+            {'value': 'dev', 'label': 'DEV'},
+            {'value': 'qa', 'label': 'QA'},
+            {'value': 'sec', 'label': 'SEC'},
+            {'value': 'docs', 'label': 'DOCS'},
+            {'value': 'complete', 'label': 'Complete'},
+        ]
+
+        # Task statuses for dropdown
+        task_statuses = [
+            {'value': 'backlog', 'label': 'Backlog'},
+            {'value': 'in_progress', 'label': 'In Progress'},
+            {'value': 'blocked', 'label': 'Blocked'},
+            {'value': 'done', 'label': 'Done'},
+        ]
+
+        context = {
+            'active_page': 'tasks',
+            'tasks': task_list,
+            'projects': [{'id': p.id, 'name': p.name} for p in projects],
+            'stats': stats,
+            'pipeline_stages': pipeline_stages,
+            'task_statuses': task_statuses,
+            'filters': {
+                'project': project_id,
+                'stage': stage_filter,
+                'status': status_filter,
+            },
+        }
+
+        return render(request, 'tasks.html', context)
     finally:
         db.close()
 

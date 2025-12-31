@@ -1,0 +1,611 @@
+{% extends 'base.html' %}
+
+{% block title %}Tasks - Workflow Hub{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-left">
+        <h1>Tasks</h1>
+        <div class="stats-row">
+            <span class="stat-badge stat-secondary">{{ stats.total }} Total</span>
+            <span class="stat-badge stat-info">{{ stats.backlog }} Backlog</span>
+            <span class="stat-badge stat-warning">{{ stats.in_progress }} In Progress</span>
+            <span class="stat-badge stat-success">{{ stats.done }} Done</span>
+            {% if stats.blocked > 0 %}<span class="stat-badge stat-danger">{{ stats.blocked }} Blocked</span>{% endif %}
+        </div>
+    </div>
+    <div class="page-header-right">
+        <button class="btn btn-primary" onclick="openCreateTaskModal()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            New Task
+        </button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar card">
+    <div class="filter-group">
+        <label>Project</label>
+        <select id="filter-project" class="form-select" onchange="applyFilters()">
+            <option value="">All Projects</option>
+            {% for project in projects %}
+            <option value="{{ project.id }}" {% if filters.project == project.id|stringformat:"s" %}selected{% endif %}>{{ project.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="filter-group">
+        <label>Pipeline Stage</label>
+        <select id="filter-stage" class="form-select" onchange="applyFilters()">
+            <option value="all">All Stages</option>
+            {% for stage in pipeline_stages %}
+            <option value="{{ stage.value }}" {% if filters.stage == stage.value %}selected{% endif %}>{{ stage.label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="filter-group">
+        <label>Status</label>
+        <select id="filter-status" class="form-select" onchange="applyFilters()">
+            <option value="all">All Statuses</option>
+            {% for status in task_statuses %}
+            <option value="{{ status.value }}" {% if filters.status == status.value %}selected{% endif %}>{{ status.label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="clearFilters()">Clear</button>
+</div>
+
+<!-- Tasks Table -->
+<div class="card">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width: 80px;">ID</th>
+                <th>Title</th>
+                <th style="width: 140px;">Project</th>
+                <th style="width: 90px;">Priority</th>
+                <th style="width: 90px;">Stage</th>
+                <th style="width: 100px;">Status</th>
+                <th style="width: 100px;">Created</th>
+                <th style="width: 80px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for task in tasks %}
+            <tr class="task-row" data-task-id="{{ task.id }}">
+                <td><a href="/ui/task/{{ task.id }}/" class="task-link">{{ task.task_id }}</a></td>
+                <td>
+                    <a href="/ui/task/{{ task.id }}/" class="task-title-link">{{ task.title }}</a>
+                    {% if task.attachment_count > 0 %}
+                    <span class="attachment-badge" title="{{ task.attachment_count }} attachments">📎</span>
+                    {% endif %}
+                </td>
+                <td><a href="/ui/project/{{ task.project_id }}/" class="project-link">{{ task.project_name }}</a></td>
+                <td><span class="badge badge-{{ task.priority_class }}">{{ task.priority_label }}</span></td>
+                <td><span class="badge badge-{{ task.pipeline_stage_class }}">{{ task.pipeline_stage|upper }}</span></td>
+                <td><span class="badge badge-{{ task.status_class }}">{{ task.status|upper }}</span></td>
+                <td class="text-muted">{{ task.created_at }}</td>
+                <td>
+                    <div class="action-btns">
+                        <button class="btn-icon" onclick="openEditTaskModal({{ task.id }})" title="Edit">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="8" class="empty-state">
+                    <div class="empty-state-content">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                            <path d="M9 11l3 3L22 4"></path>
+                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                        </svg>
+                        <p>No tasks found</p>
+                        <button class="btn btn-primary" onclick="openCreateTaskModal()">Create your first task</button>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Create/Edit Task Modal -->
+<div id="task-create-modal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+            <h3 id="task-modal-title">Create Task</h3>
+            <button class="modal-close" onclick="closeCreateTaskModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-task-id">
+
+            <div class="form-row">
+                <div class="form-group" style="flex: 2;">
+                    <label>Project <span class="required">*</span></label>
+                    <select id="task-project" class="form-select" required>
+                        <option value="">Select a project...</option>
+                        {% for project in projects %}
+                        <option value="{{ project.id }}">{{ project.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Task ID</label>
+                    <input type="text" id="task-custom-id" class="form-input" placeholder="Auto-generate">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Title <span class="required">*</span></label>
+                <input type="text" id="task-title" class="form-input" placeholder="Brief task title" required>
+            </div>
+
+            <div class="form-group">
+                <label>Description</label>
+                <textarea id="task-description" class="form-textarea" rows="5"
+                    placeholder="Detailed description. Include file paths like /path/to/screenshot.png to auto-attach them."></textarea>
+                <small class="form-hint">Tip: Include paths to screenshots/images (e.g., /path/to/image.png) - they'll be auto-attached!</small>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group" style="flex: 1;">
+                    <label>Priority</label>
+                    <select id="task-priority" class="form-select">
+                        <option value="1">1 - Lowest</option>
+                        <option value="2">2</option>
+                        <option value="3">3 - Low</option>
+                        <option value="4">4</option>
+                        <option value="5" selected>5 - Medium</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8 - High</option>
+                        <option value="9">9</option>
+                        <option value="10">10 - Critical</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Pipeline Stage</label>
+                    <select id="task-stage" class="form-select">
+                        {% for stage in pipeline_stages %}
+                        <option value="{{ stage.value }}">{{ stage.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Status</label>
+                    <select id="task-status" class="form-select">
+                        {% for status in task_statuses %}
+                        <option value="{{ status.value }}">{{ status.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Acceptance Criteria</label>
+                <textarea id="task-criteria" class="form-textarea" rows="3"
+                    placeholder="One criterion per line"></textarea>
+                <small class="form-hint">Enter each acceptance criterion on a new line</small>
+            </div>
+
+            <div class="form-group">
+                <label>Attachments</label>
+                <div id="create-dropzone" class="dropzone-area">
+                    <input type="file" id="task-files" multiple accept="image/*,.pdf,.txt,.md,.json,.log">
+                    <div class="dropzone-prompt">
+                        <span class="dropzone-icon">📎</span>
+                        <span>Drop files here or <u>click to browse</u></span>
+                    </div>
+                    <div id="create-file-previews" class="file-previews"></div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeCreateTaskModal()">Cancel</button>
+            <button class="btn btn-primary" id="task-submit-btn" onclick="submitTask()">Create Task</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 24px;
+}
+.page-header h1 { margin: 0 0 8px 0; }
+.stats-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.stat-badge {
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+.stat-secondary { background: var(--bg-secondary); color: var(--text-muted); }
+.stat-info { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+.stat-warning { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+.stat-success { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+.stat-danger { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+
+.filter-bar {
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.filter-group label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+.filter-group .form-select {
+    min-width: 150px;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.data-table th, .data-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+.data-table th {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+}
+.data-table tbody tr:hover {
+    background: var(--bg-hover);
+}
+.task-link, .task-title-link, .project-link {
+    color: var(--primary);
+    text-decoration: none;
+}
+.task-link:hover, .task-title-link:hover, .project-link:hover {
+    text-decoration: underline;
+}
+.task-title-link {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.attachment-badge {
+    margin-left: 6px;
+    opacity: 0.7;
+}
+.action-btns { display: flex; gap: 4px; }
+.btn-icon {
+    padding: 6px;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-muted);
+}
+.btn-icon:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px !important;
+}
+.empty-state-content svg {
+    color: var(--text-muted);
+    opacity: 0.5;
+    margin-bottom: 16px;
+}
+.empty-state-content p {
+    color: var(--text-muted);
+    margin-bottom: 16px;
+}
+
+/* Modal styles */
+.form-row {
+    display: flex;
+    gap: 16px;
+}
+.form-group {
+    margin-bottom: 16px;
+}
+.form-group label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+.form-group .required {
+    color: var(--danger);
+}
+.form-input, .form-select, .form-textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 14px;
+}
+.form-textarea {
+    resize: vertical;
+    font-family: inherit;
+}
+.form-hint {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 4px;
+    display: block;
+}
+
+/* Dropzone */
+.dropzone-area {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    min-height: 80px;
+}
+.dropzone-area:hover, .dropzone-area.dragover {
+    border-color: var(--primary);
+    background: rgba(79, 70, 229, 0.05);
+}
+.dropzone-area input[type="file"] {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+.dropzone-prompt { color: var(--text-muted); font-size: 14px; }
+.dropzone-icon { font-size: 24px; display: block; margin-bottom: 8px; }
+.file-previews {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    justify-content: center;
+}
+.file-preview {
+    position: relative;
+    width: 60px; height: 60px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+.file-preview img { width: 100%; height: 100%; object-fit: cover; }
+.file-preview .file-icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%; background: var(--bg-secondary); font-size: 24px;
+}
+.file-preview .remove-btn {
+    position: absolute; top: 2px; right: 2px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: rgba(0,0,0,0.6); color: white;
+    border: none; cursor: pointer; font-size: 12px; line-height: 1;
+}
+</style>
+
+<script src="/static/js/task-modal.js"></script>
+<script>
+// Filter handling
+function applyFilters() {
+    const project = document.getElementById('filter-project').value;
+    const stage = document.getElementById('filter-stage').value;
+    const status = document.getElementById('filter-status').value;
+
+    let params = new URLSearchParams();
+    if (project) params.set('project', project);
+    if (stage && stage !== 'all') params.set('stage', stage);
+    if (status && status !== 'all') params.set('status', status);
+
+    window.location.href = '/ui/tasks/?' + params.toString();
+}
+
+function clearFilters() {
+    window.location.href = '/ui/tasks/';
+}
+
+// Modal handling
+let createDropzone = null;
+let editMode = false;
+
+function openCreateTaskModal() {
+    editMode = false;
+    document.getElementById('task-modal-title').textContent = 'Create Task';
+    document.getElementById('task-submit-btn').textContent = 'Create Task';
+    document.getElementById('edit-task-id').value = '';
+
+    // Clear form
+    document.getElementById('task-project').value = '{{ filters.project|default:"" }}';
+    document.getElementById('task-custom-id').value = '';
+    document.getElementById('task-title').value = '';
+    document.getElementById('task-description').value = '';
+    document.getElementById('task-priority').value = '5';
+    document.getElementById('task-stage').value = 'none';
+    document.getElementById('task-status').value = 'backlog';
+    document.getElementById('task-criteria').value = '';
+
+    // Clear file previews
+    if (createDropzone) createDropzone.clear();
+
+    document.getElementById('task-create-modal').style.display = 'flex';
+}
+
+function openEditTaskModal(taskId) {
+    editMode = true;
+    document.getElementById('task-modal-title').textContent = 'Edit Task';
+    document.getElementById('task-submit-btn').textContent = 'Save Changes';
+    document.getElementById('edit-task-id').value = taskId;
+
+    // Fetch task details
+    fetch(`/api/tasks/${taskId}/details`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.task) {
+                const t = data.task;
+                document.getElementById('task-project').value = t.project_id;
+                document.getElementById('task-custom-id').value = t.task_id || '';
+                document.getElementById('task-title').value = t.title || '';
+                document.getElementById('task-description').value = t.description || '';
+                document.getElementById('task-priority').value = t.priority || 5;
+                document.getElementById('task-stage').value = t.pipeline_stage || 'none';
+                document.getElementById('task-status').value = t.status || 'backlog';
+                document.getElementById('task-criteria').value = (t.acceptance_criteria || []).join('\n');
+
+                document.getElementById('task-create-modal').style.display = 'flex';
+            }
+        })
+        .catch(err => {
+            alert('Could not load task details: ' + err.message);
+        });
+}
+
+function closeCreateTaskModal() {
+    document.getElementById('task-create-modal').style.display = 'none';
+}
+
+async function submitTask() {
+    const projectId = document.getElementById('task-project').value;
+    const title = document.getElementById('task-title').value.trim();
+    const description = document.getElementById('task-description').value.trim();
+    const priority = parseInt(document.getElementById('task-priority').value);
+    const stage = document.getElementById('task-stage').value;
+    const status = document.getElementById('task-status').value;
+    const customId = document.getElementById('task-custom-id').value.trim();
+    const criteriaText = document.getElementById('task-criteria').value.trim();
+    const filesInput = document.getElementById('task-files');
+
+    if (!projectId) {
+        alert('Please select a project');
+        return;
+    }
+    if (!title) {
+        alert('Title is required');
+        return;
+    }
+
+    // Parse acceptance criteria (one per line)
+    const criteria = criteriaText ? criteriaText.split('\n').map(s => s.trim()).filter(s => s) : [];
+
+    const taskData = {
+        title,
+        description,
+        priority,
+        pipeline_stage: stage,
+        acceptance_criteria: criteria,
+        auto_attach: true
+    };
+    if (customId) taskData.task_id = customId;
+
+    try {
+        if (editMode) {
+            // Update existing task
+            const taskId = document.getElementById('edit-task-id').value;
+
+            // Update details
+            await fetch(`/api/tasks/${taskId}/update`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, description, priority, acceptance_criteria: criteria })
+            });
+
+            // Update status
+            await fetch(`/api/tasks/${taskId}/status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status })
+            });
+
+            // Update stage
+            await fetch(`/api/tasks/${taskId}/set-stage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stage })
+            });
+
+            // Upload new files if any
+            if (filesInput.files.length > 0) {
+                await uploadTaskFiles(taskId, filesInput.files);
+            }
+        } else {
+            // Create new task
+            const res = await fetch(`/api/projects/${projectId}/tasks/create`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(taskData)
+            });
+            const result = await res.json();
+
+            if (!result.task) {
+                throw new Error(result.error || 'Failed to create task');
+            }
+
+            // Upload files if any (in addition to auto-attached from description)
+            if (filesInput.files.length > 0) {
+                await uploadTaskFiles(result.task.id, filesInput.files);
+            }
+
+            // If status is not backlog, update it
+            if (status !== 'backlog') {
+                await fetch(`/api/tasks/${result.task.id}/status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status })
+                });
+            }
+        }
+
+        closeCreateTaskModal();
+        window.location.reload();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+// File upload helper
+async function uploadTaskFiles(taskId, files) {
+    for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        await fetch(`/api/tasks/${taskId}/attachments/upload`, {
+            method: 'POST',
+            body: formData
+        });
+    }
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize dropzone
+    createDropzone = initDropzone('create-dropzone', 'task-files', 'create-file-previews');
+
+    // Close modal on outside click
+    document.getElementById('task-create-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeCreateTaskModal();
+    });
+
+    // Close on Escape
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeCreateTaskModal();
+    });
+});
+</script>
+{% endblock %}
