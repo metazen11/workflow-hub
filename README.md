@@ -1,17 +1,47 @@
 # Workflow Hub
 
-A local-first web app for managing agentic software development cycles with explicit handoffs, test/security gates, and human approval for deployment.
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
+
+**Open source agentic team workflow** - AI agents collaborate through a Kanban-style pipeline with human-in-the-loop approval gates.
+
+> 🤖 **Multi-agent AI development workflow** where PM, Developer, QA, and Security agents work together autonomously while humans maintain control at critical checkpoints.
+
+---
+
+## Why Workflow Hub?
+
+Modern AI coding assistants are powerful but chaotic. Workflow Hub brings **structure and accountability** to agentic development:
+
+- **Agents work in defined roles** - PM breaks down requirements, DEV implements, QA writes tests, SEC reviews for vulnerabilities
+- **Quality gates prevent bad code** - No deployment without passing tests and security review
+- **Human-in-the-loop** - You approve what gets deployed, not the AI
+- **Full audit trail** - See exactly what each agent did and why
+- **Local-first** - Your code, your LLMs, your control
+
+```
+┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌──────────┐
+│   PM    │ → │   DEV   │ → │   QA    │ → │   SEC   │ → │  DEPLOY  │
+│  Agent  │    │  Agent  │    │  Agent  │    │  Agent  │    │ (Human)  │
+└─────────┘    └─────────┘    └─────────┘    └─────────┘    └──────────┘
+     │              │              │              │              │
+   Specs        Code +         Tests +       Security       Approved
+   Tasks        Impl          Coverage        Scan          Release
+```
 
 ## Features
 
-- **Multi-Agent Pipeline**: PM → DEV → QA → SEC → Deploy with automated handoffs
-- **Project Management**: Full CRUD for projects, tasks, credentials, and environments
-- **Dashboard UI**: Modern responsive interface with light/dark theme support
-- **Credential Storage**: Secure storage for API keys, SSH keys, OAuth tokens, etc.
-- **Environment Management**: Configure dev, staging, production environments
-- **Bug Tracking**: Built-in bug report system with screenshots
-- **Webhook Integration**: n8n-compatible webhooks for external automation
-- **Audit Trail**: Complete logging of all actions
+- **Multi-Agent Pipeline** - PM → DEV → QA → SEC → Deploy with automated handoffs
+- **Kanban Dashboard** - Visual task board showing agent progress through stages
+- **TDD Enforced** - QA agent writes tests first, DEV makes them pass
+- **Security Gates** - Automated vulnerability scanning before deployment
+- **Local LLM Support** - Use Ollama, Docker Model Runner, or cloud APIs
+- **Project Discovery** - Auto-detect tech stack, dependencies, and structure
+- **Credential Vault** - Secure storage for API keys, SSH keys, tokens
+- **Environment Management** - Configure dev, staging, production
+- **Webhook Integration** - n8n-compatible for external automation
+- **Full Audit Trail** - Every action logged and traceable
 
 ## Prerequisites
 
@@ -388,6 +418,25 @@ docker/              # Docker compose files
 | `GOOSE_MODEL` | Model for agent code generation | `ai/qwen3-coder:latest` |
 | `VISION_MODEL` | Model for screenshot analysis | `ai/qwen3-vl` |
 
+## Contributing
+
+We welcome contributions! Please see our [Contributor License Agreement](CLA.md) before submitting a pull request.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Add your name to [CONTRIBUTORS.md](CONTRIBUTORS.md)
+4. Commit your changes (`git commit -m 'Add amazing feature'`)
+5. Push to the branch (`git push origin feature/amazing-feature`)
+6. Open a Pull Request
+
 ## License
 
-MIT
+This project is licensed under the **GNU Affero General Public License v3.0** - see the [LICENSE](LICENSE) file for details.
+
+This means:
+- ✅ You can use, modify, and distribute this software
+- ✅ You can use it commercially
+- ⚠️ If you modify and host it as a service, you must release your source code
+- ⚠️ Derivative works must use the same license
+
+Copyright (c) 2025 Mauricio Zuniga
