@@ -227,6 +227,15 @@ if [ "$SKIP_MODELS" = false ]; then
         docker model pull ai/qwen3-vl 2>/dev/null && \
             echo -e "  ${GREEN}✓${NC} Pulled ai/qwen3-vl" || \
             echo -e "  ${YELLOW}!${NC} Could not pull ai/qwen3-vl (pull manually)"
+
+        # Configure context sizes for large prompts
+        echo -e "  Configuring model context sizes..."
+        docker model configure --context-size=500000 ai/qwen3-coder 2>/dev/null && \
+            echo -e "  ${GREEN}✓${NC} Set ai/qwen3-coder context to 500k tokens" || \
+            echo -e "  ${YELLOW}!${NC} Could not configure ai/qwen3-coder context size"
+        docker model configure --context-size=30000 ai/qwen3-vl 2>/dev/null && \
+            echo -e "  ${GREEN}✓${NC} Set ai/qwen3-vl context to 30k tokens" || \
+            echo -e "  ${YELLOW}!${NC} Could not configure ai/qwen3-vl context size"
     else
         echo -e "  ${YELLOW}!${NC} Docker Model Runner not available at localhost:12434"
         echo -e "  ${YELLOW}!${NC} Enable it in Docker Desktop settings or pull models manually:"

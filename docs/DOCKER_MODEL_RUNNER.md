@@ -318,9 +318,16 @@ docker model pull --ignore-runtime-memory-check hf.co/large-model
 
 Configure via Docker Desktop or CLI:
 ```bash
-# Set context size (tokens)
-docker model configure ai/qwen3-coder --ctx-size 32768
+# Set context size (tokens) - use --context-size flag
+docker model configure --context-size=500000 ai/qwen3-coder  # 500k for code generation
+docker model configure --context-size=30000 ai/qwen3-vl      # 30k for vision
 ```
+
+**Recommended context sizes:**
+- `ai/qwen3-coder`: **500,000 tokens** (large codebases, full project context)
+- `ai/qwen3-vl`: **30,000 tokens** (image + text prompts)
+
+If you get `exceed_context_size_error`, increase the context size with the command above.
 
 ### Memory Management
 
