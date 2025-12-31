@@ -3786,9 +3786,10 @@ def run_deployments(request, run_id):
         db.close()
 
 
+@csrf_exempt
 @require_http_methods(["DELETE", "POST"])  # Allow POST as fallback for fetch
 def project_delete(request, project_id):
-    """Delete a project and all its related data. REQUIRES CSRF TOKEN."""
+    """Delete a project and all its related data."""
     db = next(get_db())
     try:
         project = db.query(Project).filter(Project.id == project_id).first()
