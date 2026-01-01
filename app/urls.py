@@ -14,6 +14,8 @@ urlpatterns = [
     path('ui/tasks/', ui.tasks_list, name='tasks_list'),
     path('ui/bugs/', ui.bugs_list, name='bugs_list'),
     path('ui/bugs/<int:bug_id>/', ui.bug_detail_view, name='bug_detail_view'),
+    path('ui/ledger/', ui.ledger_view, name='ledger'),
+    path('ui/ledger/<str:entry_id>/', ui.ledger_entry_view, name='ledger_entry'),
 
     # API
     path('api/status', api.api_status, name='api_status'),

@@ -1,7 +1,10 @@
 """UI views for Workflow Hub dashboard."""
+import os
+import yaml
 from django.shortcuts import render
 from django.http import HttpResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
+from django.conf import settings
 from app.db import get_db
 from app.models import Project, Run, Task, TaskStatus, TaskPipelineStage, AuditEvent, RunState, Credential, Environment
 from app.models.bug_report import BugReport, BugReportStatus
@@ -775,5 +778,80 @@ def task_board_view(request, project_id):
         }
 
         return render(request, 'task_board.html', context)
+    finally:
+        db.close()
+
+
+def ledger_view(request):
+    """Failed Claims Ledger view - epistemic accountability."""
+    db = next(get_db())
+    try:
+        open_bugs = _get_open_bugs_count(db)
+
+        # Load ledger from filesystem
+        base_path = settings.BASE_DIR
+        ledger_path = os.path.join(base_path, 'ledger')
+        index_path = os.path.join(ledger_path, 'failed_claims.yaml')
+        claims_dir = os.path.join(ledger_path, 'failed_claims')
+
+        entries = []
+        stats = {'total': 0, 'by_project': {}}
+
+        if os.path.exists(index_path):
+            with open(index_path, 'r') as f:
+                index_data = yaml.safe_load(f) or {}
+
+            # Load full details for each entry
+            for entry_ref in index_data.get('entries', []):
+                entry_id = entry_ref.get('id', '')
+                entry_file = os.path.join(claims_dir, f"{entry_id}.yaml")
+
+                if os.path.exists(entry_file):
+                    with open(entry_file, 'r') as f:
+                        full_entry = yaml.safe_load(f) or {}
+                        entries.append(full_entry)
+
+                        # Update stats
+                        stats['total'] += 1
+                        project = full_entry.get('project', 'unknown')
+                        stats['by_project'][project] = stats['by_project'].get(project, 0) + 1
+
+        # Sort by date descending
+        entries.sort(key=lambda x: x.get('date', ''), reverse=True)
+
+        context = {
+            'active_page': 'ledger',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'entries': entries,
+            'stats': stats,
+        }
+
+        return render(request, 'ledger.html', context)
+    finally:
+        db.close()
+
+
+def ledger_entry_view(request, entry_id):
+    """Single failed claim entry detail view."""
+    db = next(get_db())
+    try:
+        open_bugs = _get_open_bugs_count(db)
+
+        base_path = settings.BASE_DIR
+        entry_file = os.path.join(base_path, 'ledger', 'failed_claims', f"{entry_id}.yaml")
+
+        if not os.path.exists(entry_file):
+            return HttpResponse("Entry not found", status=404)
+
+        with open(entry_file, 'r') as f:
+            entry = yaml.safe_load(f) or {}
+
+        context = {
+            'active_page': 'ledger',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'entry': entry,
+        }
+
+        return render(request, 'ledger_entry.html', context)
     finally:
         db.close()

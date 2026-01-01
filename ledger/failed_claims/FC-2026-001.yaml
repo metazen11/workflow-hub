@@ -1,0 +1,28 @@
+id: FC-2026-001
+date: 2026-01-01
+project: beatbridgepro
+claim: >
+  BeatBridge assigns correct downbeats >=90% of the time
+  across mixed-genre DJ tracks.
+test:
+  method: gold_set_comparison
+  dataset: dj_truth_set_v1 (manual annotations)
+failure_condition: accuracy < 0.90
+result:
+  accuracy: 0.71
+  tested_tracks: 47
+status: failed
+failure_mode:
+  - weak_transient_intros
+  - swing_rhythms
+  - live_drums
+  - tempo_drift_in_long_mixes
+lesson: >
+  Downbeat confidence collapses on non-quantized material.
+  The assumption of consistent grid alignment breaks on organic content.
+decision: >
+  Narrow initial scope to electronic music with strong transient intros.
+  Defer live/acoustic support to future version.
+revisit: >
+  Only if new transient-detection method is introduced,
+  or if onset detection is decoupled from grid assumption.

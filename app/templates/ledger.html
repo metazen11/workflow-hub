@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}Failed Claims Ledger - Workflow Hub{% endblock %}
+{% block page_title %}Failed Claims Ledger{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h3 style="margin: 0;">Epistemic Accountability</h3>
+                <p style="margin: 4px 0 0; color: var(--text-muted); font-size: 0.9rem;">
+                    Ideas that did not survive falsification
+                </p>
+            </div>
+            <div class="stats-row" style="display: flex; gap: 16px;">
+                <div class="stat-item">
+                    <span class="stat-value">{{ stats.total }}</span>
+                    <span class="stat-label">Total Failed</span>
+                </div>
+                {% for project, count in stats.by_project.items %}
+                <div class="stat-item">
+                    <span class="stat-value">{{ count }}</span>
+                    <span class="stat-label">{{ project }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        {% if entries %}
+        <div class="ledger-entries">
+            {% for entry in entries %}
+            <div class="ledger-entry" onclick="window.location='/ui/ledger/{{ entry.id }}/'" style="cursor: pointer;">
+                <div class="entry-header">
+                    <div class="entry-meta">
+                        <span class="entry-id">{{ entry.id }}</span>
+                        <span class="entry-date">{{ entry.date }}</span>
+                        <span class="badge badge-secondary">{{ entry.project }}</span>
+                        <span class="badge badge-danger">FAILED</span>
+                    </div>
+                </div>
+                <div class="entry-claim">
+                    {{ entry.claim }}
+                </div>
+                <div class="entry-footer">
+                    <div class="entry-result">
+                        <strong>Result:</strong>
+                        {% if entry.result.accuracy %}
+                        Accuracy: {{ entry.result.accuracy }}
+                        {% else %}
+                        {{ entry.result }}
+                        {% endif %}
+                    </div>
+                    <div class="entry-lesson">
+                        <strong>Lesson:</strong> {{ entry.lesson }}
+                    </div>
+                </div>
+                {% if entry.failure_mode %}
+                <div class="entry-failure-modes">
+                    {% for mode in entry.failure_mode %}
+                    <span class="failure-mode-tag">{{ mode }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="9" y1="15" x2="15" y2="15"></line>
+            </svg>
+            <h3>No Failed Claims Yet</h3>
+            <p>When claims fail their tests, they'll appear here as permanent records.</p>
+            <p style="font-size: 0.85rem; color: var(--text-muted);">
+                A failed claim is not a loss - it's a reusable discovery.
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+.stats-row {
+    display: flex;
+    gap: 24px;
+}
+.stat-item {
+    text-align: center;
+}
+.stat-value {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.ledger-entries {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.ledger-entry {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 16px;
+    border-left: 4px solid var(--danger);
+    transition: background 0.2s;
+}
+.ledger-entry:hover {
+    background: var(--bg-tertiary, #f5f5f5);
+}
+
+.entry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+.entry-meta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.entry-id {
+    font-family: monospace;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+.entry-date {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.entry-claim {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    line-height: 1.4;
+}
+
+.entry-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+.entry-result strong,
+.entry-lesson strong {
+    color: var(--text-muted);
+}
+
+.entry-failure-modes {
+    margin-top: 12px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.failure-mode-tag {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--text-muted);
+}
+.empty-state h3 {
+    margin: 16px 0 8px;
+    color: var(--text-primary);
+}
+.empty-state p {
+    margin: 0;
+}
+</style>
+{% endblock %}
