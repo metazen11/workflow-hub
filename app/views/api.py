@@ -16,7 +16,11 @@ from app.models import (
     BugReport, BugReportStatus, TaskAttachment, AttachmentType,
     validate_file_security, AttachmentSecurityError,
     Credential, CredentialType, Environment, EnvironmentType,
-    Handoff, HandoffStatus, Proof
+    Handoff, HandoffStatus, Proof,
+    # Falsification Framework
+    Claim, ClaimTest, ClaimEvidence,
+    ClaimScope, ClaimStatus, ClaimCategory,
+    TestType, TestStatus, EvidenceType
 )
 from app.models.task import TaskPipelineStage
 from app.models.report import AgentRole, ReportStatus
@@ -4835,5 +4839,520 @@ def llm_session_by_name(request, name):
             result = session.to_dict()
 
         return JsonResponse({"session": result})
+    finally:
+        db.close()
+
+
+# =============================================================================
+# FALSIFICATION FRAMEWORK - Claims, Tests, Evidence
+# =============================================================================
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def project_claims(request, project_id):
+    """List or create claims for a project.
+
+    GET: List all claims
+        Query params:
+        - include_task_claims: Include task-level claims (default true)
+        - status: Filter by status (pending, validated, falsified, etc.)
+
+    POST: Create a new claim
+        Body:
+        {
+            "claim_text": "The system must do X with Y accuracy",
+            "scope": "project" or "task",
+            "task_id": 123,  // required if scope is "task"
+            "category": "accuracy",  // optional
+            "priority": 8  // 1-10, optional
+        }
+    """
+    from app.services.claim_service import ClaimService
+
+    db = next(get_db())
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return JsonResponse({"error": "Project not found"}, status=404)
+
+        claim_service = ClaimService(db)
+
+        if request.method == "GET":
+            include_task = request.GET.get("include_task_claims", "true").lower() == "true"
+            status_filter = request.GET.get("status")
+
+            status_list = None
+            if status_filter:
+                try:
+                    status_list = [ClaimStatus(s.strip()) for s in status_filter.split(",")]
+                except ValueError:
+                    pass
+
+            claims = claim_service.get_project_claims(
+                project_id,
+                include_task_claims=include_task,
+                status_filter=status_list
+            )
+
+            return JsonResponse({
+                "claims": [c.to_dict(include_tests=True) for c in claims],
+                "summary": claim_service.get_claims_summary(project_id)
+            })
+
+        else:  # POST
+            data = _get_json_body(request)
+            if not data:
+                return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+            claim_text = data.get("claim_text")
+            if not claim_text:
+                return JsonResponse({"error": "claim_text required"}, status=400)
+
+            scope_str = data.get("scope", "project").upper()
+            try:
+                scope = ClaimScope[scope_str]
+            except KeyError:
+                return JsonResponse({"error": f"Invalid scope: {scope_str}"}, status=400)
+
+            category_str = data.get("category", "other").upper()
+            try:
+                category = ClaimCategory[category_str]
+            except KeyError:
+                category = ClaimCategory.OTHER
+
+            claim, error = claim_service.create_claim(
+                project_id=project_id,
+                claim_text=claim_text,
+                scope=scope,
+                task_id=data.get("task_id"),
+                category=category,
+                priority=data.get("priority", 5),
+                created_by=data.get("created_by", "api")
+            )
+
+            if error:
+                return JsonResponse({"error": error}, status=400)
+
+            return JsonResponse({"claim": claim.to_dict(include_tests=True)}, status=201)
+
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["GET", "PUT", "DELETE"])
+def claim_detail(request, claim_id):
+    """Get, update, or delete a claim.
+
+    GET: Get claim details with tests and evidence
+    PUT: Update claim properties
+        Body: { "claim_text", "category", "priority" }
+    DELETE: Delete claim and all associated tests/evidence
+    """
+    from app.services.claim_service import ClaimService
+
+    db = next(get_db())
+    try:
+        claim_service = ClaimService(db)
+        claim = claim_service.get_claim(claim_id)
+        if not claim:
+            return JsonResponse({"error": "Claim not found"}, status=404)
+
+        if request.method == "GET":
+            return JsonResponse({
+                "claim": claim.to_dict(include_tests=True, include_evidence=True)
+            })
+
+        elif request.method == "PUT":
+            data = _get_json_body(request)
+            if not data:
+                return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+            category = None
+            if "category" in data:
+                try:
+                    category = ClaimCategory[data["category"].upper()]
+                except KeyError:
+                    pass
+
+            claim, error = claim_service.update_claim(
+                claim_id=claim_id,
+                claim_text=data.get("claim_text"),
+                category=category,
+                priority=data.get("priority"),
+                actor=data.get("actor", "api")
+            )
+
+            if error:
+                return JsonResponse({"error": error}, status=400)
+
+            return JsonResponse({"claim": claim.to_dict(include_tests=True)})
+
+        else:  # DELETE
+            success, error = claim_service.delete_claim(claim_id)
+            if not success:
+                return JsonResponse({"error": error}, status=400)
+            return JsonResponse({"status": "deleted"})
+
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def claim_tests(request, claim_id):
+    """List or create tests for a claim.
+
+    GET: List all tests for claim
+    POST: Create a new test
+        Body:
+        {
+            "name": "Gold set comparison",
+            "test_type": "gold_set",
+            "config": {
+                "dataset_path": "/data/gold.csv",
+                "output_path": "/data/output.csv",
+                "metric": "accuracy",
+                "threshold": 0.90
+            },
+            "is_automated": true,
+            "run_on_stages": ["qa"],
+            "timeout_seconds": 300
+        }
+    """
+    from app.services.claim_service import ClaimService
+
+    db = next(get_db())
+    try:
+        claim_service = ClaimService(db)
+        claim = claim_service.get_claim(claim_id)
+        if not claim:
+            return JsonResponse({"error": "Claim not found"}, status=404)
+
+        if request.method == "GET":
+            tests = claim_service.get_claim_tests(claim_id)
+            return JsonResponse({
+                "tests": [t.to_dict(include_evidence=True) for t in tests]
+            })
+
+        else:  # POST
+            data = _get_json_body(request)
+            if not data:
+                return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+            name = data.get("name")
+            if not name:
+                return JsonResponse({"error": "name required"}, status=400)
+
+            test_type_str = data.get("test_type", "script").upper()
+            try:
+                test_type = TestType[test_type_str]
+            except KeyError:
+                return JsonResponse({"error": f"Invalid test_type: {test_type_str}"}, status=400)
+
+            test, error = claim_service.create_test(
+                claim_id=claim_id,
+                name=name,
+                test_type=test_type,
+                config=data.get("config", {}),
+                is_automated=data.get("is_automated", True),
+                run_on_stages=data.get("run_on_stages", ["qa"]),
+                timeout_seconds=data.get("timeout_seconds", 300)
+            )
+
+            if error:
+                return JsonResponse({"error": error}, status=400)
+
+            return JsonResponse({"test": test.to_dict()}, status=201)
+
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def test_run(request, test_id):
+    """Execute a test and capture evidence.
+
+    POST /api/tests/{test_id}/run
+        Body:
+        {
+            "run_id": 123,  // optional run context
+            "actor": "agent"  // who triggered the test
+        }
+
+    Returns:
+    {
+        "evidence": {...},  // created evidence record
+        "passed": true/false
+    }
+    """
+    from app.services.claim_service import ClaimService
+
+    data = _get_json_body(request) or {}
+    run_id = data.get("run_id")
+    actor = data.get("actor", "api")
+
+    db = next(get_db())
+    try:
+        claim_service = ClaimService(db)
+        test = claim_service.get_test(test_id)
+        if not test:
+            return JsonResponse({"error": "Test not found"}, status=404)
+
+        evidence, error = claim_service.run_test(test_id, run_id=run_id, actor=actor)
+
+        if error:
+            return JsonResponse({"error": error, "passed": False}, status=400)
+
+        return JsonResponse({
+            "evidence": evidence.to_dict() if evidence else None,
+            "passed": evidence.supports_claim if evidence else False
+        })
+
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def run_claim_tests(request, run_id):
+    """Run all claim tests for a pipeline stage.
+
+    POST /api/runs/{run_id}/run-claim-tests
+        Body:
+        {
+            "stage": "qa",  // required - which stage tests to run
+            "actor": "agent"
+        }
+
+    Returns:
+    {
+        "stage": "qa",
+        "run_id": 123,
+        "tests_run": 5,
+        "passed": 4,
+        "failed": 1,
+        "errors": 0,
+        "details": [...]
+    }
+    """
+    from app.services.claim_service import ClaimService
+
+    data = _get_json_body(request)
+    if not data:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    stage = data.get("stage")
+    if not stage:
+        return JsonResponse({"error": "stage required"}, status=400)
+
+    actor = data.get("actor", "api")
+
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        claim_service = ClaimService(db)
+        result = claim_service.run_tests_for_stage(run_id, stage, actor=actor)
+
+        log_event(
+            db,
+            actor=actor,
+            action="run_claim_tests",
+            entity_type="run",
+            entity_id=run_id,
+            details={
+                "stage": stage,
+                "tests_run": result.get("tests_run", 0),
+                "passed": result.get("passed", 0),
+                "failed": result.get("failed", 0)
+            }
+        )
+
+        return JsonResponse(result)
+
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def claim_evidence(request, claim_id):
+    """List or capture evidence for a claim.
+
+    GET: List all evidence
+        Query params:
+        - run_id: Filter by run
+
+    POST: Manually capture evidence
+        Body:
+        {
+            "title": "Gold set comparison results",
+            "evidence_type": "metrics_json",
+            "content": "...",  // inline content
+            "filename": "results.csv",
+            "filepath": "/path/to/file",
+            "metrics": {"accuracy": 0.92},
+            "failures": [],
+            "supports_claim": true,
+            "verdict_reason": "Accuracy 92% exceeds 90% threshold",
+            "test_id": 123,
+            "run_id": 456
+        }
+    """
+    from app.services.claim_service import ClaimService
+
+    db = next(get_db())
+    try:
+        claim_service = ClaimService(db)
+        claim = claim_service.get_claim(claim_id)
+        if not claim:
+            return JsonResponse({"error": "Claim not found"}, status=404)
+
+        if request.method == "GET":
+            run_id = request.GET.get("run_id")
+            evidence = claim_service.get_claim_evidence(
+                claim_id,
+                run_id=int(run_id) if run_id else None
+            )
+            return JsonResponse({
+                "evidence": [e.to_dict() for e in evidence]
+            })
+
+        else:  # POST
+            data = _get_json_body(request)
+            if not data:
+                return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+            title = data.get("title")
+            if not title:
+                return JsonResponse({"error": "title required"}, status=400)
+
+            evidence_type_str = data.get("evidence_type", "other").upper()
+            try:
+                evidence_type = EvidenceType[evidence_type_str]
+            except KeyError:
+                evidence_type = EvidenceType.OTHER
+
+            evidence, error = claim_service.capture_evidence(
+                claim_id=claim_id,
+                title=title,
+                evidence_type=evidence_type,
+                content=data.get("content"),
+                filename=data.get("filename"),
+                filepath=data.get("filepath"),
+                metrics=data.get("metrics"),
+                failures=data.get("failures"),
+                supports_claim=data.get("supports_claim"),
+                verdict_reason=data.get("verdict_reason"),
+                test_id=data.get("test_id"),
+                run_id=data.get("run_id"),
+                created_by=data.get("created_by", "api")
+            )
+
+            if error:
+                return JsonResponse({"error": error}, status=400)
+
+            return JsonResponse({"evidence": evidence.to_dict()}, status=201)
+
+    finally:
+        db.close()
+
+
+def run_claims_validate(request, run_id):
+    """Validate all claims have evidence for a run.
+
+    GET /api/runs/{run_id}/claims/validate
+
+    Returns:
+    {
+        "valid": true/false,
+        "total_claims": 10,
+        "validated": 8,
+        "falsified": 1,
+        "pending": 1,
+        "missing_evidence": [claim_ids],
+        "failed_claims": [claim_ids]
+    }
+    """
+    from app.services.claim_service import ClaimService
+
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        claim_service = ClaimService(db)
+        result = claim_service.validate_claims_for_run(run_id)
+
+        return JsonResponse(result)
+
+    finally:
+        db.close()
+
+
+def run_claims_summary(request, run_id):
+    """Get claims summary for a run.
+
+    GET /api/runs/{run_id}/claims/summary
+
+    Returns summary of all claims applicable to the run's project.
+    """
+    from app.services.claim_service import ClaimService
+
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        claim_service = ClaimService(db)
+        summary = claim_service.get_claims_summary(run.project_id)
+
+        # Add run-specific validation
+        validation = claim_service.validate_claims_for_run(run_id)
+
+        return JsonResponse({
+            "run_id": run_id,
+            "project_id": run.project_id,
+            "summary": summary,
+            "validation": validation
+        })
+
+    finally:
+        db.close()
+
+
+def task_claims(request, task_id):
+    """Get claims applicable to a task.
+
+    GET /api/tasks/{task_id}/claims
+        Query params:
+        - include_project_claims: Include inherited project claims (default true)
+
+    Returns task-specific claims plus inherited project claims.
+    """
+    from app.services.claim_service import ClaimService
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        include_project = request.GET.get("include_project_claims", "true").lower() == "true"
+
+        claim_service = ClaimService(db)
+        claims = claim_service.get_task_claims(task_id, include_project_claims=include_project)
+
+        return JsonResponse({
+            "task_id": task_id,
+            "claims": [c.to_dict(include_tests=True) for c in claims]
+        })
+
     finally:
         db.close()

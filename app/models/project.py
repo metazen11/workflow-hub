@@ -50,6 +50,11 @@ class Project(Base):
     python_version = Column(String(20), nullable=True)  # "3.11"
     node_version = Column(String(20), nullable=True)  # "18"
 
+    # Falsification Framework Settings
+    require_claims = Column(Boolean, default=False)  # Require claims before runs
+    require_evidence_for_gates = Column(Boolean, default=False)  # Block gate transitions without evidence
+    gold_set_path = Column(String(512), nullable=True)  # Path to gold-standard dataset for testing
+
     # Status
     is_active = Column(Boolean, default=True)
     is_archived = Column(Boolean, default=False)
@@ -97,6 +102,10 @@ class Project(Base):
             "default_port": self.default_port,
             "python_version": self.python_version,
             "node_version": self.node_version,
+            # Falsification Framework
+            "require_claims": self.require_claims or False,
+            "require_evidence_for_gates": self.require_evidence_for_gates or False,
+            "gold_set_path": self.gold_set_path,
             # Status
             "is_active": self.is_active,
             "is_archived": self.is_archived,

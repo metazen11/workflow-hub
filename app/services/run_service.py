@@ -12,6 +12,7 @@ from app.services.webhook_service import (
     dispatch_webhook, EVENT_STATE_CHANGE, EVENT_REPORT_SUBMITTED,
     EVENT_RUN_CREATED, EVENT_GATE_FAILED, EVENT_READY_FOR_DEPLOY
 )
+from app.services.claim_service import ClaimService
 
 
 class RunService:
@@ -26,9 +27,20 @@ class RunService:
         Automatically:
         - Initializes git repo in project workspace if not exists
         - Creates initial commit if repo is empty
+        - Checks if claims are required (if require_claims is True)
         """
         # Get project to check/init git repo
         project = self.db.query(Project).filter(Project.id == project_id).first()
+
+        # Check if claims are required but none exist
+        if project and project.require_claims:
+            claim_service = ClaimService(self.db)
+            claims = claim_service.get_project_claims(project_id)
+            if not claims:
+                raise ValueError(
+                    f"Project requires claims but none are defined. "
+                    f"Add claims before creating a run."
+                )
 
         # Auto-initialize git repo if project has repo_path
         git_info = {"initialized": False}
@@ -379,6 +391,19 @@ secrets.yaml
                 })
                 return RunState.DOCS_FAILED, "Documentation gate failed"
 
+        # Claim evidence gate enforcement
+        # Check if claims are met for the current gate
+        gate_name = current_state.value.lower()
+        if gate_name in ("qa", "sec", "docs"):
+            claim_ok, claim_error = self._check_claim_gate(run, gate_name)
+            if not claim_ok:
+                dispatch_webhook(EVENT_GATE_FAILED, {
+                    "run_id": run_id,
+                    "gate": gate_name,
+                    "reason": f"Claim evidence incomplete: {claim_error}"
+                })
+                return None, f"Claim gate failed: {claim_error}"
+
         # Human approval required for deploy
         if current_state == RunState.READY_FOR_DEPLOY and actor != "human":
             return None, "Human approval required for deployment"
@@ -725,6 +750,28 @@ secrets.yaml
             RunState.DOCS: "docs",
         }
         return agent_map.get(state)
+
+    def _check_claim_gate(self, run: Run, gate: str) -> Tuple[bool, Optional[str]]:
+        """Check if claim evidence requirements are met for a gate.
+
+        Returns:
+            (can_pass, error_message) - True if gate can pass, False with reason if not
+        """
+        project = self.db.query(Project).filter(Project.id == run.project_id).first()
+        if not project:
+            return True, None  # No project = no enforcement
+
+        # Skip if claim enforcement not enabled
+        if not project.require_evidence_for_gates:
+            return True, None
+
+        claim_service = ClaimService(self.db)
+        can_advance, blocking_claims = claim_service.can_advance_gate(run.id, gate)
+
+        if not can_advance:
+            return False, f"Claims blocking gate: {blocking_claims}"
+
+        return True, None
 
     def _initialize_task_stages(self, run: Run, stage: TaskPipelineStage) -> int:
         """Initialize all run tasks to a pipeline stage.

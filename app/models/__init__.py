@@ -16,6 +16,11 @@ from app.models.deployment_history import DeploymentHistory, DeploymentStatus
 from app.models.proof import Proof, ProofType
 from app.models.handoff import Handoff, HandoffStatus
 from app.models.llm_session import LLMSession
+from app.models.claim import (
+    Claim, ClaimTest, ClaimEvidence,
+    ClaimScope, ClaimStatus, ClaimCategory,
+    TestType, TestStatus, EvidenceType
+)
 
 __all__ = [
     'Credential',
@@ -49,4 +54,14 @@ __all__ = [
     'Handoff',
     'HandoffStatus',
     'LLMSession',
+    # Falsification Framework
+    'Claim',
+    'ClaimTest',
+    'ClaimEvidence',
+    'ClaimScope',
+    'ClaimStatus',
+    'ClaimCategory',
+    'TestType',
+    'TestStatus',
+    'EvidenceType',
 ]

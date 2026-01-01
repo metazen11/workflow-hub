@@ -170,4 +170,15 @@ urlpatterns = [
 
     # Project Enrichment (LLM-powered documentation generation)
     path('api/projects/<int:project_id>/enrich', api.project_enrich, name='project_enrich'),
+
+    # Falsification Framework - Claims, Tests, Evidence
+    path('api/projects/<int:project_id>/claims', api.project_claims, name='project_claims'),
+    path('api/claims/<int:claim_id>', api.claim_detail, name='claim_detail'),
+    path('api/claims/<int:claim_id>/tests', api.claim_tests, name='claim_tests'),
+    path('api/claims/<int:claim_id>/evidence', api.claim_evidence, name='claim_evidence'),
+    path('api/tests/<int:test_id>/run', api.test_run, name='test_run'),
+    path('api/runs/<int:run_id>/run-claim-tests', api.run_claim_tests, name='run_claim_tests'),
+    path('api/runs/<int:run_id>/claims/validate', api.run_claims_validate, name='run_claims_validate'),
+    path('api/runs/<int:run_id>/claims/summary', api.run_claims_summary, name='run_claims_summary'),
+    path('api/tasks/<int:task_id>/claims', api.task_claims, name='task_claims'),
 ]
