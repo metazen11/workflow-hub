@@ -26,170 +26,217 @@
             <a href="/ui/projects/{{ project.id }}/" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-arrow-left me-1"></i>Project
             </a>
-            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createTaskModal">
+            <button class="btn btn-primary btn-sm" onclick="openCreateModal()">
                 <i class="bi bi-plus-lg me-1"></i>New Task
             </button>
         </div>
     </div>
 </div>
 
-<div class="kanban-board-container" style="overflow-x: auto; min-height: 70vh;">
-    <div class="d-flex gx-3" style="min-width: 1200px;">
-
-        <!-- Backlog -->
-        <div class="col px-2" style="width: 16.6%;">
-            <div class="card bg-light h-100 border-0 shadow-sm">
-                <div class="card-header bg-secondary text-white fw-bold text-center py-2">
-                    BACKLOG <span class="badge bg-white text-secondary ms-1 task-count" data-col="none">0</span>
-                </div>
-                <div class="card-body p-2 kanban-column" id="col-none" data-stage="none">
-                    {% for task in board.none %}
-                    {% include 'partials/kanban_card.html' with task=task %}
-                    {% endfor %}
-                </div>
-            </div>
+<div class="kanban-board">
+    <!-- Backlog -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #6c757d;">
+            BACKLOG <span class="kanban-count" data-col="none">0</span>
         </div>
-
-        <!-- Dev -->
-        <div class="col px-2" style="width: 16.6%;">
-            <div class="card bg-light h-100 border-0 shadow-sm">
-                <div class="card-header bg-info text-white fw-bold text-center py-2">
-                    DEV <span class="badge bg-white text-info ms-1 task-count" data-col="dev">0</span>
-                </div>
-                <div class="card-body p-2 kanban-column" id="col-dev" data-stage="dev">
-                    {% for task in board.dev %}
-                    {% include 'partials/kanban_card.html' with task=task %}
-                    {% endfor %}
-                </div>
-            </div>
+        <div class="kanban-col-body kanban-column" id="col-none" data-stage="none">
+            {% for task in board.none %}
+            {% include 'partials/kanban_card.html' with task=task %}
+            {% endfor %}
         </div>
+    </div>
 
-        <!-- QA -->
-        <div class="col px-2" style="width: 16.6%;">
-            <div class="card bg-light h-100 border-0 shadow-sm">
-                <div class="card-header bg-warning text-dark fw-bold text-center py-2">
-                    QA <span class="badge bg-white text-dark ms-1 task-count" data-col="qa">0</span>
-                </div>
-                <div class="card-body p-2 kanban-column" id="col-qa" data-stage="qa">
-                    {% for task in board.qa %}
-                    {% include 'partials/kanban_card.html' with task=task %}
-                    {% endfor %}
-                </div>
-            </div>
+    <!-- PM -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #0dcaf0;">
+            PM <span class="kanban-count" data-col="pm">0</span>
         </div>
-
-        <!-- Security -->
-        <div class="col px-2" style="width: 16.6%;">
-            <div class="card bg-light h-100 border-0 shadow-sm">
-                <div class="card-header bg-purple text-white fw-bold text-center py-2"
-                    style="background-color: #6f42c1;">
-                    SEC <span class="badge bg-white text-purple ms-1 task-count" data-col="sec">0</span>
-                </div>
-                <div class="card-body p-2 kanban-column" id="col-sec" data-stage="sec">
-                    {% for task in board.sec %}
-                    {% include 'partials/kanban_card.html' with task=task %}
-                    {% endfor %}
-                </div>
-            </div>
+        <div class="kanban-col-body kanban-column" id="col-pm" data-stage="pm">
+            {% for task in board.pm %}
+            {% include 'partials/kanban_card.html' with task=task %}
+            {% endfor %}
         </div>
+    </div>
 
-        <!-- Docs -->
-        <div class="col px-2" style="width: 16.6%;">
-            <div class="card bg-light h-100 border-0 shadow-sm">
-                <div class="card-header bg-info text-white fw-bold text-center py-2">
-                    DOCS <span class="badge bg-white text-info ms-1 task-count" data-col="docs">0</span>
-                </div>
-                <div class="card-body p-2 kanban-column" id="col-docs" data-stage="docs">
-                    {% for task in board.docs %}
-                    {% include 'partials/kanban_card.html' with task=task %}
-                    {% endfor %}
-                </div>
-            </div>
+    <!-- Dev -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #0d6efd;">
+            DEV <span class="kanban-count" data-col="dev">0</span>
         </div>
-
-        <!-- Complete -->
-        <div class="col px-2" style="width: 16.6%;">
-            <div class="card bg-light h-100 border-0 shadow-sm">
-                <div class="card-header bg-success text-white fw-bold text-center py-2">
-                    DONE <span class="badge bg-white text-success ms-1 task-count" data-col="complete">0</span>
-                </div>
-                <div class="card-body p-2 kanban-column" id="col-complete" data-stage="complete">
-                    {% for task in board.complete %}
-                    {% include 'partials/kanban_card.html' with task=task %}
-                    {% endfor %}
-                </div>
-            </div>
+        <div class="kanban-col-body kanban-column" id="col-dev" data-stage="dev">
+            {% for task in board.dev %}
+            {% include 'partials/kanban_card.html' with task=task %}
+            {% endfor %}
         </div>
+    </div>
 
+    <!-- QA -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #ffc107; color: #000;">
+            QA <span class="kanban-count" data-col="qa">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-qa" data-stage="qa">
+            {% for task in board.qa %}
+            {% include 'partials/kanban_card.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Security -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #6f42c1;">
+            SEC <span class="kanban-count" data-col="sec">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-sec" data-stage="sec">
+            {% for task in board.sec %}
+            {% include 'partials/kanban_card.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Docs -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #20c997;">
+            DOCS <span class="kanban-count" data-col="docs">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-docs" data-stage="docs">
+            {% for task in board.docs %}
+            {% include 'partials/kanban_card.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Complete -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #198754;">
+            DONE <span class="kanban-count" data-col="complete">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-complete" data-stage="complete">
+            {% for task in board.complete %}
+            {% include 'partials/kanban_card.html' with task=task %}
+            {% endfor %}
+        </div>
     </div>
 </div>
 
 <!-- Task Create Modal -->
-<div class="modal fade" id="createTaskModal" tabindex="-1">
-    <div class="modal-dialog">
-        <form method="post" action="/api/projects/{{ project.id }}/tasks/create" id="createTaskForm">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">New Task</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+<div class="modal" id="createTaskModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>New Task</h3>
+            <button type="button" class="modal-close" onclick="closeCreateModal()">&times;</button>
+        </div>
+        <form id="createTaskForm">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Title</label>
+                    <input type="text" class="form-control" name="title" required placeholder="Task title...">
                 </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Title</label>
-                        <input type="text" class="form-control" name="title" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Description</label>
-                        <textarea class="form-control" name="description" rows="3"></textarea>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Priority</label>
-                        <select class="form-select" name="priority">
-                            <option value="3">Low</option>
-                            <option value="5" selected>Medium</option>
-                            <option value="8">High</option>
-                            <option value="10">Critical</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Attachments</label>
-                        <div id="board-dropzone" class="dropzone-area">
-                            <input type="file" id="task-files" multiple accept="image/*,.pdf,.txt,.md,.json,.log">
-                            <div class="dropzone-prompt">
-                                <span class="dropzone-icon">📎</span>
-                                <span>Drop files here or <u>click to browse</u></span>
-                            </div>
-                            <div id="board-file-previews" class="file-previews"></div>
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <textarea class="form-control" name="description" rows="3" placeholder="What needs to be done?"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Priority</label>
+                    <select class="form-control" name="priority">
+                        <option value="3">Low</option>
+                        <option value="5" selected>Medium</option>
+                        <option value="8">High</option>
+                        <option value="10">Critical</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Attachments</label>
+                    <div id="board-dropzone" class="dropzone-area">
+                        <input type="file" id="task-files" multiple accept="image/*,.pdf,.txt,.md,.json,.log">
+                        <div class="dropzone-prompt">
+                            <span class="dropzone-icon">📎</span>
+                            <span>Drop files here or <u>click to browse</u></span>
                         </div>
+                        <div id="board-file-previews" class="file-previews"></div>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Create Task</button>
-                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Task</button>
             </div>
         </form>
     </div>
 </div>
 
 <style>
+    /* Kanban Board Layout */
+    .kanban-board {
+        display: flex;
+        gap: 12px;
+        overflow-x: auto;
+        padding: 8px 0 16px;
+        min-height: calc(100vh - 200px);
+    }
+
+    .kanban-col {
+        flex: 0 0 200px;
+        min-width: 200px;
+        max-width: 280px;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-card, #fff);
+        border-radius: 8px;
+        box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
+        border: 1px solid var(--border, #e2e8f0);
+    }
+
+    .kanban-col-header {
+        padding: 10px 12px;
+        font-weight: 600;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #fff;
+        border-radius: 8px 8px 0 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .kanban-count {
+        background: rgba(255,255,255,0.25);
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 500;
+    }
+
+    .kanban-col-body {
+        flex: 1;
+        padding: 8px;
+        overflow-y: auto;
+        min-height: 300px;
+        background: var(--bg-secondary, #f8fafc);
+    }
+
     .kanban-column {
-        min-height: 200px;
         transition: background-color 0.2s;
     }
 
     .kanban-column.drag-over {
-        background-color: rgba(0, 0, 0, 0.05);
+        background-color: rgba(59, 130, 246, 0.1);
     }
 
+    /* Task Cards */
     .task-card {
         cursor: grab;
-        transition: transform 0.2s, box-shadow 0.2s;
+        transition: transform 0.15s, box-shadow 0.15s;
+        background: var(--bg-card, #fff);
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 6px;
+        margin-bottom: 8px;
     }
 
     .task-card:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     }
 
     .task-card.dragging {
@@ -198,15 +245,23 @@
     }
 
     .task-card[data-priority-val="high"] {
-        border-left: 4px solid #dc3545;
+        border-left: 3px solid #dc3545;
     }
 
     .task-card[data-priority-val="medium"] {
-        border-left: 4px solid #ffc107;
+        border-left: 3px solid #ffc107;
     }
 
     .task-card[data-priority-val="low"] {
-        border-left: 4px solid #28a745;
+        border-left: 3px solid #28a745;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 1200px) {
+        .kanban-col {
+            flex: 0 0 180px;
+            min-width: 180px;
+        }
     }
 
     /* Dropzone styles */
@@ -289,8 +344,9 @@
 
     function updateCounts() {
         document.querySelectorAll('.kanban-column').forEach(col => {
-            const count = col.querySelectorAll('.task-card[style!="display: none;"]').length;
-            const badge = document.querySelector(`.badge[data-col="${col.dataset.stage}"]`);
+            const visibleCards = col.querySelectorAll('.task-card:not([style*="display: none"])');
+            const count = visibleCards.length;
+            const badge = document.querySelector(`.kanban-count[data-col="${col.dataset.stage}"]`);
             if (badge) badge.textContent = count;
         });
     }
@@ -414,28 +470,71 @@
         }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
-    // Initialize dropzone for board create modal (uses shared initDropzone from task-modal.js)
-    const boardDropzone = initDropzone('board-dropzone', 'task-files', 'board-file-previews');
-    if (boardDropzone) {
-        document.getElementById('createTaskModal').addEventListener('hidden.bs.modal', boardDropzone.clear);
+    // Modal functions
+    function openCreateModal() {
+        document.getElementById('createTaskModal').classList.add('active');
     }
 
-    // Handle form submission - uses createTaskWithFiles from task-modal.js
+    function closeCreateModal() {
+        document.getElementById('createTaskModal').classList.remove('active');
+        document.getElementById('createTaskForm').reset();
+        // Clear file previews
+        const previews = document.getElementById('board-file-previews');
+        if (previews) previews.innerHTML = '';
+    }
+
+    // Close modal on backdrop click
+    document.getElementById('createTaskModal').addEventListener('click', function(e) {
+        if (e.target === this) closeCreateModal();
+    });
+
+    // Close modal on Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeCreateModal();
+    });
+
+    // Initialize dropzone for board create modal (uses shared initDropzone from task-modal.js)
+    if (typeof initDropzone === 'function') {
+        const boardDropzone = initDropzone('board-dropzone', 'task-files', 'board-file-previews');
+    }
+
+    // Handle form submission
     document.getElementById('createTaskForm').addEventListener('submit', async function (e) {
         e.preventDefault();
         const formData = new FormData(this);
         const files = document.getElementById('task-files').files;
         const projectId = {{ project.id }};
 
+        const submitBtn = this.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating...';
+
         try {
-            await createTaskWithFiles(projectId, {
-                title: formData.get('title'),
-                description: formData.get('description'),
-                priority: formData.get('priority')
-            }, files);
+            // Check if createTaskWithFiles is available (from task-modal.js)
+            if (typeof createTaskWithFiles === 'function') {
+                await createTaskWithFiles(projectId, {
+                    title: formData.get('title'),
+                    description: formData.get('description'),
+                    priority: formData.get('priority')
+                }, files);
+            } else {
+                // Fallback: direct API call without files
+                const response = await fetch(`/api/projects/${projectId}/tasks/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: formData.get('title'),
+                        description: formData.get('description'),
+                        priority: parseInt(formData.get('priority'))
+                    })
+                });
+                if (!response.ok) throw new Error('Failed to create task');
+            }
             location.reload();
         } catch (err) {
             alert('Error: ' + err.message);
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Create Task';
         }
     });
 </script>
