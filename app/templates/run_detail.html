@@ -156,7 +156,9 @@
             <div class="reports-grid">
                 {% for role, result in run.results.items %}
                 {% if result %}
-                <div class="report-card {% if result.status == 'pass' %}pass{% elif result.status == 'fail' %}fail{% endif %}">
+                <div class="report-card {% if result.status == 'pass' %}pass{% elif result.status == 'fail' %}fail{% endif %}"
+                     onclick="toggleReportDetails(this)"
+                     style="cursor: pointer;">
                     <div class="report-header">
                         <strong>{{ role|upper }}</strong>
                         <span class="badge {% if result.status == 'pass' %}badge-success{% elif result.status == 'fail' %}badge-danger{% else %}badge-secondary{% endif %}">
@@ -166,6 +168,76 @@
                     {% if result.summary %}
                     <p class="report-summary">{{ result.summary }}</p>
                     {% endif %}
+                    <div class="report-details" style="display: none;">
+                        {% if result.details %}
+                        <hr style="margin: 8px 0; border-color: var(--border);">
+                        <div class="report-details-content">
+                            {% if result.details.failing_tests %}
+                            <div class="detail-section">
+                                <strong style="color: var(--danger);">Failing Tests:</strong>
+                                <ul style="margin: 4px 0; padding-left: 20px;">
+                                    {% for test in result.details.failing_tests %}
+                                    <li>{{ test }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if result.details.issues %}
+                            <div class="detail-section">
+                                <strong style="color: var(--warning);">Issues:</strong>
+                                <ul style="margin: 4px 0; padding-left: 20px;">
+                                    {% for issue in result.details.issues %}
+                                    <li>{{ issue }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if result.details.vulnerabilities %}
+                            <div class="detail-section">
+                                <strong style="color: var(--danger);">Vulnerabilities:</strong>
+                                <ul style="margin: 4px 0; padding-left: 20px;">
+                                    {% for vuln in result.details.vulnerabilities %}
+                                    <li>
+                                        {% if vuln.severity %}<span class="badge badge-{% if vuln.severity == 'critical' or vuln.severity == 'high' %}danger{% elif vuln.severity == 'medium' %}warning{% else %}secondary{% endif %}" style="font-size: 0.7rem;">{{ vuln.severity|upper }}</span>{% endif %}
+                                        {{ vuln.title|default:vuln.issue|default:vuln }}
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if result.details.errors %}
+                            <div class="detail-section">
+                                <strong style="color: var(--danger);">Errors:</strong>
+                                <ul style="margin: 4px 0; padding-left: 20px;">
+                                    {% for error in result.details.errors %}
+                                    <li>{{ error }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if result.details.error %}
+                            <div class="detail-section">
+                                <strong style="color: var(--danger);">Error:</strong>
+                                <pre style="margin: 4px 0; padding: 8px; background: var(--bg-primary); border-radius: 4px; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word;">{{ result.details.error }}</pre>
+                            </div>
+                            {% endif %}
+                            {% if result.details.output %}
+                            <div class="detail-section">
+                                <strong>Output:</strong>
+                                <pre style="margin: 4px 0; padding: 8px; background: var(--bg-primary); border-radius: 4px; font-size: 0.8rem; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;">{{ result.details.output }}</pre>
+                            </div>
+                            {% endif %}
+                            {% if not result.details.failing_tests and not result.details.issues and not result.details.vulnerabilities and not result.details.errors and not result.details.error and not result.details.output %}
+                            <pre style="font-size: 0.75rem; background: var(--bg-primary); padding: 8px; border-radius: 4px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;">{{ result.details|pprint }}</pre>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <p style="font-style: italic; color: var(--text-muted); font-size: 0.85rem; margin: 8px 0 0;">No additional details available</p>
+                        {% endif %}
+                    </div>
+                    <div class="expand-hint" style="text-align: center; margin-top: 8px; font-size: 0.75rem; color: var(--text-muted);">
+                        <span class="expand-text">▼ Click to view details</span>
+                    </div>
                 </div>
                 {% endif %}
                 {% endfor %}
@@ -500,6 +572,25 @@
     font-size: 0.9rem;
     color: var(--text-secondary);
     margin: 0;
+}
+.report-card:hover {
+    background: var(--bg-tertiary, #f0f0f0);
+}
+.report-details {
+    margin-top: 8px;
+}
+.report-details-content {
+    font-size: 0.85rem;
+}
+.detail-section {
+    margin-bottom: 8px;
+}
+.expand-hint {
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+.report-card:hover .expand-hint {
+    opacity: 1;
 }
 
 /* Task Filters */
@@ -1150,6 +1241,23 @@ document.getElementById('proof-upload-form').addEventListener('submit', function
 
 // Load proofs on page load
 loadProofs();
+
+// ============================================
+// Report Details Toggle
+// ============================================
+function toggleReportDetails(card) {
+    const details = card.querySelector('.report-details');
+    const hint = card.querySelector('.expand-text');
+
+    if (!details) return;
+
+    const isHidden = details.style.display === 'none';
+    details.style.display = isHidden ? 'block' : 'none';
+
+    if (hint) {
+        hint.textContent = isHidden ? '▲ Click to hide details' : '▼ Click to view details';
+    }
+}
 
 // Mount React components
 if (window.WH && window.WH.React) {
