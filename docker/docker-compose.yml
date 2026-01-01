@@ -24,8 +24,6 @@ services:
     image: postgrest/postgrest
     container_name: wfhub-postgrest
     hostname: wfhub-postgrest
-    env_file:
-      - ../.env
     environment:
       PGRST_DB_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       PGRST_DB_SCHEMAS: public

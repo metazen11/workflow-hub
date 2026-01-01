@@ -46,3 +46,5 @@ projects/
 uploads/attachments/*
 !uploads/attachments/.gitkeep
 .cache/
+docker/.env
+docker/.env
