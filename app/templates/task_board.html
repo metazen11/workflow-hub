@@ -26,7 +26,7 @@
             <a href="/ui/projects/{{ project.id }}/" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-arrow-left me-1"></i>Project
             </a>
-            <button class="btn btn-primary btn-sm" onclick="openCreateModal()">
+            <button class="btn btn-primary btn-sm" onclick="openTaskCreateModal({{ project.id }})">
                 <i class="bi bi-plus-lg me-1"></i>New Task
             </button>
         </div>
@@ -119,51 +119,8 @@
     </div>
 </div>
 
-<!-- Task Create Modal -->
-<div class="modal" id="createTaskModal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>New Task</h3>
-            <button type="button" class="modal-close" onclick="closeCreateModal()">&times;</button>
-        </div>
-        <form id="createTaskForm">
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Title</label>
-                    <input type="text" class="form-control" name="title" required placeholder="Task title...">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Description</label>
-                    <textarea class="form-control" name="description" rows="3" placeholder="What needs to be done?"></textarea>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Priority</label>
-                    <select class="form-control" name="priority">
-                        <option value="3">Low</option>
-                        <option value="5" selected>Medium</option>
-                        <option value="8">High</option>
-                        <option value="10">Critical</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Attachments</label>
-                    <div id="board-dropzone" class="dropzone-area">
-                        <input type="file" id="task-files" multiple accept="image/*,.pdf,.txt,.md,.json,.log">
-                        <div class="dropzone-prompt">
-                            <span class="dropzone-icon">📎</span>
-                            <span>Drop files here or <u>click to browse</u></span>
-                        </div>
-                        <div id="board-file-previews" class="file-previews"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Create Task</button>
-            </div>
-        </form>
-    </div>
-</div>
+<!-- Task Create Modal (shared partial) -->
+{% include 'partials/task_create_modal.html' %}
 
 <style>
     /* Kanban Board Layout */
@@ -262,49 +219,6 @@
             flex: 0 0 180px;
             min-width: 180px;
         }
-    }
-
-    /* Dropzone styles */
-    .dropzone-area {
-        border: 2px dashed #dee2e6;
-        border-radius: 8px;
-        padding: 20px;
-        text-align: center;
-        cursor: pointer;
-        transition: all 0.2s;
-        position: relative;
-        min-height: 80px;
-    }
-    .dropzone-area:hover, .dropzone-area.dragover {
-        border-color: #0d6efd;
-        background: rgba(13, 110, 253, 0.05);
-    }
-    .dropzone-area input[type="file"] {
-        position: absolute;
-        top: 0; left: 0; width: 100%; height: 100%;
-        opacity: 0;
-        cursor: pointer;
-    }
-    .dropzone-prompt { color: #6c757d; font-size: 14px; }
-    .dropzone-icon { font-size: 24px; display: block; margin-bottom: 8px; }
-    .file-previews { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; justify-content: center; }
-    .file-preview {
-        position: relative;
-        width: 60px; height: 60px;
-        border-radius: 6px;
-        overflow: hidden;
-        border: 1px solid #dee2e6;
-    }
-    .file-preview img { width: 100%; height: 100%; object-fit: cover; }
-    .file-preview .file-icon {
-        display: flex; align-items: center; justify-content: center;
-        width: 100%; height: 100%; background: #f8f9fa; font-size: 24px;
-    }
-    .file-preview .remove-btn {
-        position: absolute; top: 2px; right: 2px;
-        width: 18px; height: 18px; border-radius: 50%;
-        background: rgba(0,0,0,0.6); color: white;
-        border: none; cursor: pointer; font-size: 12px; line-height: 1;
     }
 </style>
 
@@ -470,71 +384,10 @@
         }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
-    // Modal functions
-    function openCreateModal() {
-        document.getElementById('createTaskModal').classList.add('active');
-    }
-
-    function closeCreateModal() {
-        document.getElementById('createTaskModal').classList.remove('active');
-        document.getElementById('createTaskForm').reset();
-        // Clear file previews
-        const previews = document.getElementById('board-file-previews');
-        if (previews) previews.innerHTML = '';
-    }
-
-    // Close modal on backdrop click
-    document.getElementById('createTaskModal').addEventListener('click', function(e) {
-        if (e.target === this) closeCreateModal();
-    });
-
-    // Close modal on Escape key
+    // Close modal on Escape key (for any open modal)
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') closeCreateModal();
-    });
-
-    // Initialize dropzone for board create modal (uses shared initDropzone from task-modal.js)
-    if (typeof initDropzone === 'function') {
-        const boardDropzone = initDropzone('board-dropzone', 'task-files', 'board-file-previews');
-    }
-
-    // Handle form submission
-    document.getElementById('createTaskForm').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        const formData = new FormData(this);
-        const files = document.getElementById('task-files').files;
-        const projectId = {{ project.id }};
-
-        const submitBtn = this.querySelector('button[type="submit"]');
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Creating...';
-
-        try {
-            // Check if createTaskWithFiles is available (from task-modal.js)
-            if (typeof createTaskWithFiles === 'function') {
-                await createTaskWithFiles(projectId, {
-                    title: formData.get('title'),
-                    description: formData.get('description'),
-                    priority: formData.get('priority')
-                }, files);
-            } else {
-                // Fallback: direct API call without files
-                const response = await fetch(`/api/projects/${projectId}/tasks/create`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        title: formData.get('title'),
-                        description: formData.get('description'),
-                        priority: parseInt(formData.get('priority'))
-                    })
-                });
-                if (!response.ok) throw new Error('Failed to create task');
-            }
-            location.reload();
-        } catch (err) {
-            alert('Error: ' + err.message);
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Create Task';
+        if (e.key === 'Escape' && typeof closeTaskCreateModal === 'function') {
+            closeTaskCreateModal();
         }
     });
 </script>

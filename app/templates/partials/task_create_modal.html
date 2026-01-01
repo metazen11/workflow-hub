@@ -1,0 +1,166 @@
+<!-- Task Create Modal Partial - Include in templates that need task creation -->
+<!-- Requires: task-modal.js to be loaded, project_id variable in context -->
+
+<div id="task-create-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>New Task</h3>
+            <button class="modal-close" onclick="closeTaskCreateModal()">&times;</button>
+        </div>
+        <form id="task-create-form">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Title <span class="required">*</span></label>
+                    <input type="text" id="create-task-title" class="form-input" required placeholder="Task title...">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="create-task-description" class="form-textarea" rows="3" placeholder="What needs to be done?"></textarea>
+                </div>
+                <div class="form-row" style="display: flex; gap: 16px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Priority</label>
+                        <select id="create-task-priority" class="form-select">
+                            <option value="3">Low</option>
+                            <option value="5" selected>Medium</option>
+                            <option value="8">High</option>
+                            <option value="10">Critical</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label>Pipeline Stage</label>
+                        <select id="create-task-stage" class="form-select">
+                            <option value="none" selected>Backlog</option>
+                            <option value="pm">PM</option>
+                            <option value="dev">DEV</option>
+                            <option value="qa">QA</option>
+                            <option value="sec">SEC</option>
+                            <option value="docs">DOCS</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Attachments</label>
+                    <div id="create-dropzone" class="dropzone-area">
+                        <input type="file" id="create-task-files" multiple accept="image/*,.pdf,.txt,.md,.json,.log">
+                        <div class="dropzone-prompt">
+                            <span class="dropzone-icon">📎</span>
+                            <span>Drop files here or <u>click to browse</u></span>
+                        </div>
+                        <div id="create-file-previews" class="file-previews"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn" onclick="closeTaskCreateModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="create-task-submit">Create Task</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// Task Create Modal Functions - uses task-modal.js helpers
+(function() {
+    let _createDropzone = null;
+    let _projectId = null;
+
+    // Initialize when DOM is ready
+    document.addEventListener('DOMContentLoaded', function() {
+        const modal = document.getElementById('task-create-modal');
+        if (!modal) return;
+
+        // Initialize dropzone using shared helper from task-modal.js
+        if (typeof initDropzone === 'function') {
+            _createDropzone = initDropzone('create-dropzone', 'create-task-files', 'create-file-previews');
+        }
+
+        // Close on backdrop click
+        modal.addEventListener('click', function(e) {
+            if (e.target === this) closeTaskCreateModal();
+        });
+
+        // Form submission
+        document.getElementById('task-create-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            await submitTaskCreate();
+        });
+    });
+
+    // Expose functions globally
+    window.openTaskCreateModal = function(projectId) {
+        _projectId = projectId;
+        const modal = document.getElementById('task-create-modal');
+        if (modal) {
+            // Reset form
+            document.getElementById('task-create-form').reset();
+            if (_createDropzone) _createDropzone.clear();
+            modal.classList.add('active');
+        }
+    };
+
+    window.closeTaskCreateModal = function() {
+        const modal = document.getElementById('task-create-modal');
+        if (modal) {
+            modal.classList.remove('active');
+        }
+    };
+
+    async function submitTaskCreate() {
+        if (!_projectId) {
+            alert('Project ID not set');
+            return;
+        }
+
+        const title = document.getElementById('create-task-title').value.trim();
+        const description = document.getElementById('create-task-description').value.trim();
+        const priority = parseInt(document.getElementById('create-task-priority').value) || 5;
+        const stage = document.getElementById('create-task-stage').value;
+        const files = document.getElementById('create-task-files').files;
+
+        if (!title) {
+            alert('Title is required');
+            return;
+        }
+
+        const submitBtn = document.getElementById('create-task-submit');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating...';
+
+        try {
+            // Use shared createTaskWithFiles from task-modal.js
+            if (typeof createTaskWithFiles === 'function') {
+                const task = await createTaskWithFiles(_projectId, {
+                    title,
+                    description,
+                    priority
+                }, files);
+
+                // Set stage if not backlog
+                if (stage && stage !== 'none' && task.id) {
+                    await fetch(`/api/tasks/${task.id}/set-stage`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stage })
+                    });
+                }
+            } else {
+                // Fallback: direct API call
+                const res = await fetch(`/api/projects/${_projectId}/tasks/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, description, priority })
+                });
+                if (!res.ok) throw new Error('Failed to create task');
+            }
+
+            closeTaskCreateModal();
+            location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Create Task';
+        }
+    }
+})();
+</script>
