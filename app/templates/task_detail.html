@@ -74,6 +74,21 @@
                         style="width: 100%;">{{ task.description|default:'' }}</textarea>
                 </div>
 
+                <div style="margin-bottom: 15px;">
+                    <label class="form-label">Acceptance Criteria</label>
+                    <div id="acceptance-criteria-list" style="margin-bottom: 8px;">
+                        {% for criterion in task.acceptance_criteria %}
+                        <div class="ac-item" style="display: flex; gap: 8px; margin-bottom: 6px; align-items: center;">
+                            <input type="text" class="form-control ac-input" value="{{ criterion }}" style="flex: 1;">
+                            <button type="button" class="btn btn-sm btn-danger ac-remove" title="Remove">×</button>
+                        </div>
+                        {% empty %}
+                        <p id="no-ac-msg" style="color: var(--text-muted); font-style: italic; margin: 0;">No acceptance criteria defined</p>
+                        {% endfor %}
+                    </div>
+                    <button type="button" id="add-ac-btn" class="btn btn-sm btn-secondary">+ Add Criterion</button>
+                </div>
+
                 <div style="text-align: right;">
                     <button type="button" class="btn btn-primary" onclick="saveTaskDetails({{ task.id }})">Save
                         Changes</button>
@@ -596,6 +611,57 @@
     });
 
     // ============================================
+    // Acceptance Criteria Management
+    // ============================================
+    function createAcItem(value = '') {
+        const div = document.createElement('div');
+        div.className = 'ac-item';
+        div.style.cssText = 'display: flex; gap: 8px; margin-bottom: 6px; align-items: center;';
+        div.innerHTML = `
+            <input type="text" class="form-control ac-input" value="${escapeHtml(value)}" style="flex: 1;" placeholder="Enter acceptance criterion...">
+            <button type="button" class="btn btn-sm btn-danger ac-remove" title="Remove">×</button>
+        `;
+        div.querySelector('.ac-remove').addEventListener('click', function() {
+            div.remove();
+            updateNoAcMessage();
+        });
+        return div;
+    }
+
+    function updateNoAcMessage() {
+        const list = document.getElementById('acceptance-criteria-list');
+        const items = list.querySelectorAll('.ac-item');
+        let noMsg = document.getElementById('no-ac-msg');
+        if (items.length === 0 && !noMsg) {
+            noMsg = document.createElement('p');
+            noMsg.id = 'no-ac-msg';
+            noMsg.style.cssText = 'color: var(--text-muted); font-style: italic; margin: 0;';
+            noMsg.textContent = 'No acceptance criteria defined';
+            list.appendChild(noMsg);
+        } else if (items.length > 0 && noMsg) {
+            noMsg.remove();
+        }
+    }
+
+    // Add new criterion button
+    document.getElementById('add-ac-btn').addEventListener('click', function() {
+        const list = document.getElementById('acceptance-criteria-list');
+        const noMsg = document.getElementById('no-ac-msg');
+        if (noMsg) noMsg.remove();
+        const item = createAcItem();
+        list.appendChild(item);
+        item.querySelector('input').focus();
+    });
+
+    // Attach remove handlers to existing items
+    document.querySelectorAll('.ac-remove').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.closest('.ac-item').remove();
+            updateNoAcMessage();
+        });
+    });
+
+    // ============================================
     // Save Task Details (No Reload)
     // ============================================
     function saveTaskDetails(taskId) {
@@ -603,10 +669,16 @@
         const description = document.getElementById('task-description').value;
         const priority = parseInt(document.getElementById('task-priority').value);
 
+        // Collect acceptance criteria
+        const acInputs = document.querySelectorAll('.ac-input');
+        const acceptance_criteria = Array.from(acInputs)
+            .map(input => input.value.trim())
+            .filter(val => val.length > 0);
+
         fetch(`/api/tasks/${taskId}/update`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, description, priority })
+            body: JSON.stringify({ title, description, priority, acceptance_criteria })
         })
         .then(r => r.json())
         .then(data => {

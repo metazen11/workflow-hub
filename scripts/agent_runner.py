@@ -33,10 +33,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
+# Import vision preprocessing for image path handling
+try:
+    from scripts.mcp_vision_server import preprocess_prompt as vision_preprocess
+    VISION_ENABLED = True
+except ImportError:
+    VISION_ENABLED = False
+    def vision_preprocess(prompt, context="", compact=True):
+        return prompt  # No-op if vision not available
+
 
 WORKFLOW_HUB_URL = os.getenv("WORKFLOW_HUB_URL", "http://localhost:8000")
 AGENT_PROVIDER = os.getenv("AGENT_PROVIDER", "goose").lower()
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "600"))
+VISION_PREPROCESS = os.getenv("VISION_PREPROCESS", "true").lower() == "true"
 
 
 # =============================================================================
@@ -692,6 +702,12 @@ def capture_automatic_proofs(agent_type: str, run_id: int, project_path: str,
 def run_agent_logic(agent_type: str, run_id: int, project_path: str) -> Dict[str, Any]:
     provider = get_provider()
     prompt = provider.get_agent_prompt(agent_type, run_id, project_path)
+
+    # Preprocess prompt for vision (analyze any image paths)
+    if VISION_PREPROCESS and VISION_ENABLED:
+        print(f"Preprocessing prompt for vision analysis...")
+        prompt = vision_preprocess(prompt, context=f"Task for {agent_type} agent", compact=True)
+
     report = provider.run_agent(agent_type, run_id, project_path, prompt)
 
     # Automatically capture and upload proofs after agent completes
@@ -889,7 +905,12 @@ When complete, output a JSON status report with:
 '''}
 """
 
-    # Step 4: Run the agent (with task_id for session persistence)
+    # Step 4: Preprocess prompt for vision (analyze any image paths)
+    if VISION_PREPROCESS and VISION_ENABLED:
+        print(f"Preprocessing prompt for vision analysis...")
+        full_prompt = vision_preprocess(full_prompt, context=f"Task for {agent_type} agent", compact=True)
+
+    # Step 5: Run the agent (with task_id for session persistence)
     print(f"Running {agent_type} agent for task {task_id}...")
     report = provider.run_agent(agent_type, run_id or 0, project_path, full_prompt, task_id=task_id)
 

@@ -357,28 +357,102 @@ done
 - Complex multi-step tasks with tool calling
 - Tasks requiring MCP servers
 
-### Goose Configuration (Current Setup)
+### Goose Configuration
 
-Goose is configured at `~/.config/goose/config.yaml`:
+#### Quick Setup (Recommended)
+
+Run the setup script to automatically configure Goose with the vision extension:
+
+```bash
+./scripts/setup_goose_vision.sh
+```
+
+This script:
+1. Configures Goose to use Docker Model Runner
+2. Adds the vision MCP extension
+3. Creates/verifies `.goosehints` for vision tool awareness
+4. Handles cross-platform config paths (macOS, Linux, Windows)
+
+#### Manual Configuration
+
+Goose config location varies by OS:
+- **macOS/Linux**: `~/.config/goose/config.yaml`
+- **Linux with XDG**: `$XDG_CONFIG_HOME/goose/config.yaml`
+
+Example config:
 ```yaml
 GOOSE_PROVIDER: ollama
 OLLAMA_HOST: http://localhost:12434/engines/llama.cpp
 GOOSE_MODEL: ai/qwen3-coder:latest
+extensions:
+  developer:
+    enabled: true
+    name: developer
+    type: builtin
+  memory:
+    enabled: true
+    name: memory
+    type: builtin
+  vision:
+    enabled: true
+    name: vision
+    type: stdio
+    cmd: python3
+    args:
+      - /absolute/path/to/Agentic/scripts/mcp_vision_server.py
+      - --mcp
 ```
+
+**Important**: Replace `/absolute/path/to/Agentic` with your actual project path.
 
 Both Goose and direct API calls use the same Docker Model Runner backend and model.
 
 ### Vision Model Configuration
 
-The vision model is configured in `.env` or via Director settings:
+The vision model is configured in `.env`:
 ```bash
-# Environment variable
 VISION_MODEL=ai/qwen3-vl
+VISION_API_URL=http://localhost:12434/engines/llama.cpp/v1/chat/completions
+VISION_PREPROCESS=true   # Auto-analyze images in agent prompts
+VISION_TIMEOUT=120       # Seconds before timeout
+```
 
-# Or via API
-curl -X POST http://localhost:8000/api/director/settings \
-  -H "Content-Type: application/json" \
-  -d '{"include_images": true, "vision_model": "ai/qwen3-vl"}'
+#### Vision MCP Extension
+
+The `scripts/mcp_vision_server.py` provides:
+- `analyze_image`: Analyze a single image file
+- `analyze_images_in_text`: Find and analyze all images in text
+- `preprocess_prompt`: Augment prompts with image descriptions (compact mode)
+- `extract_image_paths`: Extract image paths without analyzing
+
+**CLI Usage:**
+```bash
+# Analyze an image
+./scripts/mcp_vision_server.py /path/to/screenshot.png
+
+# Preprocess a prompt with image references
+./scripts/mcp_vision_server.py --preprocess "Check the error at /tmp/error.png"
+
+# Run as MCP server for Goose
+./scripts/mcp_vision_server.py --mcp
+```
+
+#### Automatic Vision Preprocessing
+
+When `VISION_PREPROCESS=true`, the agent_runner.py automatically:
+1. Scans prompts for image paths (.png, .jpg, .gif, .webp)
+2. Analyzes each image using the vision model
+3. Appends compact descriptions to the prompt
+
+Example transformation:
+```
+# Input
+"Check the error at /tmp/error.png"
+
+# Output (after preprocessing)
+"Check the error at /tmp/error.png
+
+[IMAGE: /tmp/error.png]: Screenshot showing a dialog box with 'Connection Failed' error message and a red warning icon."
 ```
 
 Vision capabilities are used for:

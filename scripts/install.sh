@@ -149,9 +149,14 @@ GOOSE_PROVIDER=ollama
 OLLAMA_HOST=http://localhost:12434/engines/llama.cpp
 GOOSE_MODEL=ai/qwen3-coder:latest
 VISION_MODEL=ai/qwen3-vl
+VISION_API_URL=http://localhost:12434/engines/llama.cpp/v1/chat/completions
+
+# Vision preprocessing (auto-analyze images in prompts)
+VISION_PREPROCESS=true
 
 # Timeouts
 LLM_TIMEOUT=600
+VISION_TIMEOUT=120
 EOF
         echo -e "  ${GREEN}✓${NC} Created default .env file"
         echo -e "  ${YELLOW}!${NC} Please review .env and update settings as needed"
@@ -253,7 +258,20 @@ echo -e "${YELLOW}Step 9: Creating directories...${NC}"
 
 mkdir -p workspaces
 mkdir -p .cache/image_descriptions
+mkdir -p .cache/mcp_vision
 echo -e "  ${GREEN}✓${NC} Created workspaces/ and .cache/ directories"
+
+echo ""
+
+# Step 10: Setup Goose Vision extension (optional)
+echo -e "${YELLOW}Step 10: Setting up Goose Vision extension...${NC}"
+
+if [ -f "scripts/setup_goose_vision.sh" ]; then
+    ./scripts/setup_goose_vision.sh 2>/dev/null || \
+        echo -e "  ${YELLOW}!${NC} Goose setup skipped (run ./scripts/setup_goose_vision.sh manually)"
+else
+    echo -e "  ${YELLOW}!${NC} Goose setup script not found"
+fi
 
 echo ""
 

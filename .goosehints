@@ -1,0 +1,44 @@
+# Goose Hints for Workflow Hub
+
+## Vision/Image Analysis
+
+When a user message or task description contains file paths to images (.png, .jpg, .jpeg, .gif, .webp):
+
+1. Use the `analyze_image` tool to get a description of the image
+2. Or use `preprocess_prompt` tool to automatically augment the prompt with image descriptions
+
+Image paths look like:
+- /absolute/path/to/image.png
+- ./relative/path/to/screenshot.jpg
+- ~/home/path/to/diagram.webp
+
+The vision extension provides these tools:
+- `analyze_image`: Analyze a single image file
+- `analyze_images_in_text`: Find and analyze all images in text
+- `preprocess_prompt`: Augment a prompt with image descriptions (recommended)
+- `extract_image_paths`: Just extract paths without analyzing
+
+## Workflow Hub Context
+
+This is an agentic development workflow manager. Key concepts:
+- Tasks go through pipeline stages: PM -> DEV -> QA -> SEC -> DOCS -> COMPLETE
+- Runs are executions of the pipeline for a task
+- Each stage has an agent that processes the handoff
+
+## Project Structure
+
+- `app/` - Django application (models, views, services)
+- `scripts/` - Agent runners and utilities
+- `tests/` - Test files
+- `_spec/` - Specifications and handoffs
+
+## Agent Report Format
+
+When completing work, output a JSON report:
+```json
+{
+  "status": "pass" or "fail",
+  "summary": "Brief description of work done",
+  "details": { "relevant": "data" }
+}
+```

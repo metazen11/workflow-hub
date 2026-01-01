@@ -53,6 +53,27 @@ def _get_pipeline_stage_class(stage_value):
     return mapping.get(stage_value, "secondary")
 
 
+def _get_pipeline_stages_for_template():
+    """Build pipeline stages list from enum for template dropdowns.
+
+    Returns list of dicts with 'value' (lowercase) and 'label' keys.
+    DRY helper - use this instead of hardcoding stages.
+    """
+    return [
+        {'value': stage.value.lower(), 'label': stage.label}
+        for stage in TaskPipelineStage
+    ]
+
+
+def _build_task_kanban_dict():
+    """Build empty kanban dict from TaskPipelineStage enum.
+
+    Returns dict with lowercase stage values as keys, empty lists as values.
+    DRY helper - use this instead of hardcoding stages.
+    """
+    return {stage.value.lower(): [] for stage in TaskPipelineStage}
+
+
 def _get_open_bugs_count(db):
     """Get count of open bugs for nav badge (excludes killed)."""
     return db.query(BugReport).filter(
@@ -287,16 +308,8 @@ def tasks_list(request):
             'attachment_count': len(t.attachments) if hasattr(t, 'attachments') else 0,
         } for t in tasks]
 
-        # Get pipeline stages for dropdown
-        pipeline_stages = [
-            {'value': 'none', 'label': 'Backlog'},
-            {'value': 'pm', 'label': 'PM'},
-            {'value': 'dev', 'label': 'DEV'},
-            {'value': 'qa', 'label': 'QA'},
-            {'value': 'sec', 'label': 'SEC'},
-            {'value': 'docs', 'label': 'DOCS'},
-            {'value': 'complete', 'label': 'Complete'},
-        ]
+        # Get pipeline stages for dropdown (DRY - from enum)
+        pipeline_stages = _get_pipeline_stages_for_template()
 
         # Task statuses for dropdown
         task_statuses = [
@@ -695,12 +708,8 @@ def task_view(request, task_id):
         from app.models import TaskAttachment
         attachments = db.query(TaskAttachment).filter(TaskAttachment.task_id == task_id).all()
 
-        # Build pipeline stages from enum for dynamic dropdown
-        # Labels come from TaskPipelineStage.label property
-        pipeline_stages = [
-            {'value': stage.value, 'label': stage.label}
-            for stage in TaskPipelineStage
-        ]
+        # Build pipeline stages from enum using DRY helper
+        pipeline_stages = _get_pipeline_stages_for_template()
 
         context = {
             'active_page': 'tasks',
@@ -710,6 +719,7 @@ def task_view(request, task_id):
                 'task_id': task.task_id,
                 'title': task.title,
                 'description': task.description,
+                'acceptance_criteria': task.acceptance_criteria or [],
                 'status': task.status.value if task.status else 'backlog',
                 'status_class': _get_status_class(task.status.value if task.status else 'backlog'),
                 'priority': task.priority,
@@ -738,27 +748,20 @@ def task_board_view(request, project_id):
 
         open_bugs = _get_open_bugs_count(db)
 
-        # Categorize tasks by pipeline stage
-        board = {
-            'none': [],
-            'dev': [],
-            'qa': [],
-            'sec': [],
-            'docs': [],
-            'complete': []
-        }
+        # Build board dict using DRY helper
+        board = _build_task_kanban_dict()
 
         # Fetch all tasks for the project
         tasks = project.tasks
-        
+
         for task in tasks:
-            stage = task.pipeline_stage.value if task.pipeline_stage else 'none'
+            stage = task.pipeline_stage.value.lower() if task.pipeline_stage else 'none'
             if stage in board:
                 board[stage].append(task)
             else:
-                 # Fallback for unknown stages
+                # Fallback for unknown stages
                 board['none'].append(task)
-        
+
         # Sort each column by priority (descending)
         for stage in board:
             board[stage].sort(key=lambda t: t.priority or 0, reverse=True)
@@ -767,7 +770,8 @@ def task_board_view(request, project_id):
             'active_page': 'projects',
             'open_bugs_count': open_bugs if open_bugs > 0 else None,
             'project': project,
-            'board': board
+            'board': board,
+            'pipeline_stages': _get_pipeline_stages_for_template()
         }
 
         return render(request, 'task_board.html', context)
