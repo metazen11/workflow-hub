@@ -428,4 +428,92 @@ class TestValidation:
         db.commit()
 
 
+class TestLedgerIntegration:
+    """Tests for automatic ledger entry and task creation on claim failure."""
+
+    def test_failed_test_creates_ledger_entry(self, db, sample_project, claim_service):
+        """Test that a failing test creates a ledger entry."""
+        import os
+        from app.services.ledger_service import LedgerService
+
+        # Create a claim with a test that will fail
+        claim, _ = claim_service.create_claim(
+            project_id=sample_project.id,
+            claim_text="Test accuracy >= 90%"
+        )
+
+        test, _ = claim_service.create_test(
+            claim_id=claim.id,
+            name="Threshold Test",
+            test_type=TestType.METRIC_THRESHOLD,
+            config={
+                "metric_file": "/nonexistent/file.json",  # Will fail
+                "metric_name": "accuracy",
+                "threshold": 0.9
+            }
+        )
+
+        # Run the test (will fail because file doesn't exist)
+        evidence, error = claim_service.run_test(test.id)
+
+        # Check that a ledger entry was created
+        ledger_service = LedgerService(db)
+        entries = ledger_service.get_all_entries()
+
+        # Find entry for our claim
+        our_entries = [e for e in entries if e.get('claim_id') == claim.id]
+        assert len(our_entries) >= 1, "Ledger entry should be created on test failure"
+
+        entry = our_entries[0]
+        assert entry['status'] == 'failed'
+        assert 'failure_mode' in entry
+
+        # Cleanup
+        db.delete(claim)
+        db.commit()
+
+    def test_failed_test_creates_tasks(self, db, sample_project, claim_service):
+        """Test that a failing test auto-generates tasks."""
+        from app.models import Task
+
+        initial_task_count = db.query(Task).filter(Task.project_id == sample_project.id).count()
+
+        # Create a claim with a test that will fail
+        claim, _ = claim_service.create_claim(
+            project_id=sample_project.id,
+            claim_text="Another accuracy claim >= 95%"
+        )
+
+        test, _ = claim_service.create_test(
+            claim_id=claim.id,
+            name="Another Threshold Test",
+            test_type=TestType.METRIC_THRESHOLD,
+            config={
+                "metric_file": "/nonexistent/file2.json",
+                "metric_name": "accuracy",
+                "threshold": 0.95
+            }
+        )
+
+        # Run the test (will fail)
+        claim_service.run_test(test.id)
+
+        # Check that tasks were created
+        final_task_count = db.query(Task).filter(Task.project_id == sample_project.id).count()
+        assert final_task_count > initial_task_count, "Tasks should be created on test failure"
+
+        # Check task content
+        new_tasks = db.query(Task).filter(
+            Task.project_id == sample_project.id,
+            Task.title.contains("Investigate")
+        ).all()
+        assert len(new_tasks) >= 1, "Investigation task should be created"
+
+        # Cleanup
+        for task in db.query(Task).filter(Task.project_id == sample_project.id).all():
+            db.delete(task)
+        db.delete(claim)
+        db.commit()
+
+
 # Run with: pytest tests/test_claims.py -v

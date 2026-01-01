@@ -26,6 +26,7 @@ from app.models.project import Project
 from app.models.task import Task
 from app.models.run import Run
 from app.models.audit import log_event
+from app.services.ledger_service import LedgerService
 
 
 class ClaimService:
@@ -316,6 +317,41 @@ class ClaimService:
 
             # Update claim status based on all tests
             self._update_claim_status(test.claim_id)
+
+            # If test failed, create ledger entry and auto-generate tasks
+            if not result.get("passed"):
+                claim = self.get_claim(test.claim_id)
+                if claim:
+                    ledger_service = LedgerService(self.db)
+
+                    # Create ledger entry
+                    entry_id, _ = ledger_service.create_entry_from_failure(
+                        claim=claim,
+                        test=test,
+                        result=result
+                    )
+
+                    # Auto-generate tasks from failure
+                    if entry_id:
+                        tasks = ledger_service.create_tasks_from_failure(
+                            claim=claim,
+                            test=test,
+                            result=result,
+                            entry_id=entry_id
+                        )
+
+                        log_event(
+                            self.db,
+                            actor=actor,
+                            action="claim_failed",
+                            entity_type="claim",
+                            entity_id=claim.id,
+                            details={
+                                "ledger_entry": entry_id,
+                                "tasks_created": len(tasks),
+                                "test_name": test.name
+                            }
+                        )
 
             return evidence, None
 
