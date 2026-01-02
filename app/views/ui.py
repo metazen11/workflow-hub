@@ -904,3 +904,24 @@ def ledger_entry_view(request, entry_id):
         return render(request, 'ledger_entry.html', context)
     finally:
         db.close()
+
+
+def settings_view(request):
+    """Settings page for configuring the application.
+
+    GET /ui/settings/
+
+    Future: Requires admin permission.
+    """
+    db = next(get_db())
+    try:
+        open_bugs = _get_open_bugs_count(db)
+
+        context = {
+            'active_page': 'settings',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+        }
+
+        return render(request, 'settings.html', context)
+    finally:
+        db.close()

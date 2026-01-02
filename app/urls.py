@@ -17,6 +17,7 @@ urlpatterns = [
     path('ui/bugs/<int:bug_id>/', ui.bug_detail_view, name='bug_detail_view'),
     path('ui/ledger/', ui.ledger_view, name='ledger'),
     path('ui/ledger/<str:entry_id>/', ui.ledger_entry_view, name='ledger_entry'),
+    path('ui/settings/', ui.settings_view, name='settings'),
 
     # API
     path('api/status', api.api_status, name='api_status'),
@@ -116,6 +117,12 @@ urlpatterns = [
     path('api/director/settings', api.director_settings_update, name='director_settings'),
     path('api/director/activity', api.director_activity, name='director_activity'),
     path('api/director/run-cycle', api.director_run_cycle, name='director_run_cycle'),
+
+    # App Settings (Admin Panel - future: requires permission)
+    path('api/settings', api.app_settings_list, name='app_settings_list'),
+    path('api/settings/update', api.app_settings_update, name='app_settings_update'),
+    path('api/settings/seed', api.app_settings_seed, name='app_settings_seed'),
+    path('api/settings/<str:key>', api.app_settings_get, name='app_settings_get'),
 
     # Audit
     path('api/audit', api.audit_log, name='audit_log'),

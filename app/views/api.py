@@ -3428,6 +3428,141 @@ def director_run_cycle(request):
 
 
 # =============================================================================
+# App Settings Endpoints (Admin Panel)
+# =============================================================================
+
+def app_settings_list(request):
+    """Get all app settings, grouped by category.
+
+    GET /api/settings
+
+    Query params:
+        - category: Filter by category (llm, agent, queue, ui, etc.)
+    """
+    from app.models.app_settings import AppSetting
+
+    category = request.GET.get("category")
+
+    db = next(get_db())
+    try:
+        settings = AppSetting.get_all(db, category=category)
+
+        # Group by category
+        grouped = {}
+        for s in settings:
+            cat = s.category
+            if cat not in grouped:
+                grouped[cat] = []
+            grouped[cat].append(s.to_dict())
+
+        return JsonResponse({
+            "settings": grouped,
+            "categories": list(grouped.keys()),
+            "count": len(settings)
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def app_settings_update(request):
+    """Update one or more app settings.
+
+    POST /api/settings/update
+
+    Body: {"settings": [{"key": "KEY", "value": "VALUE"}, ...]}
+
+    Future: Requires admin permission.
+    """
+    from app.models.app_settings import AppSetting
+
+    data = _get_json_body(request) or {}
+    updates = data.get("settings", [])
+
+    if not updates:
+        return JsonResponse({"error": "No settings provided"}, status=400)
+
+    db = next(get_db())
+    try:
+        updated = []
+        for item in updates:
+            key = item.get("key")
+            value = item.get("value")
+            if not key:
+                continue
+
+            # Check if setting exists and is editable
+            setting = db.query(AppSetting).filter(AppSetting.key == key).first()
+            if setting:
+                if not setting.editable:
+                    continue  # Skip read-only settings
+                setting.value = value
+                updated.append(setting.to_dict())
+            else:
+                # Create new setting
+                setting = AppSetting.set(
+                    db, key, value,
+                    description=item.get("description"),
+                    category=item.get("category", "general"),
+                    is_secret=item.get("is_secret", False)
+                )
+                updated.append(setting.to_dict())
+
+        db.commit()
+
+        return JsonResponse({
+            "status": "updated",
+            "updated": updated,
+            "count": len(updated)
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def app_settings_seed(request):
+    """Seed default settings if they don't exist.
+
+    POST /api/settings/seed
+
+    Future: Requires admin permission.
+    """
+    from app.models.app_settings import AppSetting
+
+    db = next(get_db())
+    try:
+        AppSetting.seed_defaults(db)
+        settings = AppSetting.get_all(db)
+
+        return JsonResponse({
+            "status": "seeded",
+            "count": len(settings)
+        })
+    finally:
+        db.close()
+
+
+def app_settings_get(request, key):
+    """Get a single setting by key.
+
+    GET /api/settings/{key}
+    """
+    from app.models.app_settings import AppSetting
+
+    db = next(get_db())
+    try:
+        setting = db.query(AppSetting).filter(AppSetting.key == key).first()
+        if not setting:
+            return JsonResponse({"error": f"Setting '{key}' not found"}, status=404)
+
+        return JsonResponse(setting.to_dict())
+    finally:
+        db.close()
+
+
+# =============================================================================
 # Proof-of-Work Endpoints
 # =============================================================================
 

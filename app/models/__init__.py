@@ -33,6 +33,7 @@ from app.models.bug_report import BugReport, BugReportStatus
 from app.models.attachment import TaskAttachment, AttachmentType, validate_file_security, AttachmentSecurityError
 from app.models.role_config import RoleConfig
 from app.models.director_settings import DirectorSettings
+from app.models.app_settings import AppSetting
 from app.models.deployment_history import DeploymentHistory, DeploymentStatus
 from app.models.llm_session import LLMSession
 from app.models.llm_job import LLMJob, JobType, JobStatus, JobPriority
@@ -86,6 +87,7 @@ __all__ = [
     'AttachmentSecurityError',
     'RoleConfig',
     'DirectorSettings',
+    'AppSetting',
     'DeploymentHistory',
     'DeploymentStatus',
     'LLMSession',
