@@ -3166,18 +3166,24 @@ def task_details(request, task_id):
 
 # --- Director Control Panel ---
 
-# Global variable to track director daemon state
+# Global variable to track director daemon running state (not persisted - just runtime)
 _director_daemon_thread = None
 _director_daemon_running = False
-_director_settings = {
-    "poll_interval": 30,
-    "auto_start": False,
-    "enforce_tdd": True,
-    "enforce_dry": True,
-    "enforce_security": True,
-    "include_images": False,  # Enable multimodal image processing in agent prompts
-    "vision_model": "ai/qwen3-vl",  # Model to use for image analysis (ai/gemma3, ai/qwen3-vl)
-}
+
+
+def _get_director_settings(db=None):
+    """Get Director settings from database."""
+    from app.models.director_settings import DirectorSettings
+    close_db = False
+    if db is None:
+        db = next(get_db())
+        close_db = True
+    try:
+        settings = DirectorSettings.get_settings(db)
+        return settings.to_dict()
+    finally:
+        if close_db:
+            db.close()
 
 
 def director_status(request):
@@ -3185,10 +3191,13 @@ def director_status(request):
 
     GET /api/director/status
     """
-    global _director_daemon_running, _director_settings
+    global _director_daemon_running
 
     db = next(get_db())
     try:
+        # Get settings from database
+        settings = _get_director_settings(db)
+
         # Count director actions from audit log
         from app.models.audit import AuditEvent
         from datetime import datetime, timedelta
@@ -3217,7 +3226,7 @@ def director_status(request):
 
         return JsonResponse({
             "running": _director_daemon_running,
-            "settings": _director_settings,
+            "settings": settings,
             "stats": {
                 "tasks_reviewed_hour": tasks_reviewed_hour,
                 "tasks_reviewed_day": tasks_reviewed_day,
@@ -3235,15 +3244,29 @@ def director_start(request):
     """Start the Director daemon.
 
     POST /api/director/start
+
+    Also updates 'enabled' in database to True so Director auto-starts on restart.
     """
-    global _director_daemon_thread, _director_daemon_running, _director_settings
+    global _director_daemon_thread, _director_daemon_running
 
     if _director_daemon_running:
         return JsonResponse({"status": "already_running", "message": "Director is already running"})
 
     data = _get_json_body(request) or {}
     run_id = data.get("run_id")
-    poll_interval = data.get("poll_interval", _director_settings["poll_interval"])
+
+    # Get settings from DB
+    db = next(get_db())
+    try:
+        from app.models.director_settings import DirectorSettings
+        settings = DirectorSettings.get_settings(db)
+        poll_interval = data.get("poll_interval", settings.poll_interval)
+
+        # Update enabled flag so Director auto-starts on restart
+        settings.enabled = True
+        db.commit()
+    finally:
+        db.close()
 
     from app.services.director_service import run_director_daemon
 
@@ -3273,6 +3296,7 @@ def director_stop(request):
     POST /api/director/stop
 
     Note: This sets a flag - the daemon will stop on next poll cycle.
+    Also updates 'enabled' in database to False so Director doesn't auto-start on restart.
     """
     global _director_daemon_running
 
@@ -3281,6 +3305,16 @@ def director_stop(request):
 
     # Signal stop (daemon checks this and exits)
     _director_daemon_running = False
+
+    # Update enabled flag so Director doesn't auto-start on restart
+    db = next(get_db())
+    try:
+        from app.models.director_settings import DirectorSettings
+        settings = DirectorSettings.get_settings(db)
+        settings.enabled = False
+        db.commit()
+    finally:
+        db.close()
 
     return JsonResponse({
         "status": "stopping",
@@ -3291,33 +3325,42 @@ def director_stop(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def director_settings_update(request):
-    """Update Director settings.
+    """Update Director settings (persisted to database).
 
     POST /api/director/settings
     """
-    global _director_settings
-
     data = _get_json_body(request) or {}
 
-    if "poll_interval" in data:
-        _director_settings["poll_interval"] = int(data["poll_interval"])
-    if "auto_start" in data:
-        _director_settings["auto_start"] = bool(data["auto_start"])
-    if "enforce_tdd" in data:
-        _director_settings["enforce_tdd"] = bool(data["enforce_tdd"])
-    if "enforce_dry" in data:
-        _director_settings["enforce_dry"] = bool(data["enforce_dry"])
-    if "enforce_security" in data:
-        _director_settings["enforce_security"] = bool(data["enforce_security"])
-    if "include_images" in data:
-        _director_settings["include_images"] = bool(data["include_images"])
-    if "vision_model" in data:
-        _director_settings["vision_model"] = str(data["vision_model"])
+    db = next(get_db())
+    try:
+        from app.models.director_settings import DirectorSettings
+        settings = DirectorSettings.get_settings(db)
 
-    return JsonResponse({
-        "status": "updated",
-        "settings": _director_settings
-    })
+        # Update provided fields
+        if "enabled" in data:
+            settings.enabled = bool(data["enabled"])
+        if "poll_interval" in data:
+            settings.poll_interval = int(data["poll_interval"])
+        if "enforce_tdd" in data:
+            settings.enforce_tdd = bool(data["enforce_tdd"])
+        if "enforce_dry" in data:
+            settings.enforce_dry = bool(data["enforce_dry"])
+        if "enforce_security" in data:
+            settings.enforce_security = bool(data["enforce_security"])
+        if "include_images" in data:
+            settings.include_images = bool(data["include_images"])
+        if "vision_model" in data:
+            settings.vision_model = str(data["vision_model"])
+
+        db.commit()
+        db.refresh(settings)
+
+        return JsonResponse({
+            "status": "updated",
+            "settings": settings.to_dict()
+        })
+    finally:
+        db.close()
 
 
 def director_activity(request):
