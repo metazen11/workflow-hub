@@ -5885,12 +5885,14 @@ def queue_status(request):
     """Get current queue status.
 
     GET /api/queue/status
+    GET /api/queue/status?pending=5  (include up to 5 pending job details)
 
     Returns:
         Queue lengths, running jobs, estimated wait times
     """
     from app.services.job_queue_service import get_queue_service
     from app.services.job_worker import get_worker_manager
+    from app.models.llm_job import LLMJob, JobStatus
 
     queue = get_queue_service()
     manager = get_worker_manager()
@@ -5898,10 +5900,61 @@ def queue_status(request):
     status = queue.get_queue_status()
     worker_status = manager.get_status()
 
-    return JsonResponse({
+    # Optionally include pending job details
+    pending_limit = request.GET.get('pending')
+    if pending_limit:
+        try:
+            limit = min(int(pending_limit), 20)  # Max 20
+            db = queue._get_db()
+            pending_jobs = db.query(LLMJob).filter(
+                LLMJob.status == JobStatus.PENDING.value
+            ).order_by(
+                LLMJob.priority.asc(),
+                LLMJob.created_at.asc()
+            ).limit(limit).all()
+
+            status['pending_jobs'] = [
+                {
+                    'id': j.id,
+                    'job_type': j.job_type,
+                    'task_id': j.task_id,
+                    'project_id': j.project_id,
+                    'priority': j.priority,
+                    'created_at': j.created_at.isoformat() if j.created_at else None
+                }
+                for j in pending_jobs
+            ]
+        except (ValueError, TypeError):
+            pass
+
+    # Check DMR status if requested
+    dmr_status = None
+    if request.GET.get('dmr') == '1':
+        import requests
+        try:
+            dmr_resp = requests.get('http://localhost:12434/engines/llama.cpp/v1/models', timeout=2)
+            if dmr_resp.status_code == 200:
+                models = dmr_resp.json().get('data', [])
+                dmr_status = {
+                    'available': True,
+                    'models': len(models),
+                    'model_ids': [m['id'] for m in models[:5]]
+                }
+            else:
+                dmr_status = {'available': False, 'error': f'HTTP {dmr_resp.status_code}'}
+        except requests.exceptions.Timeout:
+            dmr_status = {'available': False, 'error': 'timeout'}
+        except Exception as e:
+            dmr_status = {'available': False, 'error': str(e)}
+
+    response = {
         "queue": status,
         "workers": worker_status
-    })
+    }
+    if dmr_status is not None:
+        response['dmr'] = dmr_status
+
+    return JsonResponse(response)
 
 
 @csrf_exempt

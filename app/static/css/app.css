@@ -194,6 +194,336 @@ body {
   background: var(--bg-secondary);
 }
 
+/* Queue Status Indicator in Nav */
+.queue-status-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  cursor: default;
+  min-width: 100px;
+}
+
+.queue-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
+.queue-icon {
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+
+.queue-indicator.is-processing .queue-icon {
+  color: var(--accent);
+  animation: queue-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes queue-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.queue-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-muted);
+  transition: all 0.2s;
+}
+
+.queue-badge.has-jobs {
+  background: var(--warning-light);
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.queue-badge.is-running {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.queue-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.queue-current {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.queue-task-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.queue-task-link:hover {
+  text-decoration: underline;
+}
+
+.queue-pending-count {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+/* Queue Popover */
+.queue-status-nav {
+  position: relative;
+  cursor: pointer;
+}
+
+.queue-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.queue-popover.open {
+  display: block;
+}
+
+.queue-popover-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.queue-popover-close {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.queue-popover-close:hover {
+  color: var(--text-primary);
+}
+
+.queue-popover-content {
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.queue-stats-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 0.85rem;
+}
+
+.queue-stat-label {
+  color: var(--text-secondary);
+}
+
+.queue-stat-value {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.queue-current-job {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.queue-job-header {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.queue-job-details {
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.queue-job-details a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.queue-job-details a:hover {
+  text-decoration: underline;
+}
+
+.queue-log-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.queue-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.queue-log-header span {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.queue-log-refresh {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.queue-log-refresh:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.queue-log-output {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  font-size: 0.75rem;
+  font-family: 'SF Mono', Consolas, monospace;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.queue-pending-list {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.queue-pending-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.queue-pending-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.queue-pending-item:last-child {
+  border-bottom: none;
+}
+
+.queue-pending-item a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.queue-pending-item a:hover {
+  text-decoration: underline;
+}
+
+.pending-type {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.queue-pending-more {
+  font-style: italic;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+/* DMR Status */
+.dmr-checking {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.dmr-ready {
+  color: var(--success);
+}
+
+.dmr-offline {
+  color: var(--danger);
+}
+
+.dmr-models {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.dmr-error {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.queue-popover-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+}
+
+.btn-xs {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+}
+
+/* Hide on mobile */
+@media (max-width: 768px) {
+  .queue-status-nav {
+    display: none;
+  }
+}
+
 /* Mobile menu for top nav */
 @media (max-width: 768px) {
   .top-nav {

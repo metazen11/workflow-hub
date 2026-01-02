@@ -43,9 +43,13 @@ def cleanup_test_projects():
             SELECT id FROM projects WHERE
                 name ILIKE '%test%'
                 OR name ~ '[0-9a-f]{8}$'
-                OR name IN ('Other Project', 'Full Stack App', 'Commands Project',
-                           'Key Files Project', 'Dev Settings Project', 'Repo Info Project',
-                           'Complete Project')
+                OR name LIKE 'Complete Project %'
+                OR name LIKE 'Repo Info Project %'
+                OR name LIKE 'Dev Settings Project %'
+                OR name LIKE 'Commands Project %'
+                OR name LIKE 'Key Files Project %'
+                OR name LIKE 'Full Stack App %'
+                OR name LIKE 'Other Project %'
         """))
         project_ids = [row[0] for row in result]
 
@@ -62,6 +66,8 @@ def cleanup_test_projects():
             ("task_requirements", f"task_id IN (SELECT id FROM tasks WHERE project_id IN ({ids_str}))"),
             ("task_attachments", f"task_id IN (SELECT id FROM tasks WHERE project_id IN ({ids_str}))"),
             ("work_cycles", f"project_id IN ({ids_str})"),
+            ("llm_jobs", f"project_id IN ({ids_str}) OR task_id IN (SELECT id FROM tasks WHERE project_id IN ({ids_str}))"),
+            ("llm_sessions", f"project_id IN ({ids_str})"),
             ("agent_reports", f"run_id IN (SELECT id FROM runs WHERE project_id IN ({ids_str}))"),
             ("deployment_history", f"run_id IN (SELECT id FROM runs WHERE project_id IN ({ids_str}))"),
             ("runs", f"project_id IN ({ids_str})"),
@@ -125,6 +131,29 @@ def cleanup_test_ledger_entries():
         print(f"[conftest] Cleaned up {removed_count} test ledger entries")
 
 
+def cleanup_test_workspaces():
+    """Remove test workspace directories."""
+    import shutil
+    workspaces_dir = os.path.join(PROJECT_ROOT, 'workspaces')
+    if not os.path.exists(workspaces_dir):
+        return
+
+    removed_count = 0
+    for item in os.listdir(workspaces_dir):
+        # Match test_project_* and other test patterns
+        if item.startswith('test_project_') or item.startswith('test-'):
+            item_path = os.path.join(workspaces_dir, item)
+            try:
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                    removed_count += 1
+            except Exception:
+                pass
+
+    if removed_count > 0:
+        print(f"[conftest] Cleaned up {removed_count} test workspace directories")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_database():
     """Ensure database tables exist and clean up after tests."""
@@ -133,6 +162,7 @@ def setup_database():
     # Cleanup test data after all tests complete
     cleanup_test_projects()
     cleanup_test_ledger_entries()
+    cleanup_test_workspaces()
 
 
 @pytest.fixture(scope="function")
