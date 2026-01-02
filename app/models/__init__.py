@@ -19,13 +19,13 @@ Legacy models (deprecated, will be removed):
 - AgentReport: Being replaced by WorkCycle
 - Requirement: Being replaced by Claims
 - ThreatIntel: Unused
-- Handoff, HandoffStatus: Renamed to WorkCycle
+- WorkCycle, WorkCycleStatus: Renamed to WorkCycle
 - TaskPipelineStage: Removed, claims define validation
 """
 from app.models.credential import Credential, CredentialType
 from app.models.environment import Environment, EnvironmentType
 from app.models.project import Project
-from app.models.task import Task, TaskStatus
+from app.models.task import Task, TaskStatus, TaskPipelineStage
 from app.models.work_cycle import WorkCycle, WorkCycleStatus
 from app.models.audit import AuditEvent
 from app.models.webhook import Webhook
@@ -34,6 +34,7 @@ from app.models.attachment import TaskAttachment, AttachmentType, validate_file_
 from app.models.role_config import RoleConfig
 from app.models.deployment_history import DeploymentHistory, DeploymentStatus
 from app.models.llm_session import LLMSession
+from app.models.llm_job import LLMJob, JobType, JobStatus, JobPriority
 from app.models.claim import (
     Claim, ClaimTest, ClaimEvidence,
     ClaimScope, ClaimStatus, ClaimCategory,
@@ -47,13 +48,9 @@ from app.models.run import Run, RunState
 from app.models.report import AgentReport, AgentRole
 from app.models.threat_intel import ThreatIntel, ThreatStatus
 from app.models.proof import Proof, ProofType
-from app.models.handoff import Handoff, HandoffStatus
+from app.models.work_cycle import WorkCycle, WorkCycleStatus
 
-# For backward compatibility, alias TaskPipelineStage (deprecated)
-try:
-    from app.models.task import TaskPipelineStage
-except ImportError:
-    TaskPipelineStage = None
+# TaskPipelineStage imported above for backward compatibility
 
 
 __all__ = [
@@ -90,6 +87,10 @@ __all__ = [
     'DeploymentHistory',
     'DeploymentStatus',
     'LLMSession',
+    'LLMJob',
+    'JobType',
+    'JobStatus',
+    'JobPriority',
     'AuditEvent',
     'Webhook',
 
@@ -103,7 +104,7 @@ __all__ = [
     'ThreatStatus',
     'Proof',
     'ProofType',
-    'Handoff',
-    'HandoffStatus',
+    'WorkCycle',
+    'WorkCycleStatus',
     'TaskPipelineStage',
 ]

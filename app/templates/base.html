@@ -35,6 +35,35 @@
                         </svg>
                         Dashboard
                     </a>
+                    <a href="/ui/projects/" class="nav-item {% if active_page == 'projects' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        Projects
+                    </a>
+                    <a href="/ui/tasks/" class="nav-item {% if active_page == 'tasks' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 11l3 3L22 4"></path>
+                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                        </svg>
+                        Tasks
+                    </a>
+                    <a href="/ui/board/" class="nav-item {% if active_page == 'board' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="5" height="18" rx="1"></rect>
+                            <rect x="10" y="3" width="5" height="12" rx="1"></rect>
+                            <rect x="17" y="3" width="5" height="8" rx="1"></rect>
+                        </svg>
+                        Board
+                    </a>
+                    <a href="/ui/ledger/" class="nav-item {% if active_page == 'ledger' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="9" y1="15" x2="15" y2="15"></line>
+                        </svg>
+                        Ledger
+                    </a>
                     <a href="/ui/bugs/" class="nav-item {% if active_page == 'bugs' %}active{% endif %}">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"></circle>
@@ -44,32 +73,18 @@
                         Bugs
                         {% if open_bugs_count %}<span class="badge badge-danger">{{ open_bugs_count }}</span>{% endif %}
                     </a>
-                    <a href="/ui/tasks/" class="nav-item {% if active_page == 'tasks' %}active{% endif %}">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M9 11l3 3L22 4"></path>
-                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-                        </svg>
-                        Tasks
-                    </a>
                     <a href="/ui/runs/" class="nav-item {% if active_page == 'runs' %}active{% endif %}">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polygon points="5 3 19 12 5 21 5 3"></polygon>
                         </svg>
                         Runs
                     </a>
-                    <a href="/ui/projects/" class="nav-item {% if active_page == 'projects' %}active{% endif %}">
+                    <a href="#" class="nav-item" id="add-task-nav-button">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
                         </svg>
-                        Projects
-                    </a>
-                    <a href="/ui/ledger/" class="nav-item {% if active_page == 'ledger' %}active{% endif %}">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                            <polyline points="14 2 14 8 20 8"></polyline>
-                            <line x1="9" y1="15" x2="15" y2="15"></line>
-                        </svg>
-                        Ledger
+                        Add Task
                     </a>
                 </nav>
             </div>
@@ -142,10 +157,31 @@
     <script src="/static/js/app.js?v=9"></script>
     <script src="/static/js/task-actions.js?v=3"></script>
     <script src="/static/js/react-components.js?v=1"></script>
-
     <!-- Bug Report Widget - auto-captures current project from URL -->
     <script>
+        // Add Task Button Handler
+        document.addEventListener('DOMContentLoaded', function() {
+            const addTaskButton = document.getElementById('add-task-nav-button');
+            if (addTaskButton) {
+                addTaskButton.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    // Check if task-create-modal already exists in the page
+                    const modal = document.getElementById('task-create-modal');
+                    if (modal) {
+                        // If modal exists (from task_board.html), open it
+                        openTaskCreateModal(null); // null project_id for global task
+                    } else {
+                        // If modal doesn't exist, we might need to load it or show an error
+                        alert('Task creation functionality not available in this context');
+                    }
+                });
+            }
+        });
+    </script>
+
+    <script>
         window.BUG_REPORT_API = '/api/bugs/create';
+        window.BUG_REPORT_APP = 'Workflow Hub';
         window.BUG_REPORT_APP = 'Workflow Hub';
         // Auto-detect project from URL if on project/run page
         (function () {

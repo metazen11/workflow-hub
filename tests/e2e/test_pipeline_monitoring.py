@@ -5,7 +5,7 @@ Verifies:
 1. Run states are progressing through pipeline
 2. Database fields are being populated by agents
 3. UI displays correct information
-4. Handoffs between agents work correctly
+4. WorkCycles between agents work correctly
 
 Run with: pytest tests/e2e/test_pipeline_monitoring.py -v
 """

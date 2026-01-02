@@ -4,13 +4,19 @@ Uses the production database (wfhub) directly for simplicity.
 TODO: Add separate test database isolation when needed for CI/CD.
 """
 import os
+import glob
 import uuid
 import pytest
+import yaml
 from dotenv import load_dotenv
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 # Load environment from .env file
 load_dotenv()
+
+# Project root for filesystem cleanup
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Configure Django settings
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
@@ -23,11 +29,110 @@ from app.db import Base, engine, get_db
 from app.models import Project, Requirement, Task, Run, AgentReport, ThreatIntel, AuditEvent
 
 
+def cleanup_test_projects():
+    """Delete all test projects and related data after test session.
+
+    Matches projects by:
+    - Names containing 'test' (case-insensitive)
+    - Names ending with 8-character hex suffix (uuid pattern from unique_name())
+    - Known test fixture base names
+    """
+    with engine.connect() as conn:
+        # Get test project IDs - comprehensive pattern matching
+        result = conn.execute(text("""
+            SELECT id FROM projects WHERE
+                name ILIKE '%test%'
+                OR name ~ '[0-9a-f]{8}$'
+                OR name IN ('Other Project', 'Full Stack App', 'Commands Project',
+                           'Key Files Project', 'Dev Settings Project', 'Repo Info Project',
+                           'Complete Project')
+        """))
+        project_ids = [row[0] for row in result]
+
+        if not project_ids:
+            return
+
+        ids_str = ','.join(str(id) for id in project_ids)
+
+        # Delete in dependency order
+        tables = [
+            ("claim_evidence", f"test_id IN (SELECT id FROM claim_tests WHERE claim_id IN (SELECT id FROM claims WHERE project_id IN ({ids_str}) OR task_id IN (SELECT id FROM tasks WHERE project_id IN ({ids_str}))))"),
+            ("claim_tests", f"claim_id IN (SELECT id FROM claims WHERE project_id IN ({ids_str}) OR task_id IN (SELECT id FROM tasks WHERE project_id IN ({ids_str})))"),
+            ("claims", f"project_id IN ({ids_str}) OR task_id IN (SELECT id FROM tasks WHERE project_id IN ({ids_str}))"),
+            ("task_requirements", f"task_id IN (SELECT id FROM tasks WHERE project_id IN ({ids_str}))"),
+            ("task_attachments", f"task_id IN (SELECT id FROM tasks WHERE project_id IN ({ids_str}))"),
+            ("work_cycles", f"project_id IN ({ids_str})"),
+            ("agent_reports", f"run_id IN (SELECT id FROM runs WHERE project_id IN ({ids_str}))"),
+            ("deployment_history", f"run_id IN (SELECT id FROM runs WHERE project_id IN ({ids_str}))"),
+            ("runs", f"project_id IN ({ids_str})"),
+            ("tasks", f"project_id IN ({ids_str})"),
+            ("requirements", f"project_id IN ({ids_str})"),
+            ("bug_reports", f"project_id IN ({ids_str})"),
+            ("credentials", f"project_id IN ({ids_str})"),
+            ("environments", f"project_id IN ({ids_str})"),
+            ("projects", f"id IN ({ids_str})"),
+        ]
+
+        for table, where_clause in tables:
+            try:
+                conn.execute(text(f"DELETE FROM {table} WHERE {where_clause}"))
+            except Exception:
+                pass  # Table may not exist
+
+        conn.commit()
+        print(f"\n[conftest] Cleaned up {len(project_ids)} test projects")
+
+
+def cleanup_test_ledger_entries():
+    """Remove test entries from the failed claims ledger."""
+    ledger_dir = os.path.join(PROJECT_ROOT, 'ledger')
+    index_path = os.path.join(ledger_dir, 'failed_claims.yaml')
+    claims_dir = os.path.join(ledger_dir, 'failed_claims')
+
+    if not os.path.exists(index_path):
+        return
+
+    with open(index_path, 'r') as f:
+        index_data = yaml.safe_load(f) or {'entries': []}
+
+    original_count = len(index_data.get('entries', []))
+
+    # Filter out test entries
+    real_entries = [
+        e for e in index_data.get('entries', [])
+        if not (e.get('project', '').startswith('test_project') or
+                'test' in e.get('project', '').lower())
+    ]
+
+    removed_count = original_count - len(real_entries)
+
+    if removed_count > 0:
+        index_data['entries'] = real_entries
+        with open(index_path, 'w') as f:
+            yaml.dump(index_data, f, default_flow_style=False)
+
+        # Remove individual claim files
+        for claim_file in glob.glob(os.path.join(claims_dir, 'FC-*.yaml')):
+            try:
+                with open(claim_file, 'r') as f:
+                    claim_data = yaml.safe_load(f) or {}
+                project = claim_data.get('project', '')
+                if project.startswith('test_project') or 'test' in project.lower():
+                    os.remove(claim_file)
+            except Exception:
+                pass
+
+        print(f"[conftest] Cleaned up {removed_count} test ledger entries")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_database():
-    """Ensure database tables exist."""
+    """Ensure database tables exist and clean up after tests."""
     Base.metadata.create_all(bind=engine)
     yield
+    # Cleanup test data after all tests complete
+    cleanup_test_projects()
+    cleanup_test_ledger_entries()
 
 
 @pytest.fixture(scope="function")

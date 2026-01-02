@@ -1,0 +1,999 @@
+{% extends 'base.html' %}
+
+{% block title %}Task Board - Workflow Hub{% endblock %}
+
+{% block content %}
+<div class="row mb-4 align-items-center">
+    <div class="col-md-6">
+        <h1>
+            <i class="bi bi-kanban me-2"></i>Task Board
+            <small class="text-muted fs-5 ms-2">All Projects</small>
+        </h1>
+        <p class="text-muted mb-0">Global view of all tasks across projects</p>
+    </div>
+    <div class="col-md-6 text-end">
+        <div class="d-inline-flex align-items-center gap-2">
+            <!-- Search -->
+            <input type="text" class="form-control form-control-sm" id="searchInput"
+                   placeholder="Search tasks..." style="width: 180px;">
+            <!-- Filters -->
+            <select class="form-select form-select-sm" id="priorityFilter" style="width: auto;">
+                <option value="all">All Priorities</option>
+                <option value="high">High & Critical</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+            </select>
+            <select class="form-select form-select-sm" id="projectFilter" style="width: auto;">
+                <option value="all">All Projects</option>
+                {% for id, proj in projects.items %}
+                <option value="{{ id }}">{{ proj.name }}</option>
+                {% endfor %}
+            </select>
+            <!-- Add Task Button -->
+            <button class="btn btn-primary btn-sm" onclick="openCreateTaskModal()">
+                <i class="bi bi-plus-lg me-1"></i>Add Task
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="kanban-board">
+    <!-- Backlog -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #6c757d;">
+            BACKLOG <span class="kanban-count" data-col="none">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-none" data-stage="none">
+            {% for task in board.none %}
+            {% include 'partials/kanban_card_global.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- PM -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #0dcaf0;">
+            PM <span class="kanban-count" data-col="pm">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-pm" data-stage="pm">
+            {% for task in board.pm %}
+            {% include 'partials/kanban_card_global.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Dev -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #0d6efd;">
+            DEV <span class="kanban-count" data-col="dev">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-dev" data-stage="dev">
+            {% for task in board.dev %}
+            {% include 'partials/kanban_card_global.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- QA -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #ffc107; color: #000;">
+            QA <span class="kanban-count" data-col="qa">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-qa" data-stage="qa">
+            {% for task in board.qa %}
+            {% include 'partials/kanban_card_global.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Security -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #6f42c1;">
+            SEC <span class="kanban-count" data-col="sec">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-sec" data-stage="sec">
+            {% for task in board.sec %}
+            {% include 'partials/kanban_card_global.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Docs -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #20c997;">
+            DOCS <span class="kanban-count" data-col="docs">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-docs" data-stage="docs">
+            {% for task in board.docs %}
+            {% include 'partials/kanban_card_global.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Complete -->
+    <div class="kanban-col">
+        <div class="kanban-col-header" style="background: #198754;">
+            DONE <span class="kanban-count" data-col="complete">0</span>
+        </div>
+        <div class="kanban-col-body kanban-column" id="col-complete" data-stage="complete">
+            {% for task in board.complete %}
+            {% include 'partials/kanban_card_global.html' with task=task %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Kanban Board Layout */
+    .kanban-board {
+        display: flex;
+        gap: 12px;
+        overflow-x: auto;
+        padding: 8px 0 16px;
+        min-height: calc(100vh - 200px);
+    }
+
+    .kanban-col {
+        flex: 0 0 200px;
+        min-width: 200px;
+        max-width: 280px;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-card, #fff);
+        border-radius: 8px;
+        box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
+        border: 1px solid var(--border, #e2e8f0);
+    }
+
+    .kanban-col-header {
+        padding: 10px 12px;
+        font-weight: 600;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #fff;
+        border-radius: 8px 8px 0 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .kanban-count {
+        background: rgba(255,255,255,0.25);
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 500;
+    }
+
+    .kanban-col-body {
+        flex: 1;
+        padding: 8px;
+        overflow-y: auto;
+        min-height: 300px;
+        background: var(--bg-secondary, #f8fafc);
+    }
+
+    .kanban-column {
+        transition: background-color 0.2s;
+    }
+
+    .kanban-column.drag-over {
+        background-color: rgba(59, 130, 246, 0.1);
+    }
+
+    /* Task Cards */
+    .task-card {
+        cursor: grab;
+        transition: transform 0.15s, box-shadow 0.15s;
+        background: var(--bg-card, #fff);
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 6px;
+        margin-bottom: 8px;
+        padding: 10px;
+    }
+
+    .task-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .task-card.dragging {
+        opacity: 0.5;
+        cursor: grabbing;
+    }
+
+    .task-card[data-priority-val="high"] {
+        border-left: 3px solid #dc3545;
+    }
+
+    .task-card[data-priority-val="medium"] {
+        border-left: 3px solid #ffc107;
+    }
+
+    .task-card[data-priority-val="low"] {
+        border-left: 3px solid #28a745;
+    }
+
+    .task-card .card-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 4px;
+        color: var(--text-primary, #1a202c);
+    }
+
+    .task-card .card-title a {
+        color: inherit;
+        text-decoration: none;
+    }
+
+    .task-card .card-title a:hover {
+        text-decoration: underline;
+    }
+
+    .task-card .project-tag {
+        font-size: 10px;
+        color: var(--text-secondary, #64748b);
+        background: var(--bg-secondary, #f1f5f9);
+        padding: 2px 6px;
+        border-radius: 4px;
+        display: inline-block;
+        margin-bottom: 4px;
+    }
+
+    .task-card .task-id {
+        font-size: 10px;
+        color: var(--text-muted, #94a3b8);
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 1200px) {
+        .kanban-col {
+            flex: 0 0 180px;
+            min-width: 180px;
+        }
+    }
+
+    /* Quick action buttons - hidden by default, shown on hover */
+    .task-quick-actions {
+        opacity: 0;
+        transition: opacity 0.15s;
+    }
+    .task-card:hover .task-quick-actions {
+        opacity: 1;
+    }
+    .btn-xs {
+        padding: 2px 6px;
+        font-size: 11px;
+        line-height: 1.2;
+    }
+
+    /* Job Status Indicators */
+    .job-status-badge {
+        font-size: 9px;
+        padding: 2px 6px;
+        border-radius: 10px;
+        font-weight: 500;
+        text-transform: uppercase;
+    }
+    .job-status-badge.pending {
+        background: #6c757d;
+        color: white;
+    }
+    .job-status-badge.running {
+        background: #0d6efd;
+        color: white;
+        animation: pulse-bg 1s ease-in-out infinite;
+    }
+    .job-status-badge.completed {
+        background: #198754;
+        color: white;
+    }
+    .job-status-badge.failed {
+        background: #dc3545;
+        color: white;
+    }
+
+    /* Card animation when job is running */
+    .task-card.job-running {
+        animation: pulse-border 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-bg {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+    }
+
+    @keyframes pulse-border {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(13, 110, 253, 0.4); }
+        50% { box-shadow: 0 0 0 4px rgba(13, 110, 253, 0.2); }
+    }
+</style>
+
+<script>
+    const STORAGE_KEY = 'wfhub_board_project';
+
+    // Track active jobs for live status polling
+    let activeJobs = new Map();
+    let jobPollInterval = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        restoreLastProject();
+        initializeDragAndDrop();
+        initializeFilters();
+        updateCounts();
+        initializeKeyboardShortcuts();
+        startJobStatusPolling();
+    });
+
+    function initializeKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            // "/" or Cmd/Ctrl+K to focus search
+            if ((e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) &&
+                !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+                e.preventDefault();
+                document.getElementById('searchInput').focus();
+            }
+            // Escape to clear search and blur
+            if (e.key === 'Escape' && document.activeElement.id === 'searchInput') {
+                const searchInput = document.getElementById('searchInput');
+                searchInput.value = '';
+                searchInput.blur();
+                searchInput.dispatchEvent(new Event('input'));
+            }
+        });
+    }
+
+    function restoreLastProject() {
+        const projectFilter = document.getElementById('projectFilter');
+        const savedProject = localStorage.getItem(STORAGE_KEY);
+        if (savedProject && projectFilter.querySelector(`option[value="${savedProject}"]`)) {
+            projectFilter.value = savedProject;
+        }
+    }
+
+    function initializeFilters() {
+        const searchInput = document.getElementById('searchInput');
+        const priorityFilter = document.getElementById('priorityFilter');
+        const projectFilter = document.getElementById('projectFilter');
+
+        searchInput.addEventListener('input', filterTasks);
+        priorityFilter.addEventListener('change', filterTasks);
+        projectFilter.addEventListener('change', () => {
+            // Save selected project to localStorage
+            localStorage.setItem(STORAGE_KEY, projectFilter.value);
+            filterTasks();
+        });
+
+        // Apply initial filter (for restored project)
+        filterTasks();
+
+        function filterTasks() {
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            const priority = priorityFilter.value;
+            const projectId = projectFilter.value;
+            const cards = document.querySelectorAll('.task-card');
+
+            cards.forEach(card => {
+                const cardPriority = parseInt(card.dataset.priority) || 0;
+                const cardProjectId = card.dataset.projectId;
+                const cardTitle = card.querySelector('.card-title a')?.textContent.toLowerCase() || '';
+                const cardTaskId = card.querySelector('.task-id')?.textContent.toLowerCase() || '';
+                const cardProject = card.querySelector('.project-tag')?.textContent.toLowerCase() || '';
+                let show = true;
+
+                // Search filter
+                if (searchTerm && !cardTitle.includes(searchTerm) &&
+                    !cardTaskId.includes(searchTerm) && !cardProject.includes(searchTerm)) {
+                    show = false;
+                }
+
+                // Priority filter
+                if (show && priority !== 'all') {
+                    if (priority === 'high' && cardPriority < 8) show = false;
+                    if (priority === 'medium' && (cardPriority >= 8 || cardPriority <= 3)) show = false;
+                    if (priority === 'low' && cardPriority > 3) show = false;
+                }
+
+                // Project filter
+                if (projectId !== 'all' && cardProjectId !== projectId) {
+                    show = false;
+                }
+
+                card.style.display = show ? 'block' : 'none';
+            });
+
+            updateCounts();
+        }
+    }
+
+    function updateCounts() {
+        document.querySelectorAll('.kanban-column').forEach(col => {
+            const visibleCards = col.querySelectorAll('.task-card:not([style*="display: none"])');
+            const count = visibleCards.length;
+            const badge = document.querySelector(`.kanban-count[data-col="${col.dataset.stage}"]`);
+            if (badge) badge.textContent = count;
+        });
+    }
+
+    function initializeDragAndDrop() {
+        const draggables = document.querySelectorAll('.task-card');
+        const containers = document.querySelectorAll('.kanban-column');
+
+        draggables.forEach(draggable => {
+            draggable.addEventListener('dragstart', () => {
+                draggable.classList.add('dragging');
+            });
+
+            draggable.addEventListener('dragend', () => {
+                draggable.classList.remove('dragging');
+                document.querySelectorAll('.kanban-column').forEach(c => c.classList.remove('drag-over'));
+            });
+        });
+
+        containers.forEach(container => {
+            container.addEventListener('dragover', e => {
+                e.preventDefault();
+                container.classList.add('drag-over');
+                const afterElement = getDragAfterElement(container, e.clientY);
+                const draggable = document.querySelector('.dragging');
+                if (afterElement == null) {
+                    container.appendChild(draggable);
+                } else {
+                    container.insertBefore(draggable, afterElement);
+                }
+            });
+
+            container.addEventListener('dragleave', () => {
+                container.classList.remove('drag-over');
+            });
+
+            container.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const draggable = document.querySelector('.dragging');
+                if (draggable) {
+                    const newStage = container.dataset.stage;
+                    const oldStage = draggable.dataset.currentStage || 'none';
+
+                    if (newStage !== oldStage) {
+                        handleTaskMove(draggable, newStage);
+                    }
+                }
+            });
+        });
+    }
+
+    function handleTaskMove(card, newStage) {
+        const taskId = card.dataset.taskId;
+        const taskTitle = card.querySelector('.card-title a').textContent.trim();
+
+        // Define actionable stages that can trigger agents
+        const actionableStages = ['dev', 'qa', 'sec', 'docs'];
+
+        // If moving to an actionable stage, use the unified start-work endpoint
+        if (actionableStages.includes(newStage)) {
+            // Show dialog with simplify option
+            const response = prompt(
+                `Start ${newStage.toUpperCase()} agent for "${taskTitle}"?\n\n` +
+                `Type "s" to simplify first, "y" to start directly, or cancel:`,
+                'y'
+            );
+
+            if (response === 's' || response === 'S') {
+                startWork(taskId, card.dataset.currentStage, newStage, true);  // simplify=true
+                return;
+            } else if (response === 'y' || response === 'Y') {
+                startWork(taskId, card.dataset.currentStage, newStage, false);
+                return;
+            }
+            // User cancelled - revert card position
+            location.reload();
+            return;
+        }
+
+        // For non-actionable stages (none, pm, complete), just update the stage
+        card.dataset.currentStage = newStage;
+        updateCounts();
+
+        fetch(`/api/tasks/${taskId}/set-stage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage: newStage })
+        }).then(res => {
+            if (!res.ok) {
+                showToast('Failed to update stage', 'error');
+                location.reload();
+            }
+        });
+    }
+
+    // === Unified Start Work Flow ===
+    function startWork(taskId, currentStage, targetStage = null, simplify = false) {
+        // Determine target stage if not provided
+        if (!targetStage) {
+            const stageOrder = ['none', 'pm', 'dev', 'qa', 'sec', 'docs', 'complete'];
+            const currentIdx = stageOrder.indexOf(currentStage || 'none');
+            targetStage = stageOrder[Math.min(currentIdx + 1, stageOrder.length - 1)];
+
+            // Skip PM stage for work triggering (PM is planning, not agent work)
+            if (targetStage === 'pm') targetStage = 'dev';
+        }
+
+        // Optimistic UI update
+        const card = document.querySelector(`.task-card[data-task-id="${taskId}"]`);
+        if (card) {
+            updateCardJobStatus(taskId, 'pending', simplify ? 'Simplifying...' : 'Starting...');
+        }
+
+        // Call unified endpoint
+        fetch(`/api/tasks/${taskId}/start-work`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage: targetStage, simplify: simplify })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success && data.job_id) {
+                // Track this job for status polling
+                activeJobs.set(taskId, {
+                    jobId: data.job_id,
+                    stage: targetStage,
+                    runId: data.run_id
+                });
+
+                // Move card to new column
+                moveCardToColumn(taskId, targetStage);
+
+                // Update status indicator
+                updateCardJobStatus(taskId, 'running', targetStage.toUpperCase());
+
+                const simplifiedMsg = data.simplified ? ' (simplified)' : '';
+                showToast(`${targetStage.toUpperCase()} agent started${simplifiedMsg} (Job #${data.job_id})`, 'info');
+            } else if (data.error) {
+                updateCardJobStatus(taskId, 'failed', 'Error');
+                showToast(data.error, 'error');
+            }
+        })
+        .catch(err => {
+            updateCardJobStatus(taskId, 'failed', 'Error');
+            showToast('Network error', 'error');
+        });
+    }
+
+    function moveCardToColumn(taskId, stage) {
+        const card = document.querySelector(`.task-card[data-task-id="${taskId}"]`);
+        const targetColumn = document.getElementById(`col-${stage}`);
+        if (card && targetColumn) {
+            card.dataset.currentStage = stage;
+            targetColumn.appendChild(card);
+            updateCounts();
+        }
+    }
+
+    function updateCardJobStatus(taskId, status, label) {
+        const card = document.querySelector(`.task-card[data-task-id="${taskId}"]`);
+        const badge = document.querySelector(`.job-status-badge[data-task="${taskId}"]`);
+
+        if (card) {
+            card.classList.toggle('job-running', status === 'running');
+        }
+
+        if (badge) {
+            badge.className = `job-status-badge ${status}`;
+            badge.textContent = label;
+            badge.classList.toggle('d-none', status === 'idle');
+        }
+    }
+
+    // === Job Status Polling ===
+    function startJobStatusPolling() {
+        if (jobPollInterval) clearInterval(jobPollInterval);
+
+        jobPollInterval = setInterval(() => {
+            if (activeJobs.size === 0) return;
+
+            activeJobs.forEach((jobInfo, taskId) => {
+                fetch(`/api/tasks/${taskId}/job-status`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.job_status === 'completed') {
+                            updateCardJobStatus(taskId, 'completed', 'Done');
+                            showToast(`${jobInfo.stage.toUpperCase()} completed for task`, 'success');
+                            activeJobs.delete(taskId);
+                            // Clear completed status after a few seconds
+                            setTimeout(() => updateCardJobStatus(taskId, 'idle', ''), 5000);
+                        } else if (data.job_status === 'failed') {
+                            updateCardJobStatus(taskId, 'failed', 'Failed');
+                            showToast(`${jobInfo.stage.toUpperCase()} failed: ${data.error_message || 'Unknown error'}`, 'error');
+                            activeJobs.delete(taskId);
+                        } else if (!data.has_active_job) {
+                            // No active job found, stop tracking
+                            updateCardJobStatus(taskId, 'idle', '');
+                            activeJobs.delete(taskId);
+                        }
+                    })
+                    .catch(() => {
+                        // Ignore polling errors, will retry next interval
+                    });
+            });
+        }, 3000);  // Poll every 3 seconds
+    }
+
+    function showToast(message, type = 'info') {
+        const bgClass = {
+            'success': 'alert-success',
+            'error': 'alert-danger',
+            'info': 'alert-info'
+        }[type] || 'alert-secondary';
+
+        const toast = document.createElement('div');
+        toast.className = `alert ${bgClass} position-fixed bottom-0 end-0 m-3`;
+        toast.style.zIndex = 1050;
+        toast.style.maxWidth = '350px';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
+    }
+
+    function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('.task-card:not(.dragging)')];
+
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset: offset, element: child };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // Keyboard shortcut: 'n' to open add task modal
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'n' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+            e.preventDefault();
+            openCreateTaskModal();
+        }
+    });
+</script>
+
+<!-- Comprehensive Task Create/Edit Modal (reused from tasks.html - DRY) -->
+<div id="task-create-modal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+            <h3 id="task-modal-title">Create Task</h3>
+            <button class="modal-close" onclick="closeCreateTaskModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-task-id">
+
+            <div class="form-row">
+                <div class="form-group" style="flex: 2;">
+                    <label>Project <span class="required">*</span></label>
+                    <select id="task-project" class="form-select" required>
+                        <option value="">Select a project...</option>
+                        {% for id, proj in projects.items %}
+                        <option value="{{ id }}">{{ proj.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Task ID</label>
+                    <input type="text" id="task-custom-id" class="form-input" placeholder="Auto-generate">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Title <span class="required">*</span></label>
+                <input type="text" id="task-title" class="form-input" placeholder="Brief task title" required>
+            </div>
+
+            <div class="form-group">
+                <label>Description</label>
+                <textarea id="task-description" class="form-textarea" rows="5"
+                    placeholder="Detailed description. Include file paths like /path/to/screenshot.png to auto-attach them."></textarea>
+                <small class="form-hint">Tip: Include paths to screenshots/images (e.g., /path/to/image.png) - they'll be auto-attached!</small>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group" style="flex: 1;">
+                    <label>Priority</label>
+                    <select id="task-priority" class="form-select">
+                        <option value="1">1 - Lowest</option>
+                        <option value="2">2</option>
+                        <option value="3">3 - Low</option>
+                        <option value="4">4</option>
+                        <option value="5" selected>5 - Medium</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8 - High</option>
+                        <option value="9">9</option>
+                        <option value="10">10 - Critical</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Pipeline Stage</label>
+                    <select id="task-stage" class="form-select">
+                        {% for stage in pipeline_stages %}
+                        <option value="{{ stage.value }}">{{ stage.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Status</label>
+                    <select id="task-status" class="form-select">
+                        {% for status in task_statuses %}
+                        <option value="{{ status.value }}">{{ status.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Acceptance Criteria</label>
+                <textarea id="task-criteria" class="form-textarea" rows="3"
+                    placeholder="One criterion per line"></textarea>
+                <small class="form-hint">Enter each acceptance criterion on a new line</small>
+            </div>
+
+            <div class="form-group">
+                <label>Attachments</label>
+                <div id="create-dropzone" class="dropzone-area">
+                    <input type="file" id="task-files" multiple accept="image/*,.pdf,.txt,.md,.json,.log">
+                    <div class="dropzone-prompt">
+                        <span class="dropzone-icon">📎</span>
+                        <span>Drop files here or <u>click to browse</u></span>
+                    </div>
+                    <div id="create-file-previews" class="file-previews"></div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeCreateTaskModal()">Cancel</button>
+            <button class="btn btn-primary" id="task-submit-btn" onclick="submitTask()">Create Task</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal and Form Styles -->
+<style>
+/* Modal styles */
+.form-row {
+    display: flex;
+    gap: 16px;
+}
+.form-group {
+    margin-bottom: 16px;
+}
+.form-group label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+.form-group .required {
+    color: var(--danger, #dc3545);
+}
+.form-input, .form-select, .form-textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 6px;
+    background: var(--bg-secondary, #f8fafc);
+    color: var(--text-primary, #1a202c);
+    font-size: 14px;
+}
+.form-textarea {
+    resize: vertical;
+    font-family: inherit;
+}
+.form-hint {
+    color: var(--text-muted, #64748b);
+    font-size: 12px;
+    margin-top: 4px;
+    display: block;
+}
+
+/* Dropzone */
+.dropzone-area {
+    border: 2px dashed var(--border, #e2e8f0);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    min-height: 80px;
+}
+.dropzone-area:hover, .dropzone-area.dragover {
+    border-color: var(--primary, #0d6efd);
+    background: rgba(13, 110, 253, 0.05);
+}
+.dropzone-area input[type="file"] {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+.dropzone-prompt { color: var(--text-muted, #64748b); font-size: 14px; }
+.dropzone-icon { font-size: 24px; display: block; margin-bottom: 8px; }
+.file-previews {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    justify-content: center;
+}
+.file-preview {
+    position: relative;
+    width: 60px; height: 60px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border, #e2e8f0);
+}
+.file-preview img { width: 100%; height: 100%; object-fit: cover; }
+.file-preview .file-icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%; background: var(--bg-secondary, #f8fafc); font-size: 24px;
+}
+.file-preview .remove-btn {
+    position: absolute; top: 2px; right: 2px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: rgba(0,0,0,0.6); color: white;
+    border: none; cursor: pointer; font-size: 12px; line-height: 1;
+}
+</style>
+
+<!-- Task Modal JS (shared logic) -->
+<script src="/static/js/task-modal.js"></script>
+<script>
+// Modal handling - same pattern as tasks.html for DRY
+let createDropzone = null;
+let editMode = false;
+
+function openCreateTaskModal() {
+    editMode = false;
+    document.getElementById('task-modal-title').textContent = 'Create Task';
+    document.getElementById('task-submit-btn').textContent = 'Create Task';
+    document.getElementById('edit-task-id').value = '';
+
+    // Clear form
+    const projectFilter = document.getElementById('projectFilter');
+    document.getElementById('task-project').value = projectFilter.value !== 'all' ? projectFilter.value : '';
+    document.getElementById('task-custom-id').value = '';
+    document.getElementById('task-title').value = '';
+    document.getElementById('task-description').value = '';
+    document.getElementById('task-priority').value = '5';
+    document.getElementById('task-stage').value = 'none';
+    document.getElementById('task-status').value = 'backlog';
+    document.getElementById('task-criteria').value = '';
+
+    // Clear file previews
+    if (createDropzone) createDropzone.clear();
+
+    document.getElementById('task-create-modal').style.display = 'flex';
+    document.getElementById('task-title').focus();
+}
+
+function closeCreateTaskModal() {
+    document.getElementById('task-create-modal').style.display = 'none';
+}
+
+async function submitTask() {
+    const projectId = document.getElementById('task-project').value;
+    const title = document.getElementById('task-title').value.trim();
+    const description = document.getElementById('task-description').value.trim();
+    const priority = parseInt(document.getElementById('task-priority').value);
+    const stage = document.getElementById('task-stage').value;
+    const status = document.getElementById('task-status').value;
+    const customId = document.getElementById('task-custom-id').value.trim();
+    const criteriaText = document.getElementById('task-criteria').value.trim();
+    const filesInput = document.getElementById('task-files');
+
+    if (!projectId) {
+        alert('Please select a project');
+        return;
+    }
+    if (!title) {
+        alert('Title is required');
+        return;
+    }
+
+    // Parse acceptance criteria (one per line)
+    const criteria = criteriaText ? criteriaText.split('\n').map(s => s.trim()).filter(s => s) : [];
+
+    const taskData = {
+        title,
+        description,
+        priority,
+        pipeline_stage: stage,
+        acceptance_criteria: criteria,
+        auto_attach: true
+    };
+    if (customId) taskData.task_id = customId;
+
+    const submitBtn = document.getElementById('task-submit-btn');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating...';
+
+    try {
+        // Create new task
+        const res = await fetch(`/api/projects/${projectId}/tasks/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(taskData)
+        });
+        const result = await res.json();
+
+        if (!result.task) {
+            throw new Error(result.error || 'Failed to create task');
+        }
+
+        const taskId = result.task.id;
+
+        // Upload files if any (in addition to auto-attached from description)
+        if (filesInput.files.length > 0) {
+            await uploadTaskFiles(taskId, filesInput.files);
+        }
+
+        // If status is not backlog, update it
+        if (status !== 'backlog') {
+            await fetch(`/api/tasks/${taskId}/status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status })
+            });
+        }
+
+        closeCreateTaskModal();
+
+        // Show success toast
+        const toast = document.createElement('div');
+        toast.className = 'alert alert-success position-fixed bottom-0 end-0 m-3';
+        toast.style.zIndex = 1050;
+        toast.innerHTML = `Task created! <a href="/ui/task/${taskId}/" class="alert-link">View Task</a>`;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+
+        window.location.reload();
+    } catch (err) {
+        alert('Error: ' + err.message);
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Create Task';
+    }
+}
+
+// File upload helper
+async function uploadTaskFiles(taskId, files) {
+    for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        await fetch(`/api/tasks/${taskId}/attachments/upload`, {
+            method: 'POST',
+            body: formData
+        });
+    }
+}
+
+// Initialize modal
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize dropzone
+    if (typeof initDropzone === 'function') {
+        createDropzone = initDropzone('create-dropzone', 'task-files', 'create-file-previews');
+    }
+
+    // Close modal on outside click
+    const modal = document.getElementById('task-create-modal');
+    if (modal) {
+        modal.addEventListener('click', function(e) {
+            if (e.target === this) closeCreateTaskModal();
+        });
+    }
+
+    // Close on Escape
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeCreateTaskModal();
+    });
+});
+</script>
+{% endblock %}

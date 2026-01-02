@@ -34,6 +34,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Don't add unrequested features
 - Clean up as you go, stay on main task
 
+### Frontend Framework Policy
+- **Next.js + TypeScript** is the only allowed app framework
+- **Lit** is the only allowed exception for embeddable components
+- Everything else gets refactored out over time
+
 ---
 
 ## Project Overview

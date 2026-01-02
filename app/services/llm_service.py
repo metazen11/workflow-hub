@@ -321,7 +321,7 @@ def build_agent_prompt(
         "coding_principles.md",
         "todo.json",
         "_spec/BRIEF.md",
-        "_spec/HANDOFF.md"
+        "_spec/WORK_CYCLE.md"
     ]
 
     sections = []
@@ -378,14 +378,14 @@ def build_agent_prompt(
             sections.append(files["todo.json"]["content"][:2000])
             sections.append("")
 
-    # Add handoff context if available (file-based)
-    if "_spec/HANDOFF.md" in files and files["_spec/HANDOFF.md"].get("content"):
-        sections.append("### Recent Handoff Notes\n")
-        handoff_content = files["_spec/HANDOFF.md"]["content"]
+    # Add work_cycle context if available (file-based)
+    if "_spec/WORK_CYCLE.md" in files and files["_spec/WORK_CYCLE.md"].get("content"):
+        sections.append("### Recent WorkCycle Notes\n")
+        work_cycle_content = files["_spec/WORK_CYCLE.md"]["content"]
         # Truncate if too long
-        if len(handoff_content) > 3000:
-            handoff_content = handoff_content[:3000] + "\n... [truncated]"
-        sections.append(handoff_content)
+        if len(work_cycle_content) > 3000:
+            work_cycle_content = work_cycle_content[:3000] + "\n... [truncated]"
+        sections.append(work_cycle_content)
         sections.append("")
 
     # --- SECTION 3.5: TASK HISTORY (DB-backed) ---
@@ -400,7 +400,7 @@ def build_agent_prompt(
         sections.append("Previous work on this task:\n")
 
         if task_history:
-            sections.append("### Previous Handoffs")
+            sections.append("### Previous WorkCycles")
             for h in task_history[:5]:  # Limit to 5 most recent
                 status_icon = "✅" if h.get("report_status") == "pass" else "❌" if h.get("report_status") == "fail" else "⏳"
                 sections.append(f"\n**{h.get('stage', 'unknown').upper()}** ({h.get('to_role', 'unknown')}) - {status_icon} {h.get('status', 'unknown')}")
@@ -1343,21 +1343,21 @@ class LLMQuery:
                         else:
                             sections.append(f"  {task.acceptance_criteria}")
 
-                    # Add task history (handoffs and proofs)
-                    from app.models import Handoff, Proof
+                    # Add task history (work_cycles and proofs)
+                    from app.models import WorkCycle, Proof
 
-                    handoffs = session.query(Handoff).filter(
-                        Handoff.task_id == self.task_id
-                    ).order_by(Handoff.created_at.desc()).limit(5).all()
+                    work_cycles = session.query(WorkCycle).filter(
+                        WorkCycle.task_id == self.task_id
+                    ).order_by(WorkCycle.created_at.desc()).limit(5).all()
 
-                    if handoffs:
+                    if work_cycles:
                         sections.append("\n### Task History")
-                        for h in handoffs:
+                        for h in work_cycles:
                             status_icon = "✅" if h.report_status == "pass" else "❌" if h.report_status == "fail" else "⏳"
                             sections.append(f"- **{h.stage.upper() if h.stage else 'unknown'}** ({h.to_role}) {status_icon}")
                             if h.report_summary:
                                 sections.append(f"  {h.report_summary[:150]}")
-                        self._context["handoffs"] = [{"stage": h.stage, "to_role": h.to_role, "status": h.report_status, "summary": h.report_summary} for h in handoffs]
+                        self._context["work_cycles"] = [{"stage": h.stage, "to_role": h.to_role, "status": h.report_status, "summary": h.report_summary} for h in work_cycles]
 
                     proofs = session.query(Proof).filter(
                         Proof.task_id == self.task_id

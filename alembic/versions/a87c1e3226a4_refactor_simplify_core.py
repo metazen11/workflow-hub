@@ -36,9 +36,9 @@ def upgrade() -> None:
     op.add_column('tasks', sa.Column('claims_validated', sa.Integer(), nullable=True, server_default='0'))
     op.add_column('tasks', sa.Column('claims_failed', sa.Integer(), nullable=True, server_default='0'))
 
-    # 3. Drop pipeline_stage from tasks (claims define validation now)
-    # Keep acceptance_criteria for now (can migrate to claims later)
-    op.drop_column('tasks', 'pipeline_stage')
+    # 3. Keep pipeline_stage for backward compatibility
+    # TODO: Remove when fully migrated to claim-based validation
+    # op.drop_column('tasks', 'pipeline_stage')  # SKIPPED - keeping for compatibility
 
     # 4. Rename handoffs table to work_cycles
     op.rename_table('handoffs', 'work_cycles')
@@ -123,8 +123,8 @@ def downgrade() -> None:
     op.add_column('tasks', sa.Column('run_id', sa.Integer(), nullable=True))
     op.create_foreign_key('tasks_run_id_fkey', 'tasks', 'runs', ['run_id'], ['id'])
 
-    # Restore pipeline_stage to tasks
-    op.add_column('tasks', sa.Column('pipeline_stage', sa.Enum('NONE', 'PM', 'DEV', 'QA', 'SEC', 'DOCS', 'COMPLETE', name='taskpipelinestage'), nullable=True))
+    # pipeline_stage was not dropped, so no need to restore
+    # op.add_column('tasks', sa.Column('pipeline_stage', ...))
 
     # Drop claim tracking columns from tasks
     op.drop_column('tasks', 'claims_failed')

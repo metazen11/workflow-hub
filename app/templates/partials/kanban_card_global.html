@@ -1,0 +1,33 @@
+<div class="task-card" draggable="true"
+     data-task-id="{{ task.id }}"
+     data-priority="{{ task.priority }}"
+     data-project-id="{{ task.project_id }}"
+     data-current-stage="{{ task.pipeline_stage.value|lower|default:'none' }}"
+     data-priority-val="{% if task.priority >= 8 %}high{% elif task.priority <= 3 %}low{% else %}medium{% endif %}">
+    <div class="d-flex justify-content-between align-items-start mb-1">
+        <div class="project-tag">{{ task.project.name }}</div>
+        <div class="d-flex align-items-center gap-1">
+            <!-- Job status indicator (updated by JS) -->
+            <span class="job-status-badge d-none" data-task="{{ task.id }}"></span>
+            {% if task.priority >= 8 %}
+            <span class="badge bg-danger" style="font-size: 9px;">HIGH</span>
+            {% elif task.priority <= 3 %}
+            <span class="badge bg-success" style="font-size: 9px;">LOW</span>
+            {% endif %}
+        </div>
+    </div>
+    <h6 class="card-title">
+        <a href="/ui/task/{{ task.id }}/">{{ task.title }}</a>
+    </h6>
+    <div class="d-flex justify-content-between align-items-center">
+        <span class="task-id">{{ task.task_id }}</span>
+        <!-- Quick action buttons (shown on hover via CSS) -->
+        <div class="task-quick-actions">
+            <button class="btn btn-outline-primary btn-xs"
+                    onclick="event.stopPropagation(); event.preventDefault(); startWork({{ task.id }}, '{{ task.pipeline_stage.value|lower|default:'none' }}')"
+                    title="Start next stage">
+                <i class="bi bi-play-fill"></i>
+            </button>
+        </div>
+    </div>
+</div>

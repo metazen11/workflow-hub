@@ -23,6 +23,9 @@
                 <input type="checkbox" data-section="director" checked onchange="toggleSection('director')"> Director Panel
             </label>
             <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
+                <input type="checkbox" data-section="queue" checked onchange="toggleSection('queue')"> Processing Queue
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
                 <input type="checkbox" data-section="new-task" checked onchange="toggleSection('new-task')"> New Task Input
             </label>
             <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;">
@@ -160,6 +163,58 @@
                 <h4 style="margin: 0 0 8px 0; font-size: 0.9rem; color: var(--text-muted);">Recent Activity</h4>
                 <div id="director-activity" style="max-height: 200px; overflow-y: auto; background: var(--bg-secondary); border-radius: 8px; padding: 8px;">
                     <div style="color: var(--text-muted); font-size: 0.85rem;">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- Processing Queue Status -->
+<div class="dashboard-section" data-section="queue">
+<div class="section">
+    <div class="card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer;" onclick="toggleQueuePanel()">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <h3 style="margin: 0; font-size: 1rem;">Processing Queue</h3>
+                <span id="queue-status-badge" class="badge badge-success">Idle</span>
+            </div>
+            <svg id="queue-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition: transform 0.2s;">
+                <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+        </div>
+        <div id="queue-panel" class="card-body" style="display: none;">
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
+                <!-- LLM Queue -->
+                <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+                    <h4 style="margin: 0 0 8px 0; font-size: 0.85rem; color: var(--text-muted);">LLM Queue</h4>
+                    <div id="queue-llm-count" style="font-size: 1.5rem; font-weight: 600;">0</div>
+                    <div id="queue-llm-status" style="font-size: 0.75rem; color: var(--text-muted);">Idle</div>
+                </div>
+                <!-- Agent Queue -->
+                <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+                    <h4 style="margin: 0 0 8px 0; font-size: 0.85rem; color: var(--text-muted);">Agent Queue</h4>
+                    <div id="queue-agent-count" style="font-size: 1.5rem; font-weight: 600;">0</div>
+                    <div id="queue-agent-status" style="font-size: 0.75rem; color: var(--text-muted);">Idle</div>
+                </div>
+                <!-- Vision Queue -->
+                <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+                    <h4 style="margin: 0 0 8px 0; font-size: 0.85rem; color: var(--text-muted);">Vision Queue</h4>
+                    <div id="queue-vision-count" style="font-size: 1.5rem; font-weight: 600;">0</div>
+                    <div id="queue-vision-status" style="font-size: 0.75rem; color: var(--text-muted);">Idle</div>
+                </div>
+                <!-- Metrics -->
+                <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+                    <h4 style="margin: 0 0 8px 0; font-size: 0.85rem; color: var(--text-muted);">Avg Wait</h4>
+                    <div id="queue-avg-wait" style="font-size: 1.5rem; font-weight: 600;">0s</div>
+                    <div id="queue-est-wait" style="font-size: 0.75rem; color: var(--text-muted);">Est: 0s</div>
+                </div>
+            </div>
+            <!-- Currently Running -->
+            <div>
+                <h4 style="margin: 0 0 8px 0; font-size: 0.9rem; color: var(--text-muted);">Currently Running</h4>
+                <div id="queue-running" style="background: var(--bg-secondary); border-radius: 8px; padding: 12px; min-height: 48px;">
+                    <div style="color: var(--text-muted); font-size: 0.85rem;">No jobs currently running</div>
                 </div>
             </div>
         </div>
@@ -931,12 +986,118 @@ fetch('/api/director/status')
     })
     .catch(() => {});
 
+// ===== Processing Queue Panel =====
+let queuePanelOpen = false;
+let queueRefreshInterval = null;
+
+function toggleQueuePanel() {
+    queuePanelOpen = !queuePanelOpen;
+    const panel = document.getElementById('queue-panel');
+    const chevron = document.getElementById('queue-chevron');
+    panel.style.display = queuePanelOpen ? 'block' : 'none';
+    chevron.style.transform = queuePanelOpen ? 'rotate(180deg)' : '';
+    if (queuePanelOpen) {
+        loadQueueStatus();
+        // Refresh every 5 seconds while panel is open
+        queueRefreshInterval = setInterval(loadQueueStatus, 5000);
+    } else {
+        if (queueRefreshInterval) {
+            clearInterval(queueRefreshInterval);
+            queueRefreshInterval = null;
+        }
+    }
+}
+
+function loadQueueStatus() {
+    fetch('/api/queue/status')
+        .then(r => r.json())
+        .then(data => {
+            const queue = data.queue;
+            const workers = data.workers;
+
+            // Update queue counts
+            document.getElementById('queue-llm-count').textContent = queue.pending.llm;
+            document.getElementById('queue-agent-count').textContent = queue.pending.agent;
+            document.getElementById('queue-vision-count').textContent = queue.pending.vision;
+
+            // Update worker status
+            const llmWorker = workers.workers.find(w => w.id === 'llm');
+            const agentWorker = workers.workers.find(w => w.id === 'agent');
+            const visionWorker = workers.workers.find(w => w.id === 'vision');
+
+            document.getElementById('queue-llm-status').textContent = llmWorker?.is_busy ? 'Processing...' : 'Idle';
+            document.getElementById('queue-agent-status').textContent = agentWorker?.is_busy ? 'Processing...' : 'Idle';
+            document.getElementById('queue-vision-status').textContent = visionWorker?.is_busy ? 'Processing...' : 'Idle';
+
+            // Update metrics
+            document.getElementById('queue-avg-wait').textContent = queue.avg_wait_seconds.toFixed(1) + 's';
+            document.getElementById('queue-est-wait').textContent = 'Est: ' + queue.estimated_wait_seconds.toFixed(0) + 's';
+
+            // Update status badge
+            const badge = document.getElementById('queue-status-badge');
+            const totalPending = queue.pending.total;
+            const anyRunning = queue.running_count > 0;
+
+            if (anyRunning) {
+                badge.className = 'badge badge-info';
+                badge.textContent = 'Processing';
+            } else if (totalPending > 0) {
+                badge.className = 'badge badge-warning';
+                badge.textContent = totalPending + ' Pending';
+            } else {
+                badge.className = 'badge badge-success';
+                badge.textContent = 'Idle';
+            }
+
+            // Update running jobs
+            const runningDiv = document.getElementById('queue-running');
+            if (queue.running && queue.running.length > 0) {
+                runningDiv.innerHTML = queue.running.map(job => {
+                    const elapsed = job.started_at ? Math.round((Date.now() - new Date(job.started_at).getTime()) / 1000) : 0;
+                    return `<div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border);">
+                        <span><strong>${job.job_type}</strong> ${job.task_id ? '(Task ' + job.task_id + ')' : ''}</span>
+                        <span style="color: var(--text-muted);">${elapsed}s</span>
+                    </div>`;
+                }).join('');
+            } else {
+                runningDiv.innerHTML = '<div style="color: var(--text-muted); font-size: 0.85rem;">No jobs currently running</div>';
+            }
+        })
+        .catch(err => {
+            console.error('Error loading queue status:', err);
+            document.getElementById('queue-status-badge').textContent = 'Error';
+            document.getElementById('queue-status-badge').className = 'badge badge-danger';
+        });
+}
+
+// Load queue status on page load (just the badge)
+fetch('/api/queue/status')
+    .then(r => r.json())
+    .then(data => {
+        const badge = document.getElementById('queue-status-badge');
+        const totalPending = data.queue.pending.total;
+        const anyRunning = data.queue.running_count > 0;
+
+        if (anyRunning) {
+            badge.className = 'badge badge-info';
+            badge.textContent = 'Processing';
+        } else if (totalPending > 0) {
+            badge.className = 'badge badge-warning';
+            badge.textContent = totalPending + ' Pending';
+        } else {
+            badge.className = 'badge badge-success';
+            badge.textContent = 'Idle';
+        }
+    })
+    .catch(() => {});
+
 // ===== Dashboard Configuration =====
 const DASHBOARD_CONFIG_KEY = 'wfhub_dashboard_config';
 const DEFAULT_CONFIG = {
     sections: {
         'stats': true,
         'director': true,
+        'queue': true,
         'new-task': true,
         'projects': true,
         'task-pipeline': true,

@@ -388,40 +388,40 @@ If critical vulnerabilities: {{"status": "fail", "summary": "Issues found", "vul
 }
 
 
-def build_handoff(agent: str, report: dict) -> str:
-    """Build handoff context from agent's report for the next agent."""
+def build_work_cycle(agent: str, report: dict) -> str:
+    """Build work_cycle context from agent's report for the next agent."""
     role_display = agent.upper() if agent != "security" else "SEC"
 
-    handoff = f"\n[{role_display} HANDOFF]\n"
-    handoff += f"Status: {report.get('status', 'unknown')}\n"
-    handoff += f"Summary: {report.get('summary', 'No summary')}\n"
+    work_cycle = f"\n[{role_display} WORK_CYCLE]\n"
+    work_cycle += f"Status: {report.get('status', 'unknown')}\n"
+    work_cycle += f"Summary: {report.get('summary', 'No summary')}\n"
 
     # Include agent-specific details
     if agent == "pm":
         reqs = report.get("requirements", [])
         if reqs:
-            handoff += "Requirements:\n"
+            work_cycle += "Requirements:\n"
             for req in reqs:
-                handoff += f"  - {req}\n"
+                work_cycle += f"  - {req}\n"
 
     elif agent == "dev":
         files = report.get("files", [])
         if files:
-            handoff += f"Files modified: {', '.join(files)}\n"
+            work_cycle += f"Files modified: {', '.join(files)}\n"
 
     elif agent == "qa":
         passed = report.get("tests_passed", 0)
         failed = report.get("tests_failed", 0)
-        handoff += f"Tests: {passed} passed, {failed} failed\n"
+        work_cycle += f"Tests: {passed} passed, {failed} failed\n"
 
     elif agent == "security":
         vulns = report.get("vulnerabilities", [])
         if vulns:
-            handoff += f"Vulnerabilities: {', '.join(vulns)}\n"
+            work_cycle += f"Vulnerabilities: {', '.join(vulns)}\n"
         else:
-            handoff += "No vulnerabilities found\n"
+            work_cycle += "No vulnerabilities found\n"
 
-    return handoff
+    return work_cycle
 
 
 def api(method, endpoint, data=None):
@@ -520,11 +520,11 @@ def run_goose(agent: str, task: str, cwd: str, principles: str = "", color: str 
 
 
 def run_task_through_pipeline(task: Task, cwd: str, principles: str, project: dict,
-                               handoff_context: str, max_retries: int = 2,
+                               work_cycle_context: str, max_retries: int = 2,
                                tui: Optional["WorkflowTUI"] = None) -> tuple[bool, str]:
     """Run a single atomic task through DEV → QA → SEC pipeline.
 
-    Returns: (success, updated_handoff_context)
+    Returns: (success, updated_work_cycle_context)
     """
     colors = {"dev": C.DEV, "qa": C.QA, "security": C.SEC}
     task_agents = TASK_PIPELINE  # PM already ran, these run per task
@@ -544,7 +544,7 @@ def run_task_through_pipeline(task: Task, cwd: str, principles: str, project: di
         if retries > 0:
             print(f"\n{C.DIM}  Retry {retries}/{max_retries} for task {task.id}{C.RESET}")
 
-        task_handoff = handoff_context
+        task_work_cycle = work_cycle_context
         all_passed = True
 
         for agent in task_agents:
@@ -557,8 +557,8 @@ def run_task_through_pipeline(task: Task, cwd: str, principles: str, project: di
 
             # Build agent task description
             agent_task = f"ATOMIC TASK [{task.id}]: {task.title}"
-            if task_handoff:
-                agent_task += f"\n\n--- CONTEXT FROM PREVIOUS WORK ---\n{task_handoff}"
+            if task_work_cycle:
+                agent_task += f"\n\n--- CONTEXT FROM PREVIOUS WORK ---\n{task_work_cycle}"
 
             report = run_goose(agent, agent_task, cwd, principles, color, tui=tui, task_title=task.title)
 
@@ -591,18 +591,18 @@ def run_task_through_pipeline(task: Task, cwd: str, principles: str, project: di
                     failure_msg += f" | Vulns: {', '.join(vulns[:2])}"
 
                 # Add failure context for retry
-                task_handoff += f"\n\n[FAILURE @ {role_display}]\n{failure_msg}\nFix this issue and try again."
+                task_work_cycle += f"\n\n[FAILURE @ {role_display}]\n{failure_msg}\nFix this issue and try again."
                 break
 
-            # Accumulate handoff
-            task_handoff += build_handoff(agent, report)
+            # Accumulate work_cycle
+            task_work_cycle += build_work_cycle(agent, report)
 
         if all_passed:
-            return True, task_handoff
+            return True, task_work_cycle
 
         retries += 1
 
-    return False, task_handoff
+    return False, task_work_cycle
 
 
 def run_workflow(task: str, project_name: str, cwd: str, max_iterations: int = 3, use_tui: bool = False):
@@ -720,8 +720,8 @@ def run_workflow(task: str, project_name: str, cwd: str, max_iterations: int = 3
             print(f"{C.PM}    [{t.id}] P{t.priority}: {t.title[:45]}...{blockers}{C.RESET}")
         print()
 
-    # Handoff context accumulates across all tasks
-    handoff_context = build_handoff("pm", pm_report)
+    # WorkCycle context accumulates across all tasks
+    work_cycle_context = build_work_cycle("pm", pm_report)
 
     # ═══════════════════════════════════════════════════════════
     # PHASE 2: Process tasks from queue
@@ -772,15 +772,15 @@ def run_workflow(task: str, project_name: str, cwd: str, max_iterations: int = 3
             print(f"{C.DIM}  Queue: {queue.get_status_summary()}{C.RESET}")
             print(f"{C.BOLD}{'╚'*60}{C.RESET}")
 
-        success, new_handoff = run_task_through_pipeline(
-            current_task, cwd, principles, project, handoff_context, tui=tui
+        success, new_work_cycle = run_task_through_pipeline(
+            current_task, cwd, principles, project, work_cycle_context, tui=tui
         )
 
         if success:
             queue.mark_completed(current_task.id, {"status": "pass"})
             if db_queue:
                 db_queue.mark_completed(current_task.id)
-            handoff_context = new_handoff
+            work_cycle_context = new_work_cycle
             tasks_completed += 1
             if tui:
                 tui.log("SYS", f"✓ Task [{current_task.id}] completed")

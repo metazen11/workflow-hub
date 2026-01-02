@@ -185,7 +185,7 @@ def dashboard(request):
                     'project_name': t.project.name if t.project else '',
                     'priority': t.priority,
                     'status_class': _get_status_class(t.status.value),
-                    'run_id': t.run_id
+                    # NOTE: run_id removed from Task in refactor
                 })
 
         # Recent activity (mix of bugs, runs, and recently completed tasks)
@@ -197,13 +197,14 @@ def dashboard(request):
         # 1. Recent bugs
         recent_bugs = db.query(BugReport).order_by(BugReport.created_at.desc()).limit(5).all()
         for b in recent_bugs:
+            desc = b.description or ""
             activity.append({
                 'type': 'bug',
                 'title': f"Bug: {b.title}",
-                'description': b.description[:50] + "...",
-                'time': b.created_at.strftime('%Y-%m-%d %H:%M'),
+                'description': (desc[:50] + "...") if len(desc) > 50 else desc,
+                'time': b.created_at.strftime('%Y-%m-%d %H:%M') if b.created_at else '',
                 'url': f"/ui/bugs/{b.id}/",
-                'created_at': b.created_at
+                'timestamp': b.created_at  # Use timestamp for sorting consistency
             })
         for t in recent_tasks:
             activity.append({
@@ -588,13 +589,13 @@ def run_view(request, run_id):
         project = db.query(Project).filter(Project.id == run.project_id).first()
         open_bugs = _get_open_bugs_count(db)
 
-        # Get tasks for this run (directly linked)
-        run_tasks = db.query(Task).filter(Task.run_id == run_id).order_by(Task.priority.desc()).all()
+        # NOTE: Task.run_id was removed in refactor - now show all project tasks for the run
+        run_tasks = []  # Legacy - no direct task-run linking anymore
 
-        # Get ALL tasks for the project (may or may not have run_id set)
+        # Get ALL tasks for the project
         project_tasks = db.query(Task).filter(Task.project_id == run.project_id).order_by(Task.priority.desc()).all()
 
-        # Combine: show project tasks (which includes run tasks)
+        # Show project tasks (runs now work with project-level tasks)
         tasks = project_tasks
 
         # Get audit events for this run
@@ -678,8 +679,7 @@ def run_view(request, run_id):
                 'priority': t.priority or 5,
                 'blocked_by': ','.join(t.blocked_by) if t.blocked_by else '',
                 'acceptance_criteria': '\n'.join(t.acceptance_criteria) if t.acceptance_criteria else '',
-                'run_id': t.run_id,
-                'linked_to_run': t.run_id == run_id,
+                # NOTE: run_id removed from Task in refactor - runs no longer linked to tasks directly
             } for t in tasks],
             'run_task_count': len(run_tasks),
             'project_task_count': len(project_tasks),
@@ -729,7 +729,7 @@ def task_view(request, task_id):
                 'blocked_by': task.blocked_by or [],
                 'project_id': task.project_id,
                 'project_name': task.project.name if task.project else 'Unknown',
-                'run_id': task.run_id,
+                # NOTE: run_id removed from Task in refactor
                 'created_at': task.created_at.strftime('%Y-%m-%d %H:%M') if task.created_at else '',
                 'pipeline_stage': task.pipeline_stage.value if task.pipeline_stage else 'none',
             },
@@ -740,6 +740,55 @@ def task_view(request, task_id):
         return render(request, 'task_detail.html', context)
     finally:
         db.close()
+
+def global_board_view(request):
+    """Global Kanban board view - all tasks across all projects."""
+    db = next(get_db())
+    try:
+        open_bugs = _get_open_bugs_count(db)
+
+        # Build board dict using DRY helper
+        board = _build_task_kanban_dict()
+
+        # Fetch all tasks across all projects (exclude complete unless recent)
+        all_tasks = db.query(Task).all()
+
+        # Get project lookup for display
+        projects = {p.id: p for p in db.query(Project).all()}
+
+        for task in all_tasks:
+            stage = task.pipeline_stage.value.lower() if task.pipeline_stage else 'none'
+            if stage in board:
+                board[stage].append(task)
+            else:
+                board['none'].append(task)
+
+        # Sort each column by priority (descending)
+        for stage in board:
+            board[stage].sort(key=lambda t: t.priority or 0, reverse=True)
+
+        # Task statuses for dropdown
+        task_statuses = [
+            {'value': 'backlog', 'label': 'Backlog'},
+            {'value': 'in_progress', 'label': 'In Progress'},
+            {'value': 'blocked', 'label': 'Blocked'},
+            {'value': 'done', 'label': 'Done'},
+        ]
+
+        context = {
+            'active_page': 'board',
+            'open_bugs_count': open_bugs if open_bugs > 0 else None,
+            'project': None,  # Global view
+            'projects': projects,
+            'board': board,
+            'pipeline_stages': _get_pipeline_stages_for_template(),
+            'task_statuses': task_statuses,
+        }
+
+        return render(request, 'global_board.html', context)
+    finally:
+        db.close()
+
 
 def task_board_view(request, project_id):
     """Kanban board view for a project."""
@@ -770,7 +819,7 @@ def task_board_view(request, project_id):
             board[stage].sort(key=lambda t: t.priority or 0, reverse=True)
 
         context = {
-            'active_page': 'projects',
+            'active_page': 'board',
             'open_bugs_count': open_bugs if open_bugs > 0 else None,
             'project': project,
             'board': board,
@@ -816,8 +865,8 @@ def ledger_view(request):
                         project = full_entry.get('project', 'unknown')
                         stats['by_project'][project] = stats['by_project'].get(project, 0) + 1
 
-        # Sort by date descending
-        entries.sort(key=lambda x: x.get('date', ''), reverse=True)
+        # Sort by date descending (handle mixed date types)
+        entries.sort(key=lambda x: str(x.get('date', '')), reverse=True)
 
         context = {
             'active_page': 'ledger',

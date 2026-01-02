@@ -47,12 +47,36 @@ def _dispatch_async(event_type: str, payload: dict):
 
 
 def _auto_trigger_agent(payload: dict):
-    """Automatically trigger the next agent based on state change payload."""
+    """Automatically trigger the next agent based on state change payload.
+
+    Supports both run-level and task-level state changes:
+    - Run-level: uses run_id and to_state
+    - Task-level: uses task_id and to_stage
+    """
     import sys
     next_agent = payload.get("next_agent")
     run_id = payload.get("run_id")
+    task_id = payload.get("task_id")
     to_state = payload.get("to_state", "")
+    to_stage = payload.get("to_stage", "")
 
+    # Handle task-level state changes (new work_cycle-based flow)
+    if task_id and to_stage:
+        if not next_agent or next_agent == "complete":
+            print(f"[Auto-trigger] Task {task_id} reached {to_stage} (no next agent)", file=sys.stderr, flush=True)
+            return
+
+        print(f"[Auto-trigger] Triggering {next_agent} agent for task {task_id}", file=sys.stderr, flush=True)
+        try:
+            from app.services.agent_service import AgentService
+            service = AgentService()
+            result = service.trigger_agent(task_id=task_id, agent_type=next_agent, async_mode=True)
+            print(f"[Auto-trigger] Task result: {result}", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"[Auto-trigger] Task error: {e}", file=sys.stderr, flush=True)
+        return
+
+    # Handle run-level state changes (legacy flow)
     if not run_id:
         return
 

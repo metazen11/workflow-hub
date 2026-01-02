@@ -16,7 +16,7 @@ from app.models import (
     BugReport, BugReportStatus, TaskAttachment, AttachmentType,
     validate_file_security, AttachmentSecurityError,
     Credential, CredentialType, Environment, EnvironmentType,
-    Handoff, HandoffStatus, Proof,
+    WorkCycle, WorkCycleStatus, Proof,
     # Falsification Framework
     Claim, ClaimTest, ClaimEvidence,
     ClaimScope, ClaimStatus, ClaimCategory,
@@ -549,7 +549,6 @@ def task_create(request, project_id):
             priority=data.get("priority", 5),
             blocked_by=data.get("blocked_by", []),
             acceptance_criteria=data.get("acceptance_criteria", []),
-            run_id=data.get("run_id"),
             status=TaskStatus.BACKLOG,
             pipeline_stage=pipeline_stage
         )
@@ -702,9 +701,10 @@ def task_update(request, task_id):
             task.acceptance_criteria = data["acceptance_criteria"]
             updated_fields.append("acceptance_criteria")
 
-        if "run_id" in data:
-            task.run_id = data["run_id"]
-            updated_fields.append("run_id")
+        # NOTE: run_id removed from Task in refactor - skip this update
+        # if "run_id" in data:
+        #     task.run_id = data["run_id"]
+        #     updated_fields.append("run_id")
 
         db.commit()
         db.refresh(task)
@@ -768,8 +768,7 @@ def task_execute(request, task_id):
         service = RunService(db)
         run = service.create_run(project.id, run_name)
 
-        # Link the task to this run
-        task.run_id = run.id
+        # NOTE: task.run_id removed in refactor - runs now track via project
         task.status = TaskStatus.IN_PROGRESS
 
         # Capture values before commit (SQLAlchemy expires objects after commit)
@@ -1301,6 +1300,216 @@ def task_director_prepare(request, task_id):
         db.close()
 
 
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_enhance(request, task_id):
+    """Use LLM to enhance task description with project context.
+
+    Takes the current task description and uses an LLM to:
+    - Clarify the requirements
+    - Add technical context from the project
+    - Suggest implementation details
+    - Improve acceptance criteria
+
+    Body:
+        field (str): Which field to enhance - 'description' or 'criteria' (default: 'description')
+    """
+    from app.services.llm_service import query_llm
+
+    data = _get_json_body(request) or {}
+    field = data.get("field", "description")
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        project = task.project
+        if not project:
+            return JsonResponse({"error": "Task has no project"}, status=400)
+
+        # Build enhancement prompt based on field
+        if field == "criteria":
+            current_content = "\n".join(task.acceptance_criteria) if task.acceptance_criteria else "(none)"
+            prompt = f"""Enhance these acceptance criteria for the task:
+
+Task: {task.title}
+Description: {task.description or '(none)'}
+
+Current Acceptance Criteria:
+{current_content}
+
+Please provide improved acceptance criteria that are:
+1. Specific and testable
+2. Clear about expected behavior
+3. Include edge cases where relevant
+4. Measurable (pass/fail)
+
+Return ONLY the enhanced criteria, one per line, without numbering or bullets."""
+
+        else:  # description
+            prompt = f"""Enhance this task description with technical context:
+
+Task Title: {task.title}
+Current Description: {task.description or '(none)'}
+
+Acceptance Criteria:
+{chr(10).join(task.acceptance_criteria) if task.acceptance_criteria else '(none)'}
+
+Please provide an enhanced description that:
+1. Clarifies the requirements
+2. Adds relevant technical context based on the project
+3. Suggests implementation approach
+4. Identifies potential challenges
+5. Is concise but comprehensive
+
+Return ONLY the enhanced description, no headers or labels."""
+
+        # Query LLM with project context
+        result = query_llm(
+            prompt=prompt,
+            project_id=project.id,
+            task_id=task.id,
+            system_prompt=f"""You are a technical project manager enhancing task specifications for the project "{project.name}".
+Your goal is to make the task clearer and more actionable for developers.
+Be concise but thorough. Focus on practical implementation details.""",
+            include_context=True,
+            temperature=0.7,
+            db_session=db
+        )
+
+        enhanced_content = result.get("content", "").strip()
+
+        if not enhanced_content:
+            return JsonResponse({"error": "LLM returned empty response"}, status=500)
+
+        # Update the task
+        if field == "criteria":
+            # Parse criteria (one per line)
+            new_criteria = [c.strip() for c in enhanced_content.split("\n") if c.strip()]
+            task.acceptance_criteria = new_criteria
+            db.commit()
+            return JsonResponse({
+                "success": True,
+                "field": "criteria",
+                "enhanced": new_criteria,
+                "original": current_content
+            })
+        else:
+            original = task.description
+            task.description = enhanced_content
+            db.commit()
+            return JsonResponse({
+                "success": True,
+                "field": "description",
+                "enhanced": enhanced_content,
+                "original": original
+            })
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def task_simplify(request, task_id):
+    """Simplify a complex task into step-by-step implementation instructions.
+
+    Takes a verbose task description and uses LLM to create:
+    - Clear, numbered steps
+    - Specific file paths and line numbers
+    - Exact code changes (old -> new)
+    - Verification commands
+
+    This makes tasks executable by agents without interpretation.
+    """
+    from app.services.llm_service import query_llm
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        project = task.project
+        if not project:
+            return JsonResponse({"error": "Task has no project"}, status=400)
+
+        prompt = f"""Simplify this task into step-by-step implementation instructions.
+
+Task: {task.title}
+Description:
+{task.description or '(none)'}
+
+Acceptance Criteria:
+{chr(10).join(f'- {c}' for c in task.acceptance_criteria) if task.acceptance_criteria else '(none)'}
+
+Create a simplified implementation plan with:
+1. Numbered steps (1, 2, 3...)
+2. Each step has ONE specific action
+3. Include exact file paths
+4. Include exact code snippets to add/modify
+5. Use format: "In FILE, find OLD_CODE and replace with NEW_CODE"
+6. End with verification command
+
+Keep it concise - agents work better with simple, direct instructions.
+
+Example format:
+1. Open `app/templates/file.html`
+2. Find: `<div class="old">`
+3. Replace with: `<div class="new">`
+4. Verify: `curl http://localhost:8000/path | grep "new"`
+
+Return ONLY the numbered steps, no preamble."""
+
+        result = query_llm(
+            prompt=prompt,
+            project_id=project.id,
+            task_id=task.id,
+            system_prompt=f"""You are a senior developer creating implementation instructions for the project "{project.name}".
+Your goal is to make complex tasks simple and executable.
+Be extremely specific - include exact file paths, line numbers, code snippets.
+Each step should be ONE atomic action.""",
+            include_context=True,
+            temperature=0.3,  # Lower temperature for more precise output
+            db_session=db
+        )
+
+        simplified = result.get("content", "").strip()
+
+        if not simplified:
+            return JsonResponse({"error": "LLM returned empty response"}, status=500)
+
+        # Store original and update description with simplified version
+        original = task.description
+        task.description = f"""## Implementation Steps
+
+{simplified}
+
+---
+<details>
+<summary>Original Description</summary>
+
+{original}
+</details>"""
+        db.commit()
+
+        return JsonResponse({
+            "success": True,
+            "simplified": simplified,
+            "original": original,
+            "task": task.to_dict()
+        })
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+    finally:
+        db.close()
+
+
 # --- Threat Intel ---
 
 def threat_intel_list(request):
@@ -1600,11 +1809,11 @@ def orchestrator_context(request, project_id):
     - Project metadata and all commands
     - Key file contents (CLAUDE.md, coding_principles.md, todo.json, etc.)
     - Tasks, environments, credentials (masked), requirements
-    - Recent handoffs, proofs, and audit events
+    - Recent work_cycles, proofs, and audit events
 
     Query params:
     - include_files: true/false (default true) - include key file contents
-    - include_history: true/false (default true) - include handoffs/proofs
+    - include_history: true/false (default true) - include work_cycles/proofs
     - max_file_size: int (default 50000) - max bytes per file
     """
     import os
@@ -1652,7 +1861,7 @@ def orchestrator_context(request, project_id):
                 "coding_principles.md",
                 "todo.json",
                 "_spec/BRIEF.md",
-                "_spec/HANDOFF.md",
+                "_spec/WORK_CYCLE.md",
                 "_spec/SESSION_CONTEXT.md",
             ]
 
@@ -1688,11 +1897,11 @@ def orchestrator_context(request, project_id):
 
         # Include recent history if requested
         if include_history:
-            # Recent handoffs
-            recent_handoffs = db.query(Handoff).filter(
-                Handoff.project_id == project_id
-            ).order_by(Handoff.created_at.desc()).limit(10).all()
-            result["recent_handoffs"] = [h.to_dict() for h in recent_handoffs]
+            # Recent work_cycles
+            recent_work_cycles = db.query(WorkCycle).filter(
+                WorkCycle.project_id == project_id
+            ).order_by(WorkCycle.created_at.desc()).limit(10).all()
+            result["recent_work_cycles"] = [h.to_dict() for h in recent_work_cycles]
 
             # Recent proofs
             recent_proofs = db.query(Proof).filter(
@@ -2313,18 +2522,21 @@ def task_queue(request):
     Get next task(s) for an agent to work on.
 
     Query params:
-        - run_id: Filter by specific run (required)
+        - run_id: Filter by specific run (get project from run)
+        - project_id: Filter by project directly
         - stage: Filter by pipeline stage (dev, qa, sec, docs)
         - limit: Max tasks to return (default 1)
 
     Returns tasks that need work at the specified stage.
+    NOTE: run_id no longer links directly to tasks - we get project from run.
     """
     run_id = request.GET.get("run_id")
+    project_id = request.GET.get("project_id")
     stage = request.GET.get("stage", "dev").lower()
     limit = int(request.GET.get("limit", 1))
 
-    if not run_id:
-        return JsonResponse({"error": "run_id required"}, status=400)
+    if not run_id and not project_id:
+        return JsonResponse({"error": "run_id or project_id required"}, status=400)
 
     # Use enum's DRY helper for stage lookup
     stage_map = TaskPipelineStage.get_stage_map()
@@ -2334,9 +2546,17 @@ def task_queue(request):
 
     db = next(get_db())
     try:
-        # Find tasks at this stage that aren't done
+        # Get project_id from run if needed
+        if run_id and not project_id:
+            run = db.query(Run).filter(Run.id == int(run_id)).first()
+            if run:
+                project_id = run.project_id
+            else:
+                return JsonResponse({"error": "Run not found"}, status=404)
+
+        # Find tasks at this stage that aren't done (filter by project)
         tasks = db.query(Task).filter(
-            Task.run_id == int(run_id),
+            Task.project_id == int(project_id),
             Task.pipeline_stage == target_stage,
             Task.status != TaskStatus.DONE
         ).order_by(Task.priority.desc()).limit(limit).all()
@@ -2469,6 +2689,242 @@ def task_set_stage(request, task_id):
 
 
 @csrf_exempt
+@require_http_methods(["POST"])
+def task_start_work(request, task_id):
+    """
+    Unified "Start Work" endpoint - combines stage change + agent trigger.
+
+    This is the primary action for moving a task through the pipeline.
+    One click: sets stage, updates status, triggers agent, returns job tracking.
+
+    Body:
+        - stage: Target stage (pm, dev, qa, sec, docs) - required
+        - actor: Who is starting (default: human)
+        - simplify: If true, run task_simplify first to convert description to steps (default: false)
+
+    Returns:
+        - task: Updated task object
+        - job_id: Queue job ID for tracking progress
+        - run_id: Associated run ID (if created)
+        - status: "queued" or "started"
+        - simplified: True if task was simplified before execution
+    """
+    from app.services.agent_service import AgentService
+    from app.services.llm_service import query_llm
+    from app.models.task import TaskPipelineStage, TaskStatus
+
+    data = _get_json_body(request) or {}
+    stage_str = data.get("stage", "").upper()
+    actor = data.get("actor", "human")
+    should_simplify = data.get("simplify", False)
+
+    # Validate stage
+    stage_map = TaskPipelineStage.get_stage_map()
+    valid_work_stages = ["PM", "DEV", "QA", "SEC", "DOCS"]
+
+    if stage_str not in valid_work_stages:
+        return JsonResponse({
+            "error": f"Invalid stage: {stage_str}. Valid work stages: {', '.join(valid_work_stages)}"
+        }, status=400)
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        project = task.project
+        if not project or not project.repo_path:
+            return JsonResponse({"error": "Project has no repo_path configured"}, status=400)
+
+        # 0. Optionally simplify the task first
+        simplified = False
+        if should_simplify and task.description:
+            try:
+                prompt = f"""Simplify this task into step-by-step implementation instructions.
+
+Task: {task.title}
+Description:
+{task.description}
+
+Acceptance Criteria:
+{chr(10).join(f'- {c}' for c in task.acceptance_criteria) if task.acceptance_criteria else '(none)'}
+
+Create a simplified implementation plan with:
+1. Numbered steps (1, 2, 3...)
+2. Each step has ONE specific action
+3. Include exact file paths
+4. Include exact code snippets to add/modify
+5. Use format: "In FILE, find OLD_CODE and replace with NEW_CODE"
+6. End with verification command
+
+Return ONLY the numbered steps, no preamble."""
+
+                result = query_llm(
+                    prompt=prompt,
+                    project_id=project.id,
+                    task_id=task.id,
+                    system_prompt=f"""You are a senior developer creating implementation instructions for "{project.name}".
+Make complex tasks simple and executable. Be specific with file paths and code snippets.""",
+                    include_context=True,
+                    temperature=0.3,
+                    db_session=db
+                )
+
+                simplified_content = result.get("content", "").strip()
+                if simplified_content:
+                    original = task.description
+                    task.description = f"""## Implementation Steps
+
+{simplified_content}
+
+---
+<details>
+<summary>Original Description</summary>
+
+{original}
+</details>"""
+                    simplified = True
+            except Exception as e:
+                # Log but don't fail - simplification is optional
+                print(f"[start-work] Simplification failed: {e}")
+
+        # 1. Update task stage and status
+        old_stage = task.pipeline_stage
+        task.pipeline_stage = stage_map[stage_str]
+        task.status = TaskStatus.IN_PROGRESS
+
+        # 2. Create or reuse run for this task
+        from app.services.run_service import RunService
+        run_service = RunService(db)
+
+        # Check for existing active run on this task's project
+        # Exclude deployed, merged, or killed runs
+        from app.models.run import Run, RunState
+        existing_run = db.query(Run).filter(
+            Run.project_id == project.id,
+            Run.killed == False,  # Not soft-deleted
+            Run.state.notin_([RunState.DEPLOYED, RunState.MERGED])
+        ).order_by(Run.created_at.desc()).first()
+
+        if existing_run:
+            run = existing_run
+            run_id = run.id
+        else:
+            run_name = f"Execute Task: {task.task_id} - {task.title}"[:497]
+            run = run_service.create_run(project.id, run_name)
+            run_id = run.id
+
+        # Capture values before commit
+        task_dict = task.to_dict()
+        project_id = project.id
+        project_path = project.repo_path
+
+        # Log and commit
+        log_event(db, actor, "start_work", "task", task_id, {
+            "stage": stage_str,
+            "run_id": run_id,
+            "from_stage": old_stage.value if old_stage else "none"
+        })
+        db.commit()
+
+        # 3. Trigger agent via queue
+        agent_service = AgentService()
+        agent_type = stage_str.lower()  # pm, dev, qa, sec, docs
+
+        result = agent_service.trigger_agent(
+            task_id=task_id,  # Use task-based flow, not legacy run-based
+            agent_type=agent_type,
+            async_mode=True
+        )
+
+        # Log auto-trigger
+        print(f"[Auto-trigger] Triggering {agent_type} agent for task {task_id}")
+        print(f"[Auto-trigger] Result: {result}")
+
+        return JsonResponse({
+            "success": True,
+            "task": task_dict,
+            "run_id": run_id,
+            "stage": stage_str,
+            "agent": agent_type,
+            "job_id": result.get("job_id"),
+            "position": result.get("position"),
+            "status": result.get("status", "started"),
+            "simplified": simplified,
+            "message": f"Started {agent_type.upper()} agent for task {task.task_id}"
+        }, status=202)
+
+    except Exception as e:
+        db.rollback()
+        import traceback
+        print(f"[start-work] Error: {e}")
+        traceback.print_exc()
+        return JsonResponse({"error": str(e)}, status=500)
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def task_job_status(request, task_id):
+    """
+    Get current job status for a task.
+
+    Returns the most recent running or pending job for this task's project.
+    Used for live status updates without page refresh.
+    """
+    from app.models.llm_job import LLMJob, JobStatus
+
+    db = next(get_db())
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
+
+        # Find most recent job for this project
+        job = db.query(LLMJob).filter(
+            LLMJob.project_id == task.project_id,
+            LLMJob.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value])
+        ).order_by(LLMJob.created_at.desc()).first()
+
+        if not job:
+            # Check for recently completed job
+            from datetime import datetime, timedelta, timezone
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+            job = db.query(LLMJob).filter(
+                LLMJob.project_id == task.project_id,
+                LLMJob.completed_at >= recent_cutoff
+            ).order_by(LLMJob.completed_at.desc()).first()
+
+        if not job:
+            return JsonResponse({
+                "has_active_job": False,
+                "task_id": task_id,
+                "stage": task.pipeline_stage.value if task.pipeline_stage else "none",
+                "status": task.status.value if task.status else "backlog"
+            })
+
+        # Handle job.status as either string or enum
+        job_status = job.status.value if hasattr(job.status, 'value') else job.status
+
+        return JsonResponse({
+            "has_active_job": True,
+            "job_id": job.id,
+            "job_type": job.job_type,
+            "job_status": job_status,
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "error_message": job.error_message,
+            "task_id": task_id,
+            "stage": task.pipeline_stage.value if task.pipeline_stage else "none",
+            "status": task.status.value if task.status else "backlog"
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
 @require_http_methods(["GET"])
 def run_task_progress(request, run_id):
     """
@@ -2482,7 +2938,8 @@ def run_task_progress(request, run_id):
         if not run:
             return JsonResponse({"error": "Run not found"}, status=404)
 
-        tasks = db.query(Task).filter(Task.run_id == run_id).all()
+        # NOTE: Task.run_id removed in refactor - get tasks by project
+        tasks = db.query(Task).filter(Task.project_id == run.project_id).all()
 
         # Count by stage
         stage_counts = {stage.value: 0 for stage in TaskPipelineStage}
@@ -2580,8 +3037,9 @@ def task_advance(request, task_id):
         # Create a mock report if status provided
         report = None
         if "report_status" in data:
+            # NOTE: run_id removed from Task - use 0 as placeholder for legacy AgentReport
             report = AgentReport(
-                run_id=task.run_id or 0,
+                run_id=0,  # Legacy - run_id no longer on Task
                 role=AgentRole.DEV,
                 status=ReportStatus.PASS if data["report_status"] == "pass" else ReportStatus.FAIL,
                 summary=data.get("report_summary", "")
@@ -2667,8 +3125,9 @@ def task_loop_back(request, task_id):
         data = json.loads(request.body) if request.body else {}
 
         # Create failure report
+        # NOTE: run_id removed from Task - use 0 as placeholder
         report = AgentReport(
-            run_id=task.run_id or 0,
+            run_id=0,  # Legacy - run_id no longer on Task
             role=AgentRole.QA,
             status=ReportStatus.FAIL,
             summary=data.get("reason", "Looped back by user")
@@ -3171,14 +3630,13 @@ def proof_upload(request, entity_type, entity_id):
             task = db.query(Task).filter(Task.id == entity_id).first()
             task_id = entity_id
             project_id = task.project_id if task else None
-            run_id = task.run_id if task else None
+            run_id = None  # Task.run_id removed in refactor
         else:  # run
             run = db.query(Run).filter(Run.id == entity_id).first()
             run_id = entity_id
             project_id = run.project_id if run else None
-            # Try to find associated task
-            task = db.query(Task).filter(Task.run_id == entity_id).first()
-            task_id = task.id if task else None
+            # NOTE: Task.run_id removed - no direct task-run association anymore
+            task_id = None
 
         if task_id and project_id:
             # Map proof_type string to enum
@@ -3359,33 +3817,33 @@ def proof_clear(request, entity_type, entity_id):
 
 
 # =============================================================================
-# Handoff Endpoints (Task-Centric Agent Work Cycles)
+# WorkCycle Endpoints (Task-Centric Agent Work Cycles)
 # =============================================================================
 
-def task_handoff_current(request, task_id):
-    """Get the current pending/in_progress handoff for a task.
+def task_work_cycle_current(request, task_id):
+    """Get the current pending/in_progress work_cycle for a task.
 
-    GET /api/tasks/{task_id}/handoff
+    GET /api/tasks/{task_id}/work_cycle
 
-    Returns the handoff that an agent should work on.
+    Returns the work_cycle that an agent should work on.
     Includes full context (structured + markdown).
     """
-    from app.services import handoff_service
+    from app.services import work_cycle_service
 
     db = next(get_db())
     try:
-        handoff = handoff_service.get_current_handoff(db, task_id)
+        work_cycle = work_cycle_service.get_current_work_cycle(db, task_id)
 
-        if not handoff:
+        if not work_cycle:
             return JsonResponse({
                 "task_id": task_id,
-                "handoff": None,
-                "message": "No pending handoff for this task"
+                "work_cycle": None,
+                "message": "No pending work_cycle for this task"
             })
 
         return JsonResponse({
             "task_id": task_id,
-            "handoff": handoff.to_dict()
+            "work_cycle": work_cycle.to_dict()
         })
     finally:
         db.close()
@@ -3393,10 +3851,10 @@ def task_handoff_current(request, task_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def task_handoff_create(request, task_id):
-    """Create a new handoff for a task.
+def task_work_cycle_create(request, task_id):
+    """Create a new work_cycle for a task.
 
-    POST /api/tasks/{task_id}/handoff/create
+    POST /api/tasks/{task_id}/work_cycle/create
 
     Body:
         - to_role: Agent role that should pick this up (dev, qa, sec, docs, pm)
@@ -3406,9 +3864,9 @@ def task_handoff_create(request, task_id):
         - created_by: Who created this (default: "system")
         - write_file: Whether to write context to file (default: true)
 
-    Returns the created handoff with full context.
+    Returns the created work_cycle with full context.
     """
-    from app.services import handoff_service
+    from app.services import work_cycle_service
 
     data = _get_json_body(request)
     if not data:
@@ -3428,15 +3886,15 @@ def task_handoff_create(request, task_id):
         if not task:
             return JsonResponse({"error": "Task not found"}, status=404)
 
-        # Check for existing pending handoff
-        existing = handoff_service.get_current_handoff(db, task_id)
+        # Check for existing pending work_cycle
+        existing = work_cycle_service.get_current_work_cycle(db, task_id)
         if existing:
             return JsonResponse({
-                "error": "Task already has a pending handoff",
-                "existing_handoff_id": existing.id
+                "error": "Task already has a pending work_cycle",
+                "existing_work_cycle_id": existing.id
             }, status=400)
 
-        handoff = handoff_service.create_handoff(
+        work_cycle = work_cycle_service.create_work_cycle(
             db=db,
             task_id=task_id,
             to_role=to_role,
@@ -3448,14 +3906,14 @@ def task_handoff_create(request, task_id):
             write_file=data.get("write_file", True)
         )
 
-        log_event(db, "system", "create_handoff", "task", task_id, {
-            "handoff_id": handoff.id,
+        log_event(db, "system", "create_work_cycle", "task", task_id, {
+            "work_cycle_id": work_cycle.id,
             "to_role": to_role,
             "stage": stage
         })
 
         return JsonResponse({
-            "handoff": handoff.to_dict()
+            "work_cycle": work_cycle.to_dict()
         }, status=201)
     except ValueError as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -3465,44 +3923,44 @@ def task_handoff_create(request, task_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def task_handoff_accept(request, task_id):
-    """Accept a handoff (agent starting work).
+def task_work_cycle_accept(request, task_id):
+    """Accept a work_cycle (agent starting work).
 
-    POST /api/tasks/{task_id}/handoff/accept
+    POST /api/tasks/{task_id}/work_cycle/accept
 
     Body:
-        - handoff_id: Optional specific handoff ID (uses current if not provided)
+        - work_cycle_id: Optional specific work_cycle ID (uses current if not provided)
 
-    Marks the handoff as IN_PROGRESS.
+    Marks the work_cycle as IN_PROGRESS.
     """
-    from app.services import handoff_service
+    from app.services import work_cycle_service
 
     data = _get_json_body(request) or {}
-    handoff_id = data.get("handoff_id")
+    work_cycle_id = data.get("work_cycle_id")
 
     db = next(get_db())
     try:
-        # Get handoff - either specified or current
-        if handoff_id:
-            handoff = handoff_service.get_handoff_by_id(db, handoff_id)
-            if not handoff or handoff.task_id != task_id:
-                return JsonResponse({"error": "Handoff not found for this task"}, status=404)
+        # Get work_cycle - either specified or current
+        if work_cycle_id:
+            work_cycle = work_cycle_service.get_work_cycle_by_id(db, work_cycle_id)
+            if not work_cycle or work_cycle.task_id != task_id:
+                return JsonResponse({"error": "WorkCycle not found for this task"}, status=404)
         else:
-            handoff = handoff_service.get_current_handoff(db, task_id)
-            if not handoff:
-                return JsonResponse({"error": "No pending handoff for this task"}, status=404)
+            work_cycle = work_cycle_service.get_current_work_cycle(db, task_id)
+            if not work_cycle:
+                return JsonResponse({"error": "No pending work_cycle for this task"}, status=404)
 
-        handoff = handoff_service.accept_handoff(db, handoff.id)
+        work_cycle = work_cycle_service.accept_work_cycle(db, work_cycle.id)
 
-        log_event(db, "agent", "accept_handoff", "task", task_id, {
-            "handoff_id": handoff.id,
-            "to_role": handoff.to_role,
-            "stage": handoff.stage
+        log_event(db, "agent", "accept_work_cycle", "task", task_id, {
+            "work_cycle_id": work_cycle.id,
+            "to_role": work_cycle.to_role,
+            "stage": work_cycle.stage
         })
 
         return JsonResponse({
             "success": True,
-            "handoff": handoff.to_dict()
+            "work_cycle": work_cycle.to_dict()
         })
     except ValueError as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -3512,21 +3970,28 @@ def task_handoff_accept(request, task_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def task_handoff_complete(request, task_id):
-    """Complete a handoff with the agent's report.
+def task_work_cycle_complete(request, task_id):
+    """Complete a work_cycle with the agent's report and advance task pipeline.
 
-    POST /api/tasks/{task_id}/handoff/complete
+    POST /api/tasks/{task_id}/work_cycle/complete
 
     Body:
-        - handoff_id: Optional specific handoff ID (uses current if not provided)
+        - work_cycle_id: Optional specific work_cycle ID (uses current if not provided)
         - report_status: "pass" or "fail" (required)
         - report_summary: Summary of what agent did (required)
         - report_details: Full report details as JSON (optional)
         - agent_report_id: Link to AgentReport record (optional)
+        - auto_advance: Whether to auto-advance pipeline stage (default: true)
 
-    Marks the handoff as COMPLETED with the report.
+    Marks the work_cycle as COMPLETED with the report.
+    If report_status is "pass" and auto_advance is true, advances task to next pipeline stage.
+    If report_status is "fail", loops task back to DEV stage.
     """
-    from app.services import handoff_service
+    from app.services import work_cycle_service
+    from app.services.director_service import DirectorService
+    from app.services.webhook_service import dispatch_webhook, EVENT_STATE_CHANGE
+    from app.models.report import AgentReport, ReportStatus
+    from app.models.task import Task
 
     data = _get_json_body(request)
     if not data:
@@ -3538,39 +4003,91 @@ def task_handoff_complete(request, task_id):
     if report_status not in ("pass", "fail"):
         return JsonResponse({"error": "report_status must be 'pass' or 'fail'"}, status=400)
 
-    handoff_id = data.get("handoff_id")
+    work_cycle_id = data.get("work_cycle_id")
+    auto_advance = data.get("auto_advance", True)
 
     db = next(get_db())
     try:
-        # Get handoff - either specified or current in_progress
-        if handoff_id:
-            handoff = handoff_service.get_handoff_by_id(db, handoff_id)
-            if not handoff or handoff.task_id != task_id:
-                return JsonResponse({"error": "Handoff not found for this task"}, status=404)
-        else:
-            handoff = handoff_service.get_current_handoff(db, task_id)
-            if not handoff:
-                return JsonResponse({"error": "No in-progress handoff for this task"}, status=404)
+        # Get task first
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return JsonResponse({"error": "Task not found"}, status=404)
 
-        handoff = handoff_service.complete_handoff(
+        # Get work_cycle - either specified or current in_progress
+        if work_cycle_id:
+            work_cycle = work_cycle_service.get_work_cycle_by_id(db, work_cycle_id)
+            if not work_cycle or work_cycle.task_id != task_id:
+                return JsonResponse({"error": "WorkCycle not found for this task"}, status=404)
+        else:
+            work_cycle = work_cycle_service.get_current_work_cycle(db, task_id)
+            if not work_cycle:
+                return JsonResponse({"error": "No in-progress work_cycle for this task"}, status=404)
+
+        old_stage = task.pipeline_stage.value if task.pipeline_stage else "none"
+
+        work_cycle = work_cycle_service.complete_work_cycle(
             db=db,
-            handoff_id=handoff.id,
+            work_cycle_id=work_cycle.id,
             report_status=report_status,
             report_summary=data.get("report_summary"),
             report_details=data.get("report_details"),
             agent_report_id=data.get("agent_report_id")
         )
 
-        log_event(db, "agent", "complete_handoff", "task", task_id, {
-            "handoff_id": handoff.id,
-            "to_role": handoff.to_role,
-            "stage": handoff.stage,
+        log_event(db, "agent", "complete_work_cycle", "task", task_id, {
+            "work_cycle_id": work_cycle.id,
+            "to_role": work_cycle.to_role,
+            "stage": work_cycle.stage,
             "report_status": report_status
         })
 
+        # Advance task pipeline if auto_advance is enabled
+        advance_result = None
+        if auto_advance:
+            director = DirectorService(db)
+
+            # Create a minimal report-like object for the director to check status
+            # Using a simple object since AgentReport is run-centric, not task-centric
+            class TaskReport:
+                def __init__(self, status):
+                    self.status = status
+
+            temp_report = TaskReport(
+                status=ReportStatus.PASS if report_status == "pass" else ReportStatus.FAIL
+            )
+
+            success, message = director.advance_task(task, temp_report)
+            advance_result = {"success": success, "message": message}
+
+            new_stage = task.pipeline_stage.value if task.pipeline_stage else "none"
+
+            # Dispatch webhook for state change to trigger next agent
+            if success:
+                # Determine next agent based on new stage
+                stage_to_agent = {
+                    "dev": "dev",
+                    "qa": "qa",
+                    "sec": "sec",
+                    "docs": "docs",
+                    "complete": None
+                }
+                next_agent = stage_to_agent.get(new_stage)
+
+                dispatch_webhook(EVENT_STATE_CHANGE, {
+                    "task_id": task_id,
+                    "project_id": task.project_id,
+                    "run_id": work_cycle.run_id,
+                    "from_stage": old_stage,
+                    "to_stage": new_stage,
+                    "next_agent": next_agent,
+                    "report_status": report_status
+                })
+
         return JsonResponse({
             "success": True,
-            "handoff": handoff.to_dict()
+            "work_cycle": work_cycle.to_dict(),
+            "task": task.to_dict() if hasattr(task, 'to_dict') else {"id": task.id, "pipeline_stage": task.pipeline_stage.value if task.pipeline_stage else None},
+            "advance_result": advance_result
         })
     except ValueError as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -3580,45 +4097,45 @@ def task_handoff_complete(request, task_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def task_handoff_fail(request, task_id):
-    """Mark a handoff as failed (timeout, error, etc.).
+def task_work_cycle_fail(request, task_id):
+    """Mark a work_cycle as failed (timeout, error, etc.).
 
-    POST /api/tasks/{task_id}/handoff/fail
+    POST /api/tasks/{task_id}/work_cycle/fail
 
     Body:
-        - handoff_id: Optional specific handoff ID (uses current if not provided)
+        - work_cycle_id: Optional specific work_cycle ID (uses current if not provided)
         - reason: Reason for failure (optional)
 
-    Marks the handoff as FAILED.
+    Marks the work_cycle as FAILED.
     """
-    from app.services import handoff_service
+    from app.services import work_cycle_service
 
     data = _get_json_body(request) or {}
-    handoff_id = data.get("handoff_id")
+    work_cycle_id = data.get("work_cycle_id")
     reason = data.get("reason")
 
     db = next(get_db())
     try:
-        # Get handoff - either specified or current
-        if handoff_id:
-            handoff = handoff_service.get_handoff_by_id(db, handoff_id)
-            if not handoff or handoff.task_id != task_id:
-                return JsonResponse({"error": "Handoff not found for this task"}, status=404)
+        # Get work_cycle - either specified or current
+        if work_cycle_id:
+            work_cycle = work_cycle_service.get_work_cycle_by_id(db, work_cycle_id)
+            if not work_cycle or work_cycle.task_id != task_id:
+                return JsonResponse({"error": "WorkCycle not found for this task"}, status=404)
         else:
-            handoff = handoff_service.get_current_handoff(db, task_id)
-            if not handoff:
-                return JsonResponse({"error": "No active handoff for this task"}, status=404)
+            work_cycle = work_cycle_service.get_current_work_cycle(db, task_id)
+            if not work_cycle:
+                return JsonResponse({"error": "No active work_cycle for this task"}, status=404)
 
-        handoff = handoff_service.fail_handoff(db, handoff.id, reason)
+        work_cycle = work_cycle_service.fail_work_cycle(db, work_cycle.id, reason)
 
-        log_event(db, "system", "fail_handoff", "task", task_id, {
-            "handoff_id": handoff.id,
+        log_event(db, "system", "fail_work_cycle", "task", task_id, {
+            "work_cycle_id": work_cycle.id,
             "reason": reason
         })
 
         return JsonResponse({
             "success": True,
-            "handoff": handoff.to_dict()
+            "work_cycle": work_cycle.to_dict()
         })
     except ValueError as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -3626,20 +4143,20 @@ def task_handoff_fail(request, task_id):
         db.close()
 
 
-def task_handoff_history(request, task_id):
-    """Get handoff history for a task.
+def task_work_cycle_history(request, task_id):
+    """Get work_cycle history for a task.
 
-    GET /api/tasks/{task_id}/handoff/history
+    GET /api/tasks/{task_id}/work_cycle/history
 
     Query params:
         - stage: Filter by pipeline stage
         - limit: Max results (default: 50)
         - format: 'full' or 'compact' (default: full)
 
-    Returns all handoffs for the task, ordered by creation date (newest first).
+    Returns all work_cycles for the task, ordered by creation date (newest first).
     Used for agent memory - understanding previous work cycles.
     """
-    from app.services import handoff_service
+    from app.services import work_cycle_service
 
     stage = request.GET.get("stage")
     limit = int(request.GET.get("limit", 50))
@@ -3651,7 +4168,7 @@ def task_handoff_history(request, task_id):
         if not task:
             return JsonResponse({"error": "Task not found"}, status=404)
 
-        handoffs = handoff_service.get_handoff_history(
+        work_cycles = work_cycle_service.get_work_cycle_history(
             db=db,
             task_id=task_id,
             stage=stage,
@@ -3661,32 +4178,32 @@ def task_handoff_history(request, task_id):
         if fmt == "compact":
             return JsonResponse({
                 "task_id": task_id,
-                "handoffs": [h.to_agent_context() for h in handoffs],
-                "count": len(handoffs)
+                "work_cycles": [h.to_agent_context() for h in work_cycles],
+                "count": len(work_cycles)
             })
         else:
             return JsonResponse({
                 "task_id": task_id,
-                "handoffs": [h.to_dict() for h in handoffs],
-                "count": len(handoffs)
+                "work_cycles": [h.to_dict() for h in work_cycles],
+                "count": len(work_cycles)
             })
     finally:
         db.close()
 
 
-def project_handoff_history(request, project_id):
-    """Get handoff history for a project.
+def project_work_cycle_history(request, project_id):
+    """Get work_cycle history for a project.
 
-    GET /api/projects/{project_id}/handoff/history
+    GET /api/projects/{project_id}/work_cycle/history
 
     Query params:
         - stage: Filter by pipeline stage
         - task_id: Filter by specific task
         - limit: Max results (default: 100)
 
-    Returns all handoffs for the project, useful for project-level memory.
+    Returns all work_cycles for the project, useful for project-level memory.
     """
-    from app.services import handoff_service
+    from app.services import work_cycle_service
 
     stage = request.GET.get("stage")
     task_filter = request.GET.get("task_id")
@@ -3698,7 +4215,7 @@ def project_handoff_history(request, project_id):
         if not project:
             return JsonResponse({"error": "Project not found"}, status=404)
 
-        handoffs = handoff_service.get_handoff_history(
+        work_cycles = work_cycle_service.get_work_cycle_history(
             db=db,
             project_id=project_id,
             task_id=int(task_filter) if task_filter else None,
@@ -3708,16 +4225,16 @@ def project_handoff_history(request, project_id):
 
         # Group by task for easier consumption
         by_task = {}
-        for h in handoffs:
+        for h in work_cycles:
             if h.task_id not in by_task:
                 by_task[h.task_id] = []
             by_task[h.task_id].append(h.to_agent_context())
 
         return JsonResponse({
             "project_id": project_id,
-            "handoffs": [h.to_dict() for h in handoffs],
+            "work_cycles": [h.to_dict() for h in work_cycles],
             "by_task": by_task,
-            "count": len(handoffs)
+            "count": len(work_cycles)
         })
     finally:
         db.close()
@@ -4326,7 +4843,7 @@ def build_agent_prompt_view(request, task_id):
                 "coding_principles.md",
                 "todo.json",
                 "_spec/BRIEF.md",
-                "_spec/HANDOFF.md",
+                "_spec/WORK_CYCLE.md",
                 "_spec/SESSION_CONTEXT.md"
             ]
 
@@ -4341,16 +4858,16 @@ def build_agent_prompt_view(request, task_id):
                     except Exception as e:
                         project_context["files"][filename] = {"error": str(e)}
 
-        # Fetch task history (handoffs and proofs)
-        from app.models import Handoff, Proof
+        # Fetch task history (work_cycles and proofs)
+        from app.models import WorkCycle, Proof
 
-        # Get handoff history for this task
-        handoffs = db.query(Handoff).filter(
-            Handoff.task_id == task_id
-        ).order_by(Handoff.created_at.desc()).limit(10).all()
+        # Get work_cycle history for this task
+        work_cycles = db.query(WorkCycle).filter(
+            WorkCycle.task_id == task_id
+        ).order_by(WorkCycle.created_at.desc()).limit(10).all()
 
         task_history = []
-        for h in handoffs:
+        for h in work_cycles:
             task_history.append({
                 "id": h.id,
                 "from_role": h.from_role,
@@ -5356,3 +5873,292 @@ def task_claims(request, task_id):
 
     finally:
         db.close()
+
+
+# =============================================================================
+# Job Queue API - LLM and Agent Request Queue Management
+# =============================================================================
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def queue_status(request):
+    """Get current queue status.
+
+    GET /api/queue/status
+
+    Returns:
+        Queue lengths, running jobs, estimated wait times
+    """
+    from app.services.job_queue_service import get_queue_service
+    from app.services.job_worker import get_worker_manager
+
+    queue = get_queue_service()
+    manager = get_worker_manager()
+
+    status = queue.get_queue_status()
+    worker_status = manager.get_status()
+
+    return JsonResponse({
+        "queue": status,
+        "workers": worker_status
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def queue_enqueue(request):
+    """Enqueue a job for async processing.
+
+    POST /api/queue/enqueue
+    Body:
+    {
+        "job_type": "llm_complete|llm_chat|llm_query|vision_analyze|agent_run",
+        "request_data": {...},
+        "priority": 1-4 (optional, default 3),
+        "project_id": int (optional),
+        "task_id": int (optional),
+        "timeout": int (optional, seconds)
+    }
+
+    Returns:
+        Created job with ID and queue position
+    """
+    from app.services.job_queue_service import get_queue_service
+    from app.models.llm_job import JobType, JobPriority
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    job_type = data.get("job_type")
+    request_data = data.get("request_data", {})
+    priority = data.get("priority", JobPriority.NORMAL)
+    project_id = data.get("project_id")
+    task_id = data.get("task_id")
+    timeout = data.get("timeout", 300)
+
+    # Validate job type
+    valid_types = [jt.value for jt in JobType]
+    if job_type not in valid_types:
+        return JsonResponse({
+            "error": f"Invalid job_type. Must be one of: {valid_types}"
+        }, status=400)
+
+    queue = get_queue_service()
+
+    try:
+        job = queue.enqueue_llm_request(
+            job_type=job_type,
+            request_data=request_data,
+            priority=priority,
+            project_id=project_id,
+            task_id=task_id,
+            timeout=timeout
+        )
+
+        position = queue.get_job_position(job.id)
+
+        return JsonResponse({
+            "job_id": job.id,
+            "job_type": job.job_type,
+            "status": job.status,
+            "priority": job.priority,
+            "position": position,
+            "created_at": job.created_at.isoformat() if job.created_at else None
+        }, status=201)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def queue_job_status(request, job_id):
+    """Get status of a specific job.
+
+    GET /api/queue/jobs/{job_id}
+
+    Returns:
+        Job details including status, position, and result if completed
+    """
+    from app.services.job_queue_service import get_queue_service
+
+    queue = get_queue_service()
+    job = queue.get_job(job_id)
+
+    if not job:
+        return JsonResponse({"error": "Job not found"}, status=404)
+
+    position = queue.get_job_position(job_id) if job.status == "pending" else 0
+
+    return JsonResponse({
+        "job_id": job.id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "priority": job.priority,
+        "position": position,
+        "project_id": job.project_id,
+        "task_id": job.task_id,
+        "result_data": job.result_data if job.status == "completed" else None,
+        "error_message": job.error_message if job.status == "failed" else None,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "wait_time_seconds": job.wait_time_seconds,
+        "run_time_seconds": job.run_time_seconds if job.started_at else 0
+    })
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def queue_job_wait(request, job_id):
+    """Long-poll until a job completes.
+
+    GET /api/queue/jobs/{job_id}/wait?timeout=120
+
+    Waits for the job to complete and returns the result.
+    Times out after specified seconds (default 120).
+    """
+    from app.services.job_queue_service import get_queue_service
+
+    timeout = int(request.GET.get("timeout", 120))
+    timeout = min(timeout, 300)  # Cap at 5 minutes
+
+    queue = get_queue_service()
+
+    job = queue.wait_for_job(job_id, timeout=timeout)
+
+    if not job:
+        return JsonResponse({
+            "error": "Job not found or timed out",
+            "status": "timeout"
+        }, status=408)
+
+    return JsonResponse({
+        "job_id": job.id,
+        "status": job.status,
+        "result_data": job.result_data,
+        "error_message": job.error_message,
+        "wait_time_seconds": job.wait_time_seconds,
+        "run_time_seconds": job.run_time_seconds
+    })
+
+
+@csrf_exempt
+@require_http_methods(["DELETE", "POST"])
+def queue_job_cancel(request, job_id):
+    """Cancel a pending job.
+
+    DELETE /api/queue/jobs/{job_id}
+    POST /api/queue/jobs/{job_id}/cancel
+
+    Only pending jobs can be cancelled.
+    """
+    from app.services.job_queue_service import get_queue_service
+
+    queue = get_queue_service()
+    success = queue.cancel_job(job_id)
+
+    if success:
+        return JsonResponse({
+            "job_id": job_id,
+            "status": "cancelled"
+        })
+    else:
+        return JsonResponse({
+            "error": "Job not found or not pending"
+        }, status=400)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def queue_cleanup(request):
+    """Clean up old completed/failed jobs.
+
+    POST /api/queue/cleanup?max_age_hours=24
+
+    Admin endpoint to clean stale jobs.
+    """
+    from app.services.job_queue_service import get_queue_service
+
+    max_age_hours = int(request.GET.get("max_age_hours", 24))
+    queue = get_queue_service()
+
+    deleted = queue.cleanup_stale_jobs(max_age_hours)
+
+    return JsonResponse({
+        "deleted": deleted,
+        "max_age_hours": max_age_hours
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def queue_job_kill(request, job_id):
+    """Force kill a running job.
+
+    POST /api/queue/jobs/{job_id}/kill
+
+    Unlike cancel, this works on RUNNING jobs.
+    """
+    from app.services.job_queue_service import get_queue_service
+
+    data = _get_json_body(request) or {}
+    reason = data.get("reason", "Killed by user")
+
+    queue = get_queue_service()
+    success = queue.force_kill_job(job_id, reason)
+
+    if success:
+        return JsonResponse({
+            "job_id": job_id,
+            "status": "killed",
+            "reason": reason
+        })
+    else:
+        return JsonResponse({
+            "error": "Job not found or not running"
+        }, status=400)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def queue_kill_all(request):
+    """Kill all running jobs.
+
+    POST /api/queue/kill-all
+
+    Emergency stop for all running jobs.
+    """
+    from app.services.job_queue_service import get_queue_service
+
+    data = _get_json_body(request) or {}
+    reason = data.get("reason", "System cleanup")
+
+    queue = get_queue_service()
+    killed = queue.kill_all_running(reason)
+
+    return JsonResponse({
+        "killed": killed,
+        "reason": reason
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def queue_check_timeouts(request):
+    """Check and timeout stale running jobs.
+
+    POST /api/queue/check-timeouts
+
+    Finds jobs that have exceeded their timeout and marks them as timed out.
+    """
+    from app.services.job_queue_service import get_queue_service
+
+    queue = get_queue_service()
+    timed_out = queue.check_timeouts()
+
+    return JsonResponse({
+        "timed_out": timed_out
+    })

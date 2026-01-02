@@ -5,6 +5,7 @@ from app.views import api, ui
 urlpatterns = [
     # UI
     path('ui/', ui.dashboard, name='dashboard'),
+    path('ui/board/', ui.global_board_view, name='global_board'),
     path('ui/projects/', ui.projects_list, name='projects_list'),
     path('ui/projects/<int:project_id>/board', ui.task_board_view, name='task_board_view'),
     path('ui/project/<int:project_id>/', ui.project_view, name='project_view'),
@@ -30,7 +31,7 @@ urlpatterns = [
     path('api/projects/<int:project_id>/execute', api.project_execute, name='project_execute'),
     path('api/projects/<int:project_id>/refresh', api.project_refresh, name='project_refresh'),
     path('api/projects/<int:project_id>/context', api.orchestrator_context, name='orchestrator_context'),
-    path('api/projects/<int:project_id>/handoff/history', api.project_handoff_history, name='project_handoff_history'),
+    path('api/projects/<int:project_id>/work_cycle/history', api.project_work_cycle_history, name='project_work_cycle_history'),
 
     # Credentials
     path('api/projects/<int:project_id>/credentials', api.credentials_list, name='credentials_list'),
@@ -68,17 +69,21 @@ urlpatterns = [
     path('api/tasks/<int:task_id>/advance-stage', api.task_advance_stage, name='task_advance_stage'),
     path('api/tasks/<int:task_id>/set-stage', api.task_set_stage, name='task_set_stage'),
     path('api/tasks/<int:task_id>/start', api.task_start, name='task_start'),
+    path('api/tasks/<int:task_id>/start-work', api.task_start_work, name='task_start_work'),
+    path('api/tasks/<int:task_id>/job-status', api.task_job_status, name='task_job_status'),
     path('api/tasks/<int:task_id>/advance', api.task_advance, name='task_advance'),
     path('api/tasks/<int:task_id>/loop-back', api.task_loop_back, name='task_loop_back'),
     path('api/tasks/<int:task_id>/director/prepare', api.task_director_prepare, name='task_director_prepare'),
+    path('api/tasks/<int:task_id>/enhance', api.task_enhance, name='task_enhance'),
+    path('api/tasks/<int:task_id>/simplify', api.task_simplify, name='task_simplify'),
 
-    # Task Handoffs (agent work cycle tracking)
-    path('api/tasks/<int:task_id>/handoff', api.task_handoff_current, name='task_handoff_current'),
-    path('api/tasks/<int:task_id>/handoff/create', api.task_handoff_create, name='task_handoff_create'),
-    path('api/tasks/<int:task_id>/handoff/accept', api.task_handoff_accept, name='task_handoff_accept'),
-    path('api/tasks/<int:task_id>/handoff/complete', api.task_handoff_complete, name='task_handoff_complete'),
-    path('api/tasks/<int:task_id>/handoff/fail', api.task_handoff_fail, name='task_handoff_fail'),
-    path('api/tasks/<int:task_id>/handoff/history', api.task_handoff_history, name='task_handoff_history'),
+    # Task WorkCycles (agent work cycle tracking)
+    path('api/tasks/<int:task_id>/work_cycle', api.task_work_cycle_current, name='task_work_cycle_current'),
+    path('api/tasks/<int:task_id>/work_cycle/create', api.task_work_cycle_create, name='task_work_cycle_create'),
+    path('api/tasks/<int:task_id>/work_cycle/accept', api.task_work_cycle_accept, name='task_work_cycle_accept'),
+    path('api/tasks/<int:task_id>/work_cycle/complete', api.task_work_cycle_complete, name='task_work_cycle_complete'),
+    path('api/tasks/<int:task_id>/work_cycle/fail', api.task_work_cycle_fail, name='task_work_cycle_fail'),
+    path('api/tasks/<int:task_id>/work_cycle/history', api.task_work_cycle_history, name='task_work_cycle_history'),
 
     # Runs
     path('api/projects/<int:project_id>/runs', api.runs_list, name='runs_list'),
@@ -183,4 +188,15 @@ urlpatterns = [
     path('api/runs/<int:run_id>/claims/validate', api.run_claims_validate, name='run_claims_validate'),
     path('api/runs/<int:run_id>/claims/summary', api.run_claims_summary, name='run_claims_summary'),
     path('api/tasks/<int:task_id>/claims', api.task_claims, name='task_claims'),
+
+    # Job Queue (LLM and agent request queue)
+    path('api/queue/status', api.queue_status, name='queue_status'),
+    path('api/queue/enqueue', api.queue_enqueue, name='queue_enqueue'),
+    path('api/queue/jobs/<int:job_id>', api.queue_job_status, name='queue_job_status'),
+    path('api/queue/jobs/<int:job_id>/wait', api.queue_job_wait, name='queue_job_wait'),
+    path('api/queue/jobs/<int:job_id>/cancel', api.queue_job_cancel, name='queue_job_cancel'),
+    path('api/queue/jobs/<int:job_id>/kill', api.queue_job_kill, name='queue_job_kill'),
+    path('api/queue/cleanup', api.queue_cleanup, name='queue_cleanup'),
+    path('api/queue/kill-all', api.queue_kill_all, name='queue_kill_all'),
+    path('api/queue/check-timeouts', api.queue_check_timeouts, name='queue_check_timeouts'),
 ]

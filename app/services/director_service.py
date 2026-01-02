@@ -188,22 +188,16 @@ class DirectorService:
         if not project:
             return (False, "Project not found", None)
 
-        # Create or get run for this task
-        run = None
-        if task.run_id:
-            run = self.db.query(Run).filter(Run.id == task.run_id).first()
-
-        if not run:
-            # Create a new run for this task
-            from app.services.run_service import RunService
-            run_service = RunService(self.db)
-            run = run_service.create_run(
-                project_id=project.id,
-                name=f"Execute Task: {task.task_id} - {task.title[:50]}",
-                actor="director"
-            )
-            task.run_id = run.id
-            self.db.commit()
+        # Create a new run for this task
+        # NOTE: task.run_id removed in refactor - always create new run per task execution
+        from app.services.run_service import RunService
+        run_service = RunService(self.db)
+        run = run_service.create_run(
+            project_id=project.id,
+            name=f"Execute Task: {task.task_id} - {task.title[:50]}",
+            actor="director"
+        )
+        self.db.commit()
 
         # Get project path
         project_path = project.repo_path or os.path.join(
@@ -212,7 +206,20 @@ class DirectorService:
             project.name.lower().replace(" ", "_")
         )
 
-        # Spawn agent_runner in background thread
+        # Determine agent role based on pipeline stage
+        stage = task.pipeline_stage
+        if stage == TaskPipelineStage.DEV:
+            agent_role = "dev"
+        elif stage == TaskPipelineStage.QA:
+            agent_role = "qa"
+        elif stage == TaskPipelineStage.SEC:
+            agent_role = "security"
+        elif stage == TaskPipelineStage.DOCS:
+            agent_role = "docs"
+        else:
+            agent_role = "pm"  # Default to PM for planning stages
+
+        # Spawn agent_runner in background thread using task-centric mode
         def run_agent():
             try:
                 agent_runner_path = os.path.join(
@@ -220,11 +227,24 @@ class DirectorService:
                     "scripts",
                     "agent_runner.py"
                 )
-                subprocess.run(
-                    ["python", agent_runner_path, str(run.id), project_path],
+                # Use task command for task-centric execution with work_cycle API
+                cmd = [
+                    "python", agent_runner_path, "task",
+                    "--agent", agent_role,
+                    "--task-id", str(task.id),
+                    "--run-id", str(run.id),
+                    "--project-path", project_path
+                ]
+                print(f"[Agent] Running: {' '.join(cmd)}")
+                result = subprocess.run(
+                    cmd,
                     timeout=1800,  # 30 minute timeout
-                    capture_output=True
+                    capture_output=True,
+                    text=True
                 )
+                if result.returncode != 0:
+                    print(f"[Agent] stderr: {result.stderr}")
+                print(f"[Agent] stdout: {result.stdout[:500] if result.stdout else 'empty'}")
             except Exception as e:
                 print(f"Agent execution error for task {task.task_id}: {e}")
 
@@ -307,8 +327,12 @@ class DirectorService:
             Task.pipeline_stage != TaskPipelineStage.COMPLETE
         )
 
+        # NOTE: Task.run_id removed in refactor - filter by project of the run if run_id provided
         if run_id:
-            query = query.filter(Task.run_id == run_id)
+            from app.models.run import Run
+            run = self.db.query(Run).filter(Run.id == run_id).first()
+            if run:
+                query = query.filter(Task.project_id == run.project_id)
 
         # Order by priority (higher first), then by stage (further along first)
         tasks = query.order_by(
@@ -463,8 +487,12 @@ class DirectorService:
         """
         query = self.db.query(Task).filter(Task.pipeline_stage == stage)
 
+        # NOTE: Task.run_id removed in refactor - filter by project of the run if run_id provided
         if run_id:
-            query = query.filter(Task.run_id == run_id)
+            from app.models.run import Run
+            run = self.db.query(Run).filter(Run.id == run_id).first()
+            if run:
+                query = query.filter(Task.project_id == run.project_id)
 
         return query.order_by(Task.priority.desc()).all()
 
@@ -477,7 +505,12 @@ class DirectorService:
         Returns:
             Dict with stage counts and completion percentage
         """
-        tasks = self.db.query(Task).filter(Task.run_id == run_id).all()
+        # NOTE: Task.run_id removed in refactor - get tasks by project of the run
+        from app.models.run import Run
+        run = self.db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return {"total": 0, "stages": {}, "percent_complete": 0}
+        tasks = self.db.query(Task).filter(Task.project_id == run.project_id).all()
 
         if not tasks:
             return {"total": 0, "stages": {}, "percent_complete": 0}
@@ -521,9 +554,14 @@ class DirectorService:
         triggered_tasks = []
         processed = 0
 
-        # Get all active tasks for this run (include NULL pipeline_stage)
+        # Get all active tasks for this run's project (include NULL pipeline_stage)
+        # NOTE: Task.run_id removed in refactor - get tasks by project of the run
+        from app.models.run import Run
+        run = self.db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return {"work_queue": [], "enriched": [], "triggered": [], "message": "Run not found"}
         tasks = self.db.query(Task).filter(
-            Task.run_id == run_id,
+            Task.project_id == run.project_id,
             Task.status != TaskStatus.DONE
         ).order_by(Task.priority.desc()).limit(max_tasks).all()
 
@@ -661,11 +699,8 @@ class TaskOrchestrator:
         """Check if task has a passing agent report for the current stage.
 
         This is where we'd check for proof-of-work or agent reports.
-        For now, we check the AgentReport table for this task's run.
+        NOTE: task.run_id removed in refactor - check reports for recent project runs.
         """
-        if not task.run_id:
-            return False
-
         # Map stage to role
         stage_to_role = {
             TaskPipelineStage.DEV: AgentRole.DEV,
@@ -678,14 +713,21 @@ class TaskOrchestrator:
         if not role:
             return False
 
-        # Look for a passing report from this agent
-        report = self.db.query(AgentReport).filter(
-            AgentReport.run_id == task.run_id,
-            AgentReport.role == role,
-            AgentReport.status == ReportStatus.PASS
-        ).order_by(AgentReport.created_at.desc()).first()
+        # Get recent runs for this project and look for passing reports
+        recent_runs = self.db.query(Run).filter(
+            Run.project_id == task.project_id
+        ).order_by(Run.created_at.desc()).limit(5).all()
 
-        return report is not None
+        for run in recent_runs:
+            report = self.db.query(AgentReport).filter(
+                AgentReport.run_id == run.id,
+                AgentReport.role == role,
+                AgentReport.status == ReportStatus.PASS
+            ).order_by(AgentReport.created_at.desc()).first()
+            if report:
+                return True
+
+        return False
 
     def auto_start_backlog_tasks(self, max_to_start: int = 2) -> List[Dict]:
         """Auto-start BACKLOG tasks if there's bandwidth.
@@ -913,17 +955,25 @@ class TaskOrchestrator:
             if count >= max_triggers:
                 break
 
-            # Check if task already has an active run
-            if task.run_id:
-                run = self.db.query(Run).filter(Run.id == task.run_id).first()
-                if run and not run.killed:
-                    # Check if run is in a non-terminal state (still active)
-                    active_states = [
-                        RunState.PM, RunState.DEV, RunState.QA, RunState.SEC,
-                        RunState.DOCS, RunState.TESTING
-                    ]
-                    if run.state in active_states:
-                        continue  # Skip - already has active run
+            # Check if task already has an active run for its project
+            # NOTE: Task.run_id removed in refactor - check recent project runs instead
+            recent_runs = self.db.query(Run).filter(
+                Run.project_id == task.project_id,
+                Run.killed == False
+            ).order_by(Run.created_at.desc()).limit(3).all()
+
+            has_active_run = False
+            for run in recent_runs:
+                active_states = [
+                    RunState.PM, RunState.DEV, RunState.QA, RunState.SEC,
+                    RunState.DOCS, RunState.TESTING
+                ]
+                if run.state in active_states:
+                    has_active_run = True
+                    break
+
+            if has_active_run:
+                continue  # Skip - already has active run for this project
 
             # Validate task is ready
             is_ready, issues = self.director.validate_task_readiness(task)

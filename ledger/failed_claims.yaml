@@ -1,9 +1,6 @@
-# Failed Claims Ledger - Index
-# Individual entries in ./failed_claims/
-
 entries:
-  - id: FC-2026-001
-    date: 2026-01-01
-    project: beatbridgepro
-    claim_summary: "Downbeat accuracy >=90% across mixed-genre DJ tracks"
-    status: failed
+- claim_summary: Downbeat accuracy >=90% across mixed-genre DJ tracks
+  date: 2026-01-01
+  id: FC-2026-001
+  project: beatbridgepro
+  status: failed
