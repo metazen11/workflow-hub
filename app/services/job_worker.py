@@ -255,6 +255,10 @@ class JobWorker:
         if run_id:
             cmd.extend(["--run-id", str(run_id)])
 
+        # For run mode (no task_id), add --submit to auto-submit report to API
+        if not task_id and run_id:
+            cmd.append("--submit")
+
         # Run with timeout
         timeout = job.timeout_seconds or 600
 

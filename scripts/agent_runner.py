@@ -47,6 +47,8 @@ WORKFLOW_HUB_URL = os.getenv("WORKFLOW_HUB_URL", "http://localhost:8000")
 AGENT_PROVIDER = os.getenv("AGENT_PROVIDER", "goose").lower()
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "600"))
 VISION_PREPROCESS = os.getenv("VISION_PREPROCESS", "true").lower() == "true"
+MAX_SCREENSHOT_UPLOADS = int(os.getenv("MAX_SCREENSHOT_UPLOADS", "10"))  # Limit to avoid context bloat
+MAX_CONTEXT_RETRIES = int(os.getenv("MAX_CONTEXT_RETRIES", "1"))  # Retry once on context limit
 
 
 # =============================================================================
@@ -263,8 +265,25 @@ class GooseProvider(AgentProvider):
     This allows agents to maintain conversation context across multiple calls.
     """
 
+    # Context limit error patterns to detect
+    CONTEXT_LIMIT_PATTERNS = [
+        "Context limit reached",
+        "Context size has been exceeded",
+        "context_length_exceeded",
+        "maximum context length",
+        "token limit exceeded",
+    ]
+
     def __init__(self):
         self.executable = self._find_goose_executable()
+
+    def _is_context_limit_error(self, output: str) -> bool:
+        """Check if output indicates a context limit error."""
+        output_lower = output.lower()
+        for pattern in self.CONTEXT_LIMIT_PATTERNS:
+            if pattern.lower() in output_lower:
+                return True
+        return False
 
     def _get_session_name(self, task_id: int = None, run_id: int = None) -> str:
         """Generate session name for a task or run."""
@@ -326,7 +345,7 @@ class GooseProvider(AgentProvider):
 
         return "goose"
 
-    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str, task_id: int = None) -> Dict[str, Any]:
+    def run_agent(self, role: str, run_id: int, project_path: str, prompt: str, task_id: int = None, retry_count: int = 0) -> Dict[str, Any]:
         if not prompt or len(prompt) < 10:
              return {"status": "fail", "summary": f"Invalid prompt for agent: {role}"}
 
@@ -368,8 +387,28 @@ class GooseProvider(AgentProvider):
             )
 
             output = result.stdout
+
+            # Check for context limit error and retry with fresh session
+            if self._is_context_limit_error(output):
+                if retry_count < MAX_CONTEXT_RETRIES:
+                    print(f"  Context limit hit! Clearing session and retrying ({retry_count + 1}/{MAX_CONTEXT_RETRIES})...")
+                    self.clear_session(project_path, task_id, run_id)
+                    return self.run_agent(role, run_id, project_path, prompt, task_id, retry_count + 1)
+                else:
+                    # Max retries exceeded - return failure
+                    return {
+                        "status": "fail",
+                        "summary": f"Context limit exceeded after {retry_count} retry(s)",
+                        "details": {
+                            "error": "context_limit_exceeded",
+                            "retries": retry_count,
+                            "session_cleared": True
+                        },
+                        "raw_output": output
+                    }
+
             report = self._parse_json_output(output)
-            
+
             # If no JSON parsed, create a basic report from output
             if not report:
                 # If exit code 0 but no JSON, it's a "soft" pass unless we have stricter rules
@@ -387,7 +426,8 @@ class GooseProvider(AgentProvider):
             report["session"] = {
                 "name": session_name,
                 "resumed": os.path.exists(session_dir),
-                "path": session_dir
+                "path": session_dir,
+                "retry_count": retry_count
             }
 
             # Role-specific additional checks (checking specific result files)
@@ -681,28 +721,44 @@ def capture_automatic_proofs(agent_type: str, run_id: int, project_path: str,
                 except Exception as e:
                     print(f"  Could not upload {sec_path}: {e}")
 
-    # 3. Look for any screenshots the agent may have taken
+    # 3. Look for any screenshots the agent may have taken (limit to avoid context bloat)
     screenshots_dir = os.path.join(project_path, "screenshots")
     if os.path.exists(screenshots_dir):
+        # Get all screenshot files sorted by modification time (newest first)
+        screenshot_files = []
         for filename in os.listdir(screenshots_dir):
             if filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
                 full_path = os.path.join(screenshots_dir, filename)
                 try:
-                    with open(full_path, "rb") as f:
-                        content = f.read()
-                    if should_upload("screenshot", content, filename):
-                        success = upload_proof(
-                            run_id=run_id,
-                            stage=stage,
-                            proof_type="screenshot",
-                            content=content,
-                            filename=filename,
-                            description=f"Screenshot: {filename}"
-                        )
-                        if success:
-                            proofs_uploaded += 1
-                except Exception as e:
-                    print(f"  Could not upload screenshot {filename}: {e}")
+                    mtime = os.path.getmtime(full_path)
+                    screenshot_files.append((filename, full_path, mtime))
+                except OSError:
+                    continue
+
+        # Sort by modification time (newest first) and limit
+        screenshot_files.sort(key=lambda x: x[2], reverse=True)
+        screenshot_files = screenshot_files[:MAX_SCREENSHOT_UPLOADS]
+
+        if len(screenshot_files) < len(os.listdir(screenshots_dir)):
+            print(f"  Limiting screenshot uploads to {MAX_SCREENSHOT_UPLOADS} most recent files")
+
+        for filename, full_path, _ in screenshot_files:
+            try:
+                with open(full_path, "rb") as f:
+                    content = f.read()
+                if should_upload("screenshot", content, filename):
+                    success = upload_proof(
+                        run_id=run_id,
+                        stage=stage,
+                        proof_type="screenshot",
+                        content=content,
+                        filename=filename,
+                        description=f"Screenshot: {filename}"
+                    )
+                    if success:
+                        proofs_uploaded += 1
+            except Exception as e:
+                print(f"  Could not upload screenshot {filename}: {e}")
 
     print(f"Uploaded {proofs_uploaded} proof(s)")
     return proofs_uploaded
