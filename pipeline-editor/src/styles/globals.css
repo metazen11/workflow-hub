@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Match Flask app color scheme */
+  --primary: #3b82f6;
+  --secondary: #6b7280;
+  --success: #10b981;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --info: #06b6d4;
+
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f4f6;
+  --text-primary: #1f2937;
+  --text-secondary: #4b5563;
+  --text-muted: #9ca3af;
+  --border: #e5e7eb;
+}
+
+.dark {
+  --bg-primary: #111827;
+  --bg-secondary: #1f2937;
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --text-muted: #6b7280;
+  --border: #374151;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* React Flow customizations */
+.react-flow {
+  background: var(--bg-secondary);
+}
+
+.react-flow__node {
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.react-flow__edge.animated path {
+  stroke-dasharray: 5;
+  animation: dashdraw 0.5s linear infinite;
+}
+
+@keyframes dashdraw {
+  from {
+    stroke-dashoffset: 10;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Node styles */
+.pipeline-node {
+  @apply rounded-lg border-2 shadow-md bg-white px-4 py-3 min-w-[140px];
+}
+
+.pipeline-node.selected {
+  @apply ring-2 ring-blue-500;
+}
+
+.pipeline-node.stage {
+  @apply border-blue-300;
+}
+
+.pipeline-node.agent {
+  @apply border-green-300;
+}
+
+.pipeline-node.queue {
+  @apply border-orange-300;
+}
+
+.pipeline-node.decision {
+  @apply border-purple-300;
+}
+
+.pipeline-node.processing {
+  @apply animate-pulse border-blue-500 bg-blue-50;
+}
+
+.pipeline-node.error {
+  @apply border-red-500 bg-red-50;
+}

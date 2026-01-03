@@ -3,7 +3,13 @@
 TDD: Tests written first to define expected behavior.
 """
 import pytest
+import uuid
 from django.test import Client
+
+
+def unique_name(base: str) -> str:
+    """Generate unique project name for testing."""
+    return f"{base} {uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture
@@ -17,23 +23,25 @@ class TestProjectCreate:
 
     def test_create_project_minimal(self, client, db_session):
         """Create project with just required field (name)."""
+        name = unique_name("Test Project")
         response = client.post(
             '/api/projects/create',
             data={
-                "name": "Test Project"
+                "name": name
             },
             content_type='application/json'
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["project"]["name"] == "Test Project"
+        assert data["project"]["name"] == name
 
     def test_create_project_with_tech_stack(self, client, db_session):
         """Create project with languages, frameworks, databases."""
+        name = unique_name("Full Stack App")
         response = client.post(
             '/api/projects/create',
             data={
-                "name": "Full Stack App",
+                "name": name,
                 "description": "A comprehensive application",
                 "languages": ["Python", "JavaScript", "TypeScript"],
                 "frameworks": ["Django", "React", "TailwindCSS"],
@@ -52,10 +60,11 @@ class TestProjectCreate:
 
     def test_create_project_with_key_files(self, client, db_session):
         """Create project with key_files, entry_point, config_files."""
+        name = unique_name("Key Files Project")
         response = client.post(
             '/api/projects/create',
             data={
-                "name": "Key Files Project",
+                "name": name,
                 "key_files": ["app.py", "models.py", "views.py", "requirements.txt"],
                 "entry_point": "app.py",
                 "config_files": [".env", "config.yaml", "settings.py"]
@@ -71,10 +80,11 @@ class TestProjectCreate:
 
     def test_create_project_with_commands(self, client, db_session):
         """Create project with build, test, run, deploy commands."""
+        name = unique_name("Commands Project")
         response = client.post(
             '/api/projects/create',
             data={
-                "name": "Commands Project",
+                "name": name,
                 "build_command": "pip install -r requirements.txt",
                 "test_command": "pytest tests/ -v",
                 "run_command": "python app.py",
@@ -92,10 +102,11 @@ class TestProjectCreate:
 
     def test_create_project_with_dev_settings(self, client, db_session):
         """Create project with development settings."""
+        name = unique_name("Dev Settings Project")
         response = client.post(
             '/api/projects/create',
             data={
-                "name": "Dev Settings Project",
+                "name": name,
                 "default_port": 5000,
                 "python_version": "3.11",
                 "node_version": "20"
@@ -111,10 +122,11 @@ class TestProjectCreate:
 
     def test_create_project_with_repository_info(self, client, db_session):
         """Create project with repository URLs and branch."""
+        name = unique_name("Repo Info Project")
         response = client.post(
             '/api/projects/create',
             data={
-                "name": "Repo Info Project",
+                "name": name,
                 "repo_path": "/path/to/repo",
                 "repository_url": "https://github.com/user/repo",
                 "repository_ssh_url": "git@github.com:user/repo.git",
@@ -134,10 +146,11 @@ class TestProjectCreate:
 
     def test_create_project_all_fields(self, client, db_session):
         """Create project with ALL supported fields - comprehensive test."""
+        name = unique_name("Complete Project")
         response = client.post(
             '/api/projects/create',
             data={
-                "name": "Complete Project",
+                "name": name,
                 "description": "A project with all fields populated",
                 # Repository
                 "repo_path": "/Users/dev/projects/complete",
@@ -171,7 +184,7 @@ class TestProjectCreate:
         project = data["project"]
 
         # Verify all fields were saved
-        assert project["name"] == "Complete Project"
+        assert project["name"] == name
         assert project["description"] == "A project with all fields populated"
         assert project["repo_path"] == "/Users/dev/projects/complete"
         assert project["repository_url"] == "https://github.com/org/complete-project"

@@ -1,0 +1,83 @@
+# WorkCycle Context
+Generated: 2026-01-01 22:03:22
+Run ID: 1250 | Project: Workflow Hub | Task: T022
+
+## Pipeline Position
+- **Current State**: pm
+- **Your Role**: PM
+- **Run**: Execute Task: T022 - add new task button to menu
+- **Goal**: No goal specified
+
+## Current Task: T022
+**Title**: add new task button to menu
+**Status**: in_progress
+**Pipeline Stage**: DEV
+**Priority**: 5
+
+### Description
+add new task button use the same function used on the task board
+
+### Acceptance Criteria
+No acceptance criteria defined.
+
+## Previous Agent Work
+No previous reports. You are the first agent on this run.
+
+## Recent Git Commits
+- `e9e16d6b` chore: Fix PostgREST env and add docker env template (MZ)
+- `bc7cfad7` refactor: Simplify core architecture with PostgREST (MZ)
+- `d6a7b2b4` fix: Correct project detail link in task board (projects -> project) (MZ)
+- `ac41d7eb` feat: Auto-generate ledger entries and tasks on claim failure (MZ)
+- `25bd4a97` feat: Add Failed Claims Ledger UI (MZ)
+
+## Uncommitted Changes
+```
+CLAUDE.md                                          |    5 +
+ .../a87c1e3226a4_refactor_simplify_core.py         |   10 +-
+ app/models/__init__.py                             |   16 +-
+ app/models/handoff.py                              |  126 ---
+ app/models/requirement.py                          |   11 +-
+ app/models/task.py                                 |   51 +-
+ app/models/work_cycle.py                           |   95 +-
+ app/services/director_service.py                   |  144 ++-
+ app/services/handoff_service.py                    |  735 --------------
+ app/services/llm_service.py                        |   34 +-
+ app/services/run_service.py                        |   27 +-
+ app/services/task_queue_service.py                 |   71 +-
+ app/services/work_cycle_service.py                 | 1007 ++++++++++++++------
+ app/templates/base.html                            |   38 +-
+ app/templates/task_board.html                      |   35 +-
+ app/templates/task_detail.html                     |   80 +-
+ app/urls.py                                        |   17 +-
+ app/views/api.py                                   |  292 +++---
+ app/views/ui.py                                    |   77 +-
+ ledger/failed_claims.yaml                          |   13 +-
+ screenshots/01_dashboard.png                       |  Bin 132856 -> 341163 bytes
+ screenshots/02_run_detail.png                      |  Bin 324477 -> 305533 bytes
+ screenshots/03_task_modal.png                      |  Bin 293571 -> 315996 bytes
+ screenshots/04_add_task_modal.png                  |  Bin 282016 -> 305280 bytes
+ screenshots/05_projects_list.png                   |  Bin 62276 -> 235406 bytes
+ screenshots/06_runs_list.png                       |  Bin 54434 -> 271976 bytes
+ scripts/agent_runner.py                            |  145 +--
+ scripts/workflow.py                                |   54 +-
+ tests/conftest.py                                  |  107 ++-
+ tests/e2e/test_pipeline_monitoring.py              |    2 +-
+ tests/test_bug_api.py                              |   20 +-
+ tests/test_project_api.py                          |   31 +-
+ tests/test_task_queue.py                           |   32 +-
+ tests/test_task_queue_service.py                   |  105 +-
+ tests/test_ui_views.py                             |    2 +-
+ tests/test_workflow_tui.py                         |    8 +-
+ 36 files changed, 1674 insertions(+), 1716 deletions(-)
+```
+
+## Your Deliverables
+- Break down requirements into tasks
+- Update _spec/BRIEF.md with goals
+- Create task definitions with acceptance criteria
+- Output JSON report with task breakdown
+
+## Important
+- Stay within workspace: /Users/mz/Dropbox/_CODING/Agentic
+- Output a JSON status report when done
+- Do NOT modify files outside the project

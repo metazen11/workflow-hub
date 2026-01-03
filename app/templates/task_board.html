@@ -13,6 +13,9 @@
     </div>
     <div class="col-md-6 text-end">
         <div class="d-inline-flex align-items-center gap-2">
+            <!-- Search -->
+            <input type="text" class="form-control form-control-sm" id="searchInput"
+                   placeholder="Search tasks..." style="width: 150px;">
             <!-- Filters -->
             <select class="form-select form-select-sm" id="priorityFilter" style="width: auto;">
                 <option value="all">All Priorities</option>
@@ -189,11 +192,16 @@
         border: 1px solid var(--border, #e2e8f0);
         border-radius: 6px;
         margin-bottom: 8px;
+        position: relative;
     }
 
     .task-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .task-card:hover .task-quick-actions {
+        display: block !important;
     }
 
     .task-card.dragging {
@@ -213,6 +221,59 @@
         border-left: 3px solid #28a745;
     }
 
+    /* Job status indicators */
+    .task-card.job-running {
+        animation: pulse-border 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-border {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(13, 110, 253, 0.4); }
+        50% { box-shadow: 0 0 0 4px rgba(13, 110, 253, 0.2); }
+    }
+
+    .job-status-badge {
+        font-size: 0.65rem;
+        padding: 2px 5px;
+        border-radius: 3px;
+    }
+
+    .job-status-badge.running {
+        background: #0d6efd;
+        color: white;
+        animation: pulse-bg 1s ease-in-out infinite;
+    }
+
+    .job-status-badge.queued {
+        background: #ffc107;
+        color: #000;
+    }
+
+    .job-status-badge.completed {
+        background: #198754;
+        color: white;
+    }
+
+    .job-status-badge.failed {
+        background: #dc3545;
+        color: white;
+    }
+
+    @keyframes pulse-bg {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
+    /* Quick action buttons */
+    .task-quick-actions {
+        position: relative;
+        z-index: 10;
+    }
+
+    .btn-xs {
+        padding: 0.15rem 0.35rem;
+        font-size: 0.7rem;
+    }
+
     /* Responsive adjustments */
     @media (max-width: 1200px) {
         .kanban-col {
@@ -220,30 +281,75 @@
             min-width: 180px;
         }
     }
+
+    /* Toast notifications */
+    .toast-container {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        z-index: 1050;
+    }
 </style>
 
 <script src="/static/js/task-modal.js"></script>
+<div class="toast-container" id="toastContainer"></div>
+
 <script>
+    // Track active jobs for live updates
+    let activeJobs = new Map();
+    let jobPollInterval = null;
+
     document.addEventListener('DOMContentLoaded', () => {
         initializeDragAndDrop();
         initializeFilters();
         updateCounts();
+        initializeKeyboardShortcuts();
+        startJobStatusPolling();
     });
 
+    function initializeKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            // "/" or Cmd/Ctrl+K to focus search
+            if ((e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) &&
+                !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+                e.preventDefault();
+                document.getElementById('searchInput').focus();
+            }
+            // Escape to clear search and blur
+            if (e.key === 'Escape' && document.activeElement.id === 'searchInput') {
+                const searchInput = document.getElementById('searchInput');
+                searchInput.value = '';
+                searchInput.blur();
+                searchInput.dispatchEvent(new Event('input'));
+            }
+        });
+    }
+
     function initializeFilters() {
+        const searchInput = document.getElementById('searchInput');
         const priorityFilter = document.getElementById('priorityFilter');
 
+        searchInput.addEventListener('input', filterTasks);
         priorityFilter.addEventListener('change', filterTasks);
 
         function filterTasks() {
+            const searchTerm = searchInput.value.toLowerCase().trim();
             const priority = priorityFilter.value;
             const cards = document.querySelectorAll('.task-card');
 
             cards.forEach(card => {
                 const cardPriority = parseInt(card.dataset.priority) || 0;
+                const cardTitle = card.querySelector('.card-title a')?.textContent.toLowerCase() || '';
+                const cardTaskId = card.querySelector('.badge')?.textContent.toLowerCase() || '';
                 let show = true;
 
-                if (priority !== 'all') {
+                // Search filter
+                if (searchTerm && !cardTitle.includes(searchTerm) && !cardTaskId.includes(searchTerm)) {
+                    show = false;
+                }
+
+                // Priority filter
+                if (show && priority !== 'all') {
                     if (priority === 'high' && cardPriority < 8) show = false;
                     if (priority === 'medium' && (cardPriority >= 8 || cardPriority <= 3)) show = false;
                     if (priority === 'low' && cardPriority > 3) show = false;
@@ -264,6 +370,159 @@
             if (badge) badge.textContent = count;
         });
     }
+
+    // ==========================================
+    // UNIFIED START WORK FLOW
+    // ==========================================
+
+    function getNextStage(currentStage) {
+        const stageOrder = ['none', 'pm', 'dev', 'qa', 'sec', 'docs', 'complete'];
+        const currentIndex = stageOrder.indexOf(currentStage.toLowerCase());
+        if (currentIndex === -1 || currentIndex >= stageOrder.length - 1) {
+            return 'dev'; // Default to dev for unknown stages
+        }
+        return stageOrder[currentIndex + 1];
+    }
+
+    function startWork(taskId, currentStage) {
+        const nextStage = getNextStage(currentStage);
+
+        // Skip PM for now, go straight to DEV for simplicity
+        const targetStage = (nextStage === 'pm') ? 'dev' : nextStage;
+
+        if (targetStage === 'complete') {
+            showToast('Task is already complete!', 'info');
+            return;
+        }
+
+        // Show loading state
+        const card = document.querySelector(`.task-card[data-task-id="${taskId}"]`);
+        const btn = card?.querySelector('.start-work-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+        }
+
+        // Call unified start-work endpoint
+        fetch(`/api/tasks/${taskId}/start-work`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage: targetStage })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                // Move card to new column
+                moveCardToColumn(taskId, targetStage);
+
+                // Track job for live updates
+                if (data.job_id) {
+                    activeJobs.set(taskId, {
+                        jobId: data.job_id,
+                        stage: targetStage,
+                        runId: data.run_id
+                    });
+                    updateCardJobStatus(taskId, 'running', targetStage.toUpperCase());
+                }
+
+                showToast(`Started ${targetStage.toUpperCase()} agent - ${data.message}`, 'success', data.run_id);
+            } else {
+                showToast(`Error: ${data.error}`, 'danger');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-play-fill"></i>';
+                }
+            }
+        })
+        .catch(err => {
+            showToast(`Network error: ${err.message}`, 'danger');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-play-fill"></i>';
+            }
+        });
+    }
+
+    function moveCardToColumn(taskId, newStage) {
+        const card = document.querySelector(`.task-card[data-task-id="${taskId}"]`);
+        const targetColumn = document.getElementById(`col-${newStage}`);
+
+        if (card && targetColumn) {
+            targetColumn.appendChild(card);
+            card.dataset.currentStage = newStage;
+            updateCounts();
+        }
+    }
+
+    function updateCardJobStatus(taskId, status, label) {
+        const card = document.querySelector(`.task-card[data-task-id="${taskId}"]`);
+        const badge = card?.querySelector('.job-status-badge');
+
+        if (badge) {
+            badge.className = `job-status-badge badge ${status}`;
+            badge.textContent = label || status;
+            badge.classList.remove('d-none');
+        }
+
+        if (status === 'running') {
+            card?.classList.add('job-running');
+        } else {
+            card?.classList.remove('job-running');
+        }
+
+        // Re-enable start button
+        const btn = card?.querySelector('.start-work-btn');
+        if (btn && status !== 'running') {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-play-fill"></i>';
+        }
+    }
+
+    // ==========================================
+    // LIVE JOB STATUS POLLING
+    // ==========================================
+
+    function startJobStatusPolling() {
+        // Poll every 3 seconds for active jobs
+        jobPollInterval = setInterval(() => {
+            if (activeJobs.size === 0) return;
+
+            activeJobs.forEach((jobInfo, taskId) => {
+                fetch(`/api/tasks/${taskId}/job-status`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.has_active_job) {
+                            if (data.job_status === 'completed') {
+                                updateCardJobStatus(taskId, 'completed', '✓ Done');
+                                showToast(`Agent completed for task`, 'success');
+                                activeJobs.delete(taskId);
+                                // Hide badge after 5 seconds
+                                setTimeout(() => {
+                                    const badge = document.querySelector(`.job-status-badge[data-task="${taskId}"]`);
+                                    if (badge) badge.classList.add('d-none');
+                                }, 5000);
+                            } else if (data.job_status === 'failed') {
+                                updateCardJobStatus(taskId, 'failed', '✗ Error');
+                                showToast(`Agent failed: ${data.error_message || 'Unknown error'}`, 'danger');
+                                activeJobs.delete(taskId);
+                            }
+                            // else still running, keep polling
+                        } else {
+                            // No active job, check if recently completed
+                            activeJobs.delete(taskId);
+                            updateCardJobStatus(taskId, '', '');
+                            const badge = document.querySelector(`.job-status-badge[data-task="${taskId}"]`);
+                            if (badge) badge.classList.add('d-none');
+                        }
+                    })
+                    .catch(err => console.error('Job status poll error:', err));
+            });
+        }, 3000);
+    }
+
+    // ==========================================
+    // DRAG AND DROP (updated to use start-work)
+    // ==========================================
 
     function initializeDragAndDrop() {
         const draggables = document.querySelectorAll('.task-card');
@@ -305,69 +564,74 @@
                     const oldStage = draggable.dataset.currentStage || 'none';
 
                     if (newStage !== oldStage) {
-                        handleTaskMove(draggable, newStage);
+                        handleTaskMove(draggable, newStage, oldStage);
                     }
                 }
             });
         });
     }
 
-    function handleTaskMove(card, newStage) {
+    function handleTaskMove(card, newStage, oldStage) {
         const taskId = card.dataset.taskId;
-        const taskTitle = card.querySelector('.card-title').textContent.trim();
+        const taskTitle = card.querySelector('.card-title')?.textContent.trim() || 'Task';
 
-        // Define actionable stages that can trigger agents
-        const actionableStages = ['dev', 'qa', 'sec', 'docs'];
-
-        let confirmMsg = `Moved to ${newStage.toUpperCase()}.`;
-        let shouldTrigger = false;
+        // Actionable stages that should trigger agents
+        const actionableStages = ['pm', 'dev', 'qa', 'sec', 'docs'];
 
         if (actionableStages.includes(newStage)) {
-            shouldTrigger = confirm(`Do you want to run the ${newStage.toUpperCase()} agent for "${taskTitle}"?`);
-        }
+            // Use unified start-work flow
+            const shouldStart = confirm(`Start ${newStage.toUpperCase()} agent for "${taskTitle}"?`);
 
-        // Optimistic update
-        card.dataset.currentStage = newStage;
-        updateCounts();
+            if (shouldStart) {
+                // Optimistic update
+                card.dataset.currentStage = newStage;
+                updateCounts();
 
-        // API Call
-        fetch(`/api/tasks/${taskId}/set-stage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stage: newStage })
-        }).then(res => {
-            if (!res.ok) {
-                alert('Failed to update stage on server.');
-                location.reload();
+                // Call start-work (combines stage change + agent trigger)
+                fetch(`/api/tasks/${taskId}/start-work`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stage: newStage })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success && data.job_id) {
+                        activeJobs.set(taskId, {
+                            jobId: data.job_id,
+                            stage: newStage,
+                            runId: data.run_id
+                        });
+                        updateCardJobStatus(taskId, 'running', newStage.toUpperCase());
+                        showToast(`Started ${newStage.toUpperCase()} agent`, 'success', data.run_id);
+                    } else if (data.error) {
+                        showToast(`Error: ${data.error}`, 'danger');
+                        location.reload();
+                    }
+                })
+                .catch(() => {
+                    showToast('Network error', 'danger');
+                    location.reload();
+                });
             } else {
-                if (shouldTrigger) {
-                    triggerAgent(taskId);
-                }
+                // Just move without agent
+                card.dataset.currentStage = newStage;
+                updateCounts();
+                fetch(`/api/tasks/${taskId}/set-stage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stage: newStage })
+                });
             }
-        });
-    }
-
-    function triggerAgent(taskId) {
-        // Trigger the specific task pipeline
-        fetch(`/api/tasks/${taskId}/execute`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ max_iterations: 10 })
-        }).then(res => res.json())
-            .then(data => {
-                if (data.status === 'success' || data.run_id) {
-                    // Determine CSS class based on badge content or similar helper if needed
-                    // For now just alert or toast
-                    const toast = document.createElement('div');
-                    toast.className = 'alert alert-success position-fixed bottom-0 end-0 m-3';
-                    toast.style.zIndex = 1000;
-                    toast.innerHTML = `Agent triggered for task! <a href="/ui/run/${data.run_id}/" class="alert-link">View Run</a>`;
-                    document.body.appendChild(toast);
-                    setTimeout(() => toast.remove(), 5000);
-                } else {
-                    alert('Failed to trigger agent: ' + (data.error || 'Unknown error'));
-                }
+        } else {
+            // Non-actionable stage (backlog, complete) - just move
+            card.dataset.currentStage = newStage;
+            updateCounts();
+            fetch(`/api/tasks/${taskId}/set-stage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stage: newStage })
             });
+        }
     }
 
     function getDragAfterElement(container, y) {
@@ -382,6 +646,30 @@
                 return closest;
             }
         }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // ==========================================
+    // TOAST NOTIFICATIONS
+    // ==========================================
+
+    function showToast(message, type = 'info', runId = null) {
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = `alert alert-${type} alert-dismissible fade show`;
+        toast.style.minWidth = '300px';
+
+        let content = message;
+        if (runId) {
+            content += ` <a href="/ui/run/${runId}/" class="alert-link">View Run</a>`;
+        }
+
+        toast.innerHTML = `
+            ${content}
+            <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>
+        `;
+
+        container.appendChild(toast);
+        setTimeout(() => toast.remove(), 6000);
     }
 
     // Close modal on Escape key (for any open modal)

@@ -1,10 +1,10 @@
-"""Handoff model for tracking agent work cycles.
+"""WorkCycle model for tracking agent work cycles.
 
-Handoffs represent a complete work cycle: context → work → report.
+WorkCycles represent a complete work cycle: context → work → report.
 They are task-centric, allowing tasks to progress independently through the pipeline.
 
 Key relationships:
-- task_id: Required - handoffs attach to tasks
+- task_id: Required - work_cycles attach to tasks
 - run_id: Optional - which run triggered this (context only)
 - project_id: Required - for project-level queries
 
@@ -23,8 +23,8 @@ import enum
 from app.db import Base
 
 
-class HandoffStatus(enum.Enum):
-    """Handoff lifecycle states."""
+class WorkCycleStatus(enum.Enum):
+    """WorkCycle lifecycle states."""
     PENDING = "pending"          # Waiting for agent to accept
     IN_PROGRESS = "in_progress"  # Agent is working
     COMPLETED = "completed"      # Agent submitted report
@@ -32,16 +32,16 @@ class HandoffStatus(enum.Enum):
     SKIPPED = "skipped"          # Manually skipped by human
 
 
-class Handoff(Base):
-    """A handoff represents one agent's work cycle on a task.
+class WorkCycle(Base):
+    """A work_cycle represents one agent's work cycle on a task.
 
-    Each time a task moves to a new pipeline stage, a handoff is created.
-    The handoff tracks:
+    Each time a task moves to a new pipeline stage, a work_cycle is created.
+    The work_cycle tracks:
     - What context was given to the agent
     - What report the agent submitted
     - The lifecycle (pending → in_progress → completed)
     """
-    __tablename__ = "handoffs"
+    __tablename__ = "work_cycles"
 
     id = Column(Integer, primary_key=True)
 
@@ -54,7 +54,7 @@ class Handoff(Base):
     from_role = Column(String(50), nullable=True)   # Who handed off (null if first)
     to_role = Column(String(50), nullable=False)    # Who should pick up (dev, qa, sec, docs, pm)
     stage = Column(String(50), nullable=False, index=True)  # Pipeline stage
-    status = Column(SQLEnum(HandoffStatus), default=HandoffStatus.PENDING, index=True)
+    status = Column(SQLEnum(WorkCycleStatus), default=WorkCycleStatus.PENDING, index=True)
 
     # Context (what the agent receives)
     context = Column(JSON, nullable=True)           # Structured context for agent
@@ -76,10 +76,10 @@ class Handoff(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
-    project = relationship("Project", backref="handoffs")
-    task = relationship("Task", backref="handoffs")
-    run = relationship("Run", backref="handoffs")
-    agent_report = relationship("AgentReport", backref="handoff")
+    project = relationship("Project", backref="work_cycles")
+    task = relationship("Task", backref="work_cycles")
+    run = relationship("Run", backref="work_cycles")
+    agent_report = relationship("AgentReport", backref="work_cycle")
 
     def to_dict(self):
         """Full format for API responses."""
@@ -108,7 +108,7 @@ class Handoff(Base):
     def to_agent_context(self):
         """Compact format for agent memory/queries.
 
-        Returns minimal info for listing handoff history.
+        Returns minimal info for listing work_cycle history.
         Use context_markdown for full context when working.
         """
         return {
@@ -123,4 +123,4 @@ class Handoff(Base):
         }
 
     def __repr__(self):
-        return f"<Handoff {self.id}: task={self.task_id} stage={self.stage} to={self.to_role} status={self.status.value if self.status else None}>"
+        return f"<WorkCycle {self.id}: task={self.task_id} stage={self.stage} to={self.to_role} status={self.status.value if self.status else None}>"

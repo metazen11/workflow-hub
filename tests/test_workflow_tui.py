@@ -178,15 +178,13 @@ class TestWorkflowTUITaskTable:
             project_id=sample_project.id,
             task_id="T1",
             title="First task",
-            status=TaskStatus.DONE,
-            run_id=sample_run.id
+            status=TaskStatus.DONE
         )
         t2 = Task(
             project_id=sample_project.id,
             task_id="T2",
             title="Second task",
             status=TaskStatus.IN_PROGRESS,
-            run_id=sample_run.id,
             blocked_by=["T1"]
         )
         db_session.add_all([t1, t2])
@@ -205,15 +203,13 @@ class TestWorkflowTUITaskTable:
             project_id=sample_project.id,
             task_id="T1",
             title="Blocker",
-            status=TaskStatus.BACKLOG,
-            run_id=sample_run.id
+            status=TaskStatus.BACKLOG
         )
         t2 = Task(
             project_id=sample_project.id,
             task_id="T2",
             title="Blocked",
             status=TaskStatus.BACKLOG,
-            run_id=sample_run.id,
             blocked_by=["T1"]
         )
         db_session.add_all([t1, t2])

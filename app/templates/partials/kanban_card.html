@@ -1,18 +1,43 @@
-<div class="card mb-2 task-card" draggable="true" data-task-id="{{ task.id }}" data-priority="{{ task.priority }}">
+<div class="card mb-2 task-card" draggable="true"
+     data-task-id="{{ task.id }}"
+     data-priority="{{ task.priority }}"
+     data-current-stage="{{ task.pipeline_stage.value|default:'none' }}"
+     data-priority-val="{% if task.priority >= 8 %}high{% elif task.priority <= 3 %}low{% else %}medium{% endif %}">
     <div class="card-body p-2">
         <div class="d-flex justify-content-between align-items-start mb-1">
             <span class="badge bg-light text-dark border">{{ task.task_id }}</span>
-            {% if task.priority >= 8 %}
-            <span class="badge bg-danger">Hi</span>
-            {% elif task.priority <= 3 %} <span class="badge bg-success">Lo</span>
+            <div class="d-flex align-items-center gap-1">
+                <!-- Job status indicator (updated by JS) -->
+                <span class="job-status-badge d-none" data-task="{{ task.id }}"></span>
+                {% if task.priority >= 8 %}
+                <span class="badge bg-danger">Hi</span>
+                {% elif task.priority <= 3 %}
+                <span class="badge bg-success">Lo</span>
                 {% endif %}
+            </div>
         </div>
         <h6 class="card-title mb-1 small fw-bold">
-            <a href="/ui/task/{{ task.id }}/" class="text-decoration-none text-dark stretched-link">{{ task.title }}</a>
+            <a href="/ui/task/{{ task.id }}/" class="text-decoration-none text-dark stretched-link">{{ task.title|truncatechars:40 }}</a>
         </h6>
+        <!-- Quick action buttons (shown on hover via CSS) -->
+        <div class="task-quick-actions mt-1 d-none">
+            <div class="btn-group btn-group-sm w-100" role="group">
+                <button class="btn btn-outline-primary btn-xs flex-fill start-work-btn"
+                        data-task-id="{{ task.id }}"
+                        onclick="event.stopPropagation(); startWork({{ task.id }}, '{{ task.pipeline_stage.value|default:'none' }}')"
+                        title="Start next stage">
+                    <i class="bi bi-play-fill"></i>
+                </button>
+                <a href="/ui/task/{{ task.id }}/" class="btn btn-outline-secondary btn-xs flex-fill"
+                   onclick="event.stopPropagation()"
+                   title="View details">
+                    <i class="bi bi-eye"></i>
+                </a>
+            </div>
+        </div>
         {% if task.assigned_to %}
-        <div class="mt-2 text-end">
-            <small class="text-muted" style="font-size: 0.7rem;">
+        <div class="mt-1 text-end">
+            <small class="text-muted" style="font-size: 0.65rem;">
                 <i class="bi bi-person-fill"></i> {{ task.assigned_to }}
             </small>
         </div>

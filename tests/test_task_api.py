@@ -92,6 +92,36 @@ class TestTaskAPI:
 
         assert response.status_code == 400
 
+    def test_create_subtask_inherits_requirements(self, client, sample_project, sample_requirement, db_session):
+        """Subtask should inherit parent requirements by default."""
+        parent = Task(
+            project_id=sample_project.id,
+            task_id="T001",
+            title="Parent Task"
+        )
+        parent.requirements.append(sample_requirement)
+        db_session.add(parent)
+        db_session.commit()
+        db_session.refresh(parent)
+
+        response = client.post(
+            f'/api/projects/{sample_project.id}/tasks/create',
+            data=json.dumps({
+                'title': 'Child Task',
+                'parent_task_id': parent.id
+            }),
+            content_type='application/json'
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        child_id = data['task']['id']
+
+        child = db_session.query(Task).filter(Task.id == child_id).first()
+        assert child.parent_task_id == parent.id
+        assert len(child.requirements) == 1
+        assert child.requirements[0].req_id == sample_requirement.req_id
+
     def test_list_tasks(self, client, sample_project, sample_tasks):
         """Test GET /api/projects/{id}/tasks."""
         response = client.get(f'/api/projects/{sample_project.id}/tasks')

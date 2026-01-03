@@ -192,35 +192,37 @@ class TestTaskIsBlocked:
         assert t3.is_blocked(db_session) is True
 
 
-class TestTaskRunId:
-    """Tests for Task.run_id field (link to workflow run)."""
+class TestTaskProjectLink:
+    """Tests for Task.project_id field (link to project).
 
-    def test_task_has_run_id_field(self, db_session, sample_project, sample_run):
-        """Task can be linked to a Run."""
+    NOTE: Task.run_id was removed in refactor. Tasks are now linked
+    to projects only, not to individual runs.
+    """
+
+    def test_task_has_project_id_field(self, db_session, sample_project):
+        """Task must be linked to a Project."""
         task = Task(
             project_id=sample_project.id,
             task_id="T1",
-            title="Run-linked task",
-            run_id=sample_run.id
+            title="Project-linked task"
         )
         db_session.add(task)
         db_session.commit()
         db_session.refresh(task)
 
-        assert task.run_id == sample_run.id
+        assert task.project_id == sample_project.id
 
-    def test_task_run_id_optional(self, db_session, sample_project):
-        """Task.run_id should be optional (nullable)."""
+    def test_task_project_id_required(self, db_session):
+        """Task.project_id is required (not nullable)."""
+        # Creating task without project_id should fail
+        import pytest
         task = Task(
-            project_id=sample_project.id,
             task_id="T1",
-            title="No-run task"
+            title="No-project task"
         )
         db_session.add(task)
-        db_session.commit()
-        db_session.refresh(task)
-
-        assert task.run_id is None
+        with pytest.raises(Exception):  # IntegrityError
+            db_session.commit()
 
 
 class TestTaskStatusFailed:

@@ -76,7 +76,7 @@ class AgentProvider(abc.ABC):
     def get_agent_prompt(self, role: str, run_id: int, project_path: str, task_id: int = None) -> str:
         """
         Load agent prompt from database and format with context.
-        Includes full project details and handoff context in every prompt.
+        Includes full project details and work_cycle context in every prompt.
         """
         project_context = self._get_project_context(role, run_id, project_path)
 
@@ -88,9 +88,18 @@ class AgentProvider(abc.ABC):
             db = next(get_db())
 
             # Get task_id if not provided
+            # NOTE: Task.run_id removed in refactor - get task from run's project
             if not task_id:
-                task = db.query(Task).filter(Task.run_id == run_id).first()
-                task_id = task.id if task else None
+                from app.models.run import Run
+                run = db.query(Run).filter(Run.id == run_id).first()
+                if run:
+                    # Get most recent in-progress task for this project
+                    from app.models.task import TaskStatus
+                    task = db.query(Task).filter(
+                        Task.project_id == run.project_id,
+                        Task.status == TaskStatus.IN_PROGRESS
+                    ).order_by(Task.updated_at.desc()).first()
+                    task_id = task.id if task else None
 
             config = db.query(RoleConfig).filter(
                 RoleConfig.role == role,
@@ -126,9 +135,9 @@ Execute your role's responsibilities and output a JSON status report.
 """
 
     def _get_project_context(self, role: str, run_id: int, project_path: str) -> str:
-        """Fetch full project details and handoff context from DB.
+        """Fetch full project details and work_cycle context from DB.
 
-        Uses the handoff service to build comprehensive context including:
+        Uses the work_cycle service to build comprehensive context including:
         - Project info (name, tech stack, commands)
         - Run state and goal
         - ALL previous agent reports (full history)
@@ -139,8 +148,8 @@ Execute your role's responsibilities and output a JSON status report.
             from app.db import get_db
             from app.models.project import Project
             from app.models.run import Run
-            from app.models.task import Task
-            from app.services.handoff_service import get_handoff_for_prompt
+            from app.models.task import Task, TaskStatus
+            from app.services.work_cycle_service import get_work_cycle_for_prompt
 
             db = next(get_db())
 
@@ -155,12 +164,16 @@ Execute your role's responsibilities and output a JSON status report.
                 db.close()
                 return f"# Project Context\nProject Path: {project_path}\nRun ID: {run_id}"
 
-            # Get primary task for this run (for task-specific handoff file)
-            task = db.query(Task).filter(Task.run_id == run_id).first()
+            # Get primary task for this run (for task-specific work_cycle file)
+            # NOTE: Task.run_id removed in refactor - get in-progress task from project
+            task = db.query(Task).filter(
+                Task.project_id == run.project_id,
+                Task.status == TaskStatus.IN_PROGRESS
+            ).order_by(Task.updated_at.desc()).first()
             task_id = task.task_id if task else None
 
-            # Get handoff context (writes HANDOFF_{run_id}_{task_id}.md)
-            handoff_context = get_handoff_for_prompt(
+            # Get work_cycle context (writes WORK_CYCLE_{run_id}_{task_id}.md)
+            work_cycle_context = get_work_cycle_for_prompt(
                 db=db,
                 run_id=run_id,
                 role=role,
@@ -179,7 +192,7 @@ Execute your role's responsibilities and output a JSON status report.
                 tech_stack_parts.append(f"Databases: {', '.join(project.databases)}")
             tech_stack = '\n'.join(tech_stack_parts) if tech_stack_parts else 'Not specified'
 
-            # Build comprehensive context combining project info + handoff
+            # Build comprehensive context combining project info + work_cycle
             context = f"""# Project Context
 
 ## Project: {project.name}
@@ -223,7 +236,7 @@ Stages: dev, qa, sec, docs
 
 ---
 
-{handoff_context}"""
+{work_cycle_context}"""
             db.close()
             return context
 
@@ -718,29 +731,29 @@ def run_agent_logic(agent_type: str, run_id: int, project_path: str) -> Dict[str
 
 
 # =============================================================================
-# Task-Centric Handoff Functions
+# Task-Centric WorkCycle Functions
 # =============================================================================
 
-def get_or_create_task_handoff(task_id: int, to_role: str, stage: str, run_id: int = None) -> Optional[Dict]:
-    """Get current handoff or create one if none exists.
+def get_or_create_task_work_cycle(task_id: int, to_role: str, stage: str, run_id: int = None) -> Optional[Dict]:
+    """Get current work_cycle or create one if none exists.
 
-    Returns the handoff data including context_markdown for the agent prompt.
+    Returns the work_cycle data including context_markdown for the agent prompt.
     """
     try:
-        # First, try to get existing handoff
+        # First, try to get existing work_cycle
         response = requests.get(
-            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/handoff",
+            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/work_cycle",
             timeout=30
         )
 
         if response.status_code == 200:
             data = response.json()
-            if data.get("handoff"):
-                return data["handoff"]
+            if data.get("work_cycle"):
+                return data["work_cycle"]
 
-        # No pending handoff - create one
+        # No pending work_cycle - create one
         create_response = requests.post(
-            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/handoff/create",
+            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/work_cycle/create",
             json={
                 "to_role": to_role,
                 "stage": stage,
@@ -751,44 +764,44 @@ def get_or_create_task_handoff(task_id: int, to_role: str, stage: str, run_id: i
         )
 
         if create_response.status_code == 201:
-            return create_response.json().get("handoff")
+            return create_response.json().get("work_cycle")
         else:
-            print(f"Failed to create handoff: {create_response.text}")
+            print(f"Failed to create work_cycle: {create_response.text}")
             return None
 
     except Exception as e:
-        print(f"Error getting/creating handoff: {e}")
+        print(f"Error getting/creating work_cycle: {e}")
         return None
 
 
-def accept_task_handoff(task_id: int, handoff_id: int = None) -> bool:
-    """Accept a task handoff (mark as in_progress)."""
+def accept_task_work_cycle(task_id: int, work_cycle_id: int = None) -> bool:
+    """Accept a task work_cycle (mark as in_progress)."""
     try:
         response = requests.post(
-            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/handoff/accept",
-            json={"handoff_id": handoff_id} if handoff_id else {},
+            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/work_cycle/accept",
+            json={"work_cycle_id": work_cycle_id} if work_cycle_id else {},
             timeout=30
         )
 
         if response.status_code == 200:
-            print(f"Handoff accepted for task {task_id}")
+            print(f"WorkCycle accepted for task {task_id}")
             return True
         else:
-            print(f"Failed to accept handoff: {response.text}")
+            print(f"Failed to accept work_cycle: {response.text}")
             return False
 
     except Exception as e:
-        print(f"Error accepting handoff: {e}")
+        print(f"Error accepting work_cycle: {e}")
         return False
 
 
-def complete_task_handoff(task_id: int, report: Dict, handoff_id: int = None) -> bool:
-    """Complete a task handoff with the agent's report."""
+def complete_task_work_cycle(task_id: int, report: Dict, work_cycle_id: int = None) -> bool:
+    """Complete a task work_cycle with the agent's report."""
     try:
         response = requests.post(
-            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/handoff/complete",
+            f"{WORKFLOW_HUB_URL}/api/tasks/{task_id}/work_cycle/complete",
             json={
-                "handoff_id": handoff_id,
+                "work_cycle_id": work_cycle_id,
                 "report_status": report.get("status", "fail"),
                 "report_summary": report.get("summary", ""),
                 "report_details": report.get("details", {})
@@ -797,26 +810,26 @@ def complete_task_handoff(task_id: int, report: Dict, handoff_id: int = None) ->
         )
 
         if response.status_code == 200:
-            print(f"Handoff completed for task {task_id}")
+            print(f"WorkCycle completed for task {task_id}")
             return True
         else:
-            print(f"Failed to complete handoff: {response.text}")
+            print(f"Failed to complete work_cycle: {response.text}")
             return False
 
     except Exception as e:
-        print(f"Error completing handoff: {e}")
+        print(f"Error completing work_cycle: {e}")
         return False
 
 
 def run_agent_for_task(task_id: int, agent_type: str, stage: str = None,
                        run_id: int = None, project_path: str = None) -> Dict[str, Any]:
-    """Run an agent for a specific task using the handoff API.
+    """Run an agent for a specific task using the work_cycle API.
 
     This is the task-centric execution flow:
-    1. Get or create handoff for the task
-    2. Accept the handoff (mark in_progress)
-    3. Run the agent with handoff context
-    4. Complete the handoff with the report
+    1. Get or create work_cycle for the task
+    2. Accept the work_cycle (mark in_progress)
+    3. Run the agent with work_cycle context
+    4. Complete the work_cycle with the report
 
     Args:
         task_id: The task to work on
@@ -842,33 +855,33 @@ def run_agent_for_task(task_id: int, agent_type: str, stage: str = None,
         except Exception:
             project_path = "."
 
-    # Step 1: Get or create handoff
-    print(f"Getting handoff for task {task_id}...")
-    handoff = get_or_create_task_handoff(task_id, agent_type, stage, run_id)
+    # Step 1: Get or create work_cycle
+    print(f"Getting work_cycle for task {task_id}...")
+    work_cycle = get_or_create_task_work_cycle(task_id, agent_type, stage, run_id)
 
-    if not handoff:
+    if not work_cycle:
         return {
             "status": "fail",
-            "summary": "Could not create/get handoff for task",
+            "summary": "Could not create/get work_cycle for task",
             "details": {"task_id": task_id}
         }
 
-    handoff_id = handoff.get("id")
+    work_cycle_id = work_cycle.get("id")
 
-    # Step 2: Accept the handoff
-    if handoff.get("status") == "pending":
-        if not accept_task_handoff(task_id, handoff_id):
+    # Step 2: Accept the work_cycle
+    if work_cycle.get("status") == "pending":
+        if not accept_task_work_cycle(task_id, work_cycle_id):
             return {
                 "status": "fail",
-                "summary": "Could not accept handoff",
-                "details": {"handoff_id": handoff_id}
+                "summary": "Could not accept work_cycle",
+                "details": {"work_cycle_id": work_cycle_id}
             }
 
-    # Step 3: Build prompt using handoff context
+    # Step 3: Build prompt using work_cycle context
     provider = get_provider()
 
-    # Use handoff context_markdown as the primary context
-    context_markdown = handoff.get("context_markdown", "")
+    # Use work_cycle context_markdown as the primary context
+    context_markdown = work_cycle.get("context_markdown", "")
 
     # Get role-specific prompt from DB
     try:
@@ -888,7 +901,7 @@ def run_agent_for_task(task_id: int, agent_type: str, stage: str = None,
         role_prompt = ""
 
     # Combine context and role prompt
-    full_prompt = f"""# Task Handoff Context
+    full_prompt = f"""# Task WorkCycle Context
 
 {context_markdown}
 
@@ -918,8 +931,8 @@ When complete, output a JSON status report with:
     proofs_count = capture_automatic_proofs(agent_type, run_id or task_id, project_path, report)
     report["proofs_uploaded"] = proofs_count
 
-    # Step 5: Complete the handoff
-    complete_task_handoff(task_id, report, handoff_id)
+    # Step 5: Complete the work_cycle
+    complete_task_work_cycle(task_id, report, work_cycle_id)
 
     return report
 
@@ -1047,8 +1060,8 @@ def main():
     run_parser.add_argument("--project-path", default=".", help="Path to project repository")
     run_parser.add_argument("--submit", action="store_true", help="Submit report to Workflow Hub")
 
-    # task command - task-centric mode with handoff API
-    task_parser = subparsers.add_parser("task", help="Run an agent for a task (uses handoff API)")
+    # task command - task-centric mode with work_cycle API
+    task_parser = subparsers.add_parser("task", help="Run an agent for a task (uses work_cycle API)")
     task_parser.add_argument("--agent", required=True, choices=["pm", "dev", "qa", "security", "sec", "docs", "director"])
     task_parser.add_argument("--task-id", type=int, required=True, help="Task ID to work on")
     task_parser.add_argument("--run-id", type=int, help="Optional run ID for context")
@@ -1069,14 +1082,14 @@ def main():
             submit_report(args.run_id, args.agent, report)
 
     elif args.command == "task":
-        # Task-centric mode with handoff API
+        # Task-centric mode with work_cycle API
         agent_type = args.agent
         # Normalize 'sec' to 'security' for consistency
         if agent_type == "sec":
             agent_type = "security"
 
         print(f"Running {agent_type} agent for task {args.task_id} using {AGENT_PROVIDER}...")
-        print("Using handoff API for context and reporting...")
+        print("Using work_cycle API for context and reporting...")
 
         report = run_agent_for_task(
             task_id=args.task_id,

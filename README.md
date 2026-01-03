@@ -28,11 +28,17 @@ Modern AI coding assistants are powerful but chaotic. Workflow Hub brings **stru
      │              │              │              │              │
    Specs        Code +         Tests +       Security       Approved
    Tasks        Impl          Coverage        Scan          Release
-```
-
 ## Features
 
 - **Multi-Agent Pipeline** - PM → DEV → QA → SEC → Deploy with automated handoffs
+- **Job Queue System** - Priority-based queuing for LLM requests and agent executions to prevent resource contention
+- **Database-Backed Queue** - Persistent job storage ensuring no jobs are lost during restarts
+- **Background Processing** - Dedicated workers process jobs without blocking the main application
+- **Priority Scheduling** - Critical operations get higher priority (CRITICAL, HIGH, NORMAL, LOW)
+- **Timeout Management** - Automatic timeout handling for long-running jobs
+- **Comprehensive Error Handling** - Robust job state tracking and recovery mechanisms
+
+## Prerequisites
 - **Kanban Dashboard** - Visual task board showing agent progress through stages
 - **TDD Enforced** - QA agent writes tests first, DEV makes them pass
 - **Security Gates** - Automated vulnerability scanning before deployment
@@ -167,6 +173,40 @@ PM → DEV → QA → SEC → READY_FOR_COMMIT → MERGED → READY_FOR_DEPLOY �
           QA_FAILED  SEC_FAILED (can retry)
 ```
 
+## Goose AI Integration
+
+Workflow Hub includes an integrated Goose AI assistant that provides:
+
+- **Direct Integration** - No separate Goose webserver required
+- **Context Awareness** - The assistant understands your current workflow project
+- **Seamless Access** - Full AI capabilities accessible through Workflow Hub UI
+
+```
+PM → DEV → QA → SEC → READY_FOR_COMMIT → MERGED → READY_FOR_DEPLOY → DEPLOYED
+              ↓        ↓
+          QA_FAILED  SEC_FAILED (can retry)
+```
+
+## Job Queue System
+
+Workflow Hub uses a priority-based job queue to manage LLM requests and agent executions. This is essential because:
+
+- Local LLMs (via Docker Model Runner) and Goose agents can only process one request at a time
+- Prevents resource contention and ensures orderly execution
+- Provides priority-based scheduling for critical operations
+- Supports background processing of non-blocking tasks
+
+```
+LLM Queue      Agent Queue      Vision Queue
+Priority       Priority         Low Priority
+```
+
+```
+PM → DEV → QA → SEC → READY_FOR_COMMIT → MERGED → READY_FOR_DEPLOY → DEPLOYED
+              ↓        ↓
+          QA_FAILED  SEC_FAILED (can retry)
+```
+
 **Gate Enforcement:**
 - QA must pass before Security review
 - Security must pass before code is ready for commit
@@ -219,6 +259,26 @@ The dashboard provides a visual interface for:
 - **Runs** (`/ui/runs/`): Monitor pipeline runs
 
 ## API Reference
+
+### Job Queue
+
+```bash
+# Get queue status
+curl http://localhost:8000/api/queue/status
+
+# Enqueue job
+curl -X POST http://localhost:8000/api/queue/enqueue \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_type": "llm_complete",
+    "request_data": {"prompt": "Hello"},
+    "priority": 3,
+    "timeout": 300
+  }'
+
+# Cancel job
+curl -X POST http://localhost:8000/api/queue/jobs/{id}/cancel
+```
 
 ### Projects
 

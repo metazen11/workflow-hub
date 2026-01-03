@@ -17,7 +17,6 @@ class TestGetNextTask:
             task_id="T1",
             title="Low priority",
             priority=3,
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG
         )
         t2 = Task(
@@ -25,7 +24,6 @@ class TestGetNextTask:
             task_id="T2",
             title="High priority",
             priority=10,
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG
         )
         t3 = Task(
@@ -33,13 +31,12 @@ class TestGetNextTask:
             task_id="T3",
             title="Medium priority",
             priority=5,
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG
         )
         db_session.add_all([t1, t2, t3])
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         next_task = service.get_next_task()
 
         assert next_task is not None
@@ -52,7 +49,6 @@ class TestGetNextTask:
             task_id="T1",
             title="Blocker task",
             priority=5,
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG  # Not done, so T2 is blocked
         )
         t2 = Task(
@@ -60,7 +56,6 @@ class TestGetNextTask:
             task_id="T2",
             title="Blocked high priority",
             priority=10,
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG,
             blocked_by=["T1"]
         )
@@ -69,13 +64,12 @@ class TestGetNextTask:
             task_id="T3",
             title="Unblocked medium priority",
             priority=7,
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG
         )
         db_session.add_all([t1, t2, t3])
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         next_task = service.get_next_task()
 
         # Should return T3, not T2 (blocked) or T1 (lower priority than T3)
@@ -84,7 +78,7 @@ class TestGetNextTask:
 
     def test_returns_none_when_queue_empty(self, db_session, sample_project, sample_run):
         """Should return None when no tasks are available."""
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         next_task = service.get_next_task()
 
         assert next_task is None
@@ -96,7 +90,6 @@ class TestGetNextTask:
             task_id="T1",
             title="First task",
             priority=5,
-            run_id=sample_run.id,
             status=TaskStatus.IN_PROGRESS  # Not done
         )
         t2 = Task(
@@ -104,14 +97,13 @@ class TestGetNextTask:
             task_id="T2",
             title="Blocked by T1",
             priority=10,
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG,
             blocked_by=["T1"]
         )
         db_session.add_all([t1, t2])
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         next_task = service.get_next_task()
 
         assert next_task is None  # T1 is in progress, T2 is blocked
@@ -123,7 +115,6 @@ class TestGetNextTask:
             task_id="T1",
             title="Already done",
             priority=10,
-            run_id=sample_run.id,
             status=TaskStatus.DONE
         )
         t2 = Task(
@@ -131,7 +122,6 @@ class TestGetNextTask:
             task_id="T2",
             title="Already failed",
             priority=9,
-            run_id=sample_run.id,
             status=TaskStatus.FAILED
         )
         t3 = Task(
@@ -139,13 +129,12 @@ class TestGetNextTask:
             task_id="T3",
             title="Still pending",
             priority=5,
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG
         )
         db_session.add_all([t1, t2, t3])
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         next_task = service.get_next_task()
 
         assert next_task is not None
@@ -161,13 +150,12 @@ class TestMarkCompleted:
             project_id=sample_project.id,
             task_id="T1",
             title="Task to complete",
-            run_id=sample_run.id,
             status=TaskStatus.IN_PROGRESS
         )
         db_session.add(task)
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         service.mark_completed("T1")
 
         db_session.refresh(task)
@@ -179,13 +167,12 @@ class TestMarkCompleted:
             project_id=sample_project.id,
             task_id="T1",
             title="Task to complete",
-            run_id=sample_run.id,
             status=TaskStatus.IN_PROGRESS
         )
         db_session.add(task)
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         service.mark_completed("T1")
 
         db_session.refresh(task)
@@ -198,14 +185,12 @@ class TestMarkCompleted:
             project_id=sample_project.id,
             task_id="T1",
             title="Blocker",
-            run_id=sample_run.id,
             status=TaskStatus.IN_PROGRESS
         )
         t2 = Task(
             project_id=sample_project.id,
             task_id="T2",
             title="Blocked by T1",
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG,
             blocked_by=["T1"]
         )
@@ -215,7 +200,7 @@ class TestMarkCompleted:
         # T2 should be blocked initially
         assert t2.is_blocked(db_session) is True
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         service.mark_completed("T1")
 
         # T2 should now be unblocked
@@ -233,13 +218,12 @@ class TestMarkFailed:
             project_id=sample_project.id,
             task_id="T1",
             title="Failing task",
-            run_id=sample_run.id,
             status=TaskStatus.IN_PROGRESS
         )
         db_session.add(task)
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         service.mark_failed("T1")
 
         db_session.refresh(task)
@@ -251,21 +235,19 @@ class TestMarkFailed:
             project_id=sample_project.id,
             task_id="T1",
             title="Will fail",
-            run_id=sample_run.id,
             status=TaskStatus.IN_PROGRESS
         )
         t2 = Task(
             project_id=sample_project.id,
             task_id="T2",
             title="Blocked by T1",
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG,
             blocked_by=["T1"]
         )
         db_session.add_all([t1, t2])
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         service.mark_failed("T1")
 
         db_session.refresh(t2)
@@ -282,13 +264,12 @@ class TestMarkInProgress:
             project_id=sample_project.id,
             task_id="T1",
             title="Starting task",
-            run_id=sample_run.id,
             status=TaskStatus.BACKLOG
         )
         db_session.add(task)
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         service.mark_in_progress("T1")
 
         db_session.refresh(task)
@@ -301,18 +282,18 @@ class TestGetStatusSummary:
     def test_returns_counts_by_status(self, db_session, sample_project, sample_run):
         """Should return count of tasks in each status."""
         tasks = [
-            Task(project_id=sample_project.id, task_id="T1", title="Done 1", run_id=sample_run.id, status=TaskStatus.DONE),
-            Task(project_id=sample_project.id, task_id="T2", title="Done 2", run_id=sample_run.id, status=TaskStatus.DONE),
-            Task(project_id=sample_project.id, task_id="T3", title="In Progress", run_id=sample_run.id, status=TaskStatus.IN_PROGRESS),
-            Task(project_id=sample_project.id, task_id="T4", title="Backlog 1", run_id=sample_run.id, status=TaskStatus.BACKLOG),
-            Task(project_id=sample_project.id, task_id="T5", title="Backlog 2", run_id=sample_run.id, status=TaskStatus.BACKLOG),
-            Task(project_id=sample_project.id, task_id="T6", title="Backlog 3", run_id=sample_run.id, status=TaskStatus.BACKLOG),
-            Task(project_id=sample_project.id, task_id="T7", title="Failed", run_id=sample_run.id, status=TaskStatus.FAILED),
+            Task(project_id=sample_project.id, task_id="T1", title="Done 1", status=TaskStatus.DONE),
+            Task(project_id=sample_project.id, task_id="T2", title="Done 2", status=TaskStatus.DONE),
+            Task(project_id=sample_project.id, task_id="T3", title="In Progress", status=TaskStatus.IN_PROGRESS),
+            Task(project_id=sample_project.id, task_id="T4", title="Backlog 1", status=TaskStatus.BACKLOG),
+            Task(project_id=sample_project.id, task_id="T5", title="Backlog 2", status=TaskStatus.BACKLOG),
+            Task(project_id=sample_project.id, task_id="T6", title="Backlog 3", status=TaskStatus.BACKLOG),
+            Task(project_id=sample_project.id, task_id="T7", title="Failed", status=TaskStatus.FAILED),
         ]
         db_session.add_all(tasks)
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         summary = service.get_status_summary()
 
         assert summary["done"] == 2
@@ -323,7 +304,7 @@ class TestGetStatusSummary:
 
     def test_returns_zeros_for_empty_queue(self, db_session, sample_project, sample_run):
         """Should return zeros when no tasks exist."""
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         summary = service.get_status_summary()
 
         assert summary["done"] == 0
@@ -336,24 +317,22 @@ class TestGetStatusSummary:
 class TestGetAllTasks:
     """Tests for TaskQueueService.get_all_tasks()"""
 
-    def test_returns_all_tasks_for_run(self, db_session, sample_project, sample_run):
-        """Should return all tasks associated with the run."""
+    def test_returns_all_tasks_for_project(self, db_session, sample_project, sample_run):
+        """Should return all tasks associated with the project."""
         t1 = Task(
             project_id=sample_project.id,
             task_id="T1",
-            title="Task 1",
-            run_id=sample_run.id
+            title="Task 1"
         )
         t2 = Task(
             project_id=sample_project.id,
             task_id="T2",
-            title="Task 2",
-            run_id=sample_run.id
+            title="Task 2"
         )
         db_session.add_all([t1, t2])
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         tasks = service.get_all_tasks()
 
         assert len(tasks) == 2
@@ -361,32 +340,30 @@ class TestGetAllTasks:
         assert "T1" in task_ids
         assert "T2" in task_ids
 
-    def test_only_returns_tasks_for_specified_run(self, db_session, sample_project, sample_run):
-        """Should not return tasks from other runs."""
-        # Create another run
-        run2 = Run(
-            project_id=sample_project.id,
-            name="Run 2025-01-02_01"
-        )
-        db_session.add(run2)
+    def test_only_returns_tasks_for_specified_project(self, db_session, sample_project, sample_run):
+        """Should not return tasks from other projects."""
+        from app.models import Project
+        import uuid
+
+        # Create another project with unique name
+        project2 = Project(name=f"Other Project {uuid.uuid4().hex[:8]}")
+        db_session.add(project2)
         db_session.commit()
 
         t1 = Task(
             project_id=sample_project.id,
             task_id="T1",
-            title="Task in run 1",
-            run_id=sample_run.id
+            title="Task in project 1"
         )
         t2 = Task(
-            project_id=sample_project.id,
+            project_id=project2.id,
             task_id="T2",
-            title="Task in run 2",
-            run_id=run2.id
+            title="Task in project 2"
         )
         db_session.add_all([t1, t2])
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         tasks = service.get_all_tasks()
 
         assert len(tasks) == 1
@@ -394,13 +371,13 @@ class TestGetAllTasks:
 
     def test_returns_tasks_ordered_by_priority(self, db_session, sample_project, sample_run):
         """Should return tasks ordered by priority (highest first)."""
-        t1 = Task(project_id=sample_project.id, task_id="T1", title="Low", priority=2, run_id=sample_run.id)
-        t2 = Task(project_id=sample_project.id, task_id="T2", title="High", priority=9, run_id=sample_run.id)
-        t3 = Task(project_id=sample_project.id, task_id="T3", title="Medium", priority=5, run_id=sample_run.id)
+        t1 = Task(project_id=sample_project.id, task_id="T1", title="Low", priority=2)
+        t2 = Task(project_id=sample_project.id, task_id="T2", title="High", priority=9)
+        t3 = Task(project_id=sample_project.id, task_id="T3", title="Medium", priority=5)
         db_session.add_all([t1, t2, t3])
         db_session.commit()
 
-        service = TaskQueueService(db_session, sample_run.id)
+        service = TaskQueueService(db_session, run_id=sample_run.id)
         tasks = service.get_all_tasks()
 
         assert tasks[0].task_id == "T2"  # Priority 9

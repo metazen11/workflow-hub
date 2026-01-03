@@ -1,8 +1,17 @@
 """Requirement model."""
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Table
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db import Base
+
+
+# Join table for Task-Requirement many-to-many relationship
+task_requirements = Table(
+    'task_requirements',
+    Base.metadata,
+    Column('task_id', Integer, ForeignKey('tasks.id', ondelete='CASCADE'), primary_key=True),
+    Column('requirement_id', Integer, ForeignKey('requirements.id', ondelete='CASCADE'), primary_key=True)
+)
 
 
 class Requirement(Base):

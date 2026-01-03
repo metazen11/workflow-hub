@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Goose AI Assistant - Workflow Hub</title>
+    <link rel="stylesheet" href="/static/css/app.css?v=7">
+    <style>
+        /* Custom styles for Goose integration */
+        .goose-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .goose-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .goose-logo {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 24px;
+        }
+        
+        .goose-info {
+            flex: 1;
+        }
+        
+        .goose-info h1 {
+            margin: 0 0 5px 0;
+            font-size: 24px;
+        }
+        
+        .goose-info p {
+            margin: 0;
+            color: var(--text-secondary);
+        }
+        
+        .goose-context {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        .goose-context h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        
+        .goose-context p {
+            margin: 5px 0;
+        }
+        
+        .goose-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 400px;
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .goose-placeholder-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        .goose-placeholder-text {
+            max-width: 600px;
+            line-height: 1.6;
+        }
+        
+        .goose-notice {
+            background: var(--bg-secondary);
+            border-left: 4px solid var(--accent);
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 0 4px 4px 0;
+        }
+        
+        .goose-notice h3 {
+            margin-top: 0;
+        }
+        
+        .goose-button {
+            background: var(--accent, #2563eb);
+            color: white,
+            border: none,
+            padding: 10px 20px,
+            border-radius: 4px,
+            cursor: pointer,
+            font-weight: 500,
+            margin: 10px 5px,
+            transition: background 0.2s;
+        }
+        
+        .goose-button:hover {
+            background: #2563eb;
+        }
+        
+        .goose-button:disabled {
+            background: var(--bg-secondary);
+            cursor: not-allowed;
+        }
+        
+        .goose-features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .goose-feature-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .goose-feature-icon {
+            font-size: 32px;
+            margin-bottom: 15px;
+        }
+        
+        .goose-feature-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        
+        @media (max-width: 768px) {
+            .goose-container {
+                padding: 10px;
+            }
+            
+            .goose-features {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout top-nav-layout">
+        <!-- Top Navigation Bar -->
+        <header class="top-nav">
+            <div class="top-nav-left">
+                <a href="/ui/" class="logo">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                    </svg>
+                    <span>Workflow Hub</span>
+                </a>
+                <nav class="top-nav-menu">
+                    <a href="/ui/" class="nav-item {% if active_page == 'dashboard' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="14" width="7" height="7"></rect>
+                            <rect x="3" y="14" width="7" height="7"></rect>
+                        </svg>
+                        Dashboard
+                    </a>
+                    <a href="/ui/projects/" class="nav-item {% if active_page == 'projects' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        Projects
+                    </a>
+                    <a href="/ui/tasks/" class="nav-item {% if active_page == 'tasks' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 11l3 3L22 4"></path>
+                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                        </svg>
+                        Tasks
+                    </a>
+                    <a href="/ui/board/" class="nav-item {% if active_page == 'board' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="5" height="18" rx="1"></rect>
+                            <rect x="10" y="3" width="5" height="12" rx="1"></rect>
+                            <rect x="17" y="3" width="5" height="8" rx="1"></rect>
+                        </svg>
+                        Board
+                    </a>
+                    <a href="/ui/ledger/" class="nav-item {% if active_page == 'ledger' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="9" y1="15" x2="15" y2="15"></line>
+                        </svg>
+                        Ledger
+                    </a>
+                    <a href="/ui/bugs/" class="nav-item {% if active_page == 'bugs' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        Bugs
+                        {% if open_bugs_count %}<span class="badge badge-danger">{{ open_bugs_count }}</span>{% endif %}
+                    </a>
+                    <a href="/ui/runs/" class="nav-item {% if active_page == 'runs' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        Runs
+                    </a>
+                    <a href="/ui/activity/" class="nav-item {% if active_page == 'activity' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                        Activity
+                    </a>
+                    <a href="/ui/goose/" class="nav-item {% if active_page == 'goose' %}active{% endif %}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2Z"></path>
+                            <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15"></path>
+                            <path d="M17 10H18C18.5523 10 19 10.4477 19 11V17C19 17.5523 18.5523 18 18 18H6C5.44772 18 5 17.5523 5 17V11C5 10.4477 5.44772 10 6 10H7"></path>
+                            <path d="M11 12V14"></path>
+                            <path d="M13 12V14"></path>
+                        </svg>
+                        Goose AI
+                    </a>
+                    <a href="#" class="nav-item" id="add-task-nav-button">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Add Task
+                    </a>
+                </nav>
+            </div>
+            <div class="top-nav-right">
+                <!-- Queue Status Indicator with Popover -->
+                <div class="queue-status-nav" id="queue-status-nav">
+                    <div class="queue-indicator" id="queue-indicator">
+                        <svg class="queue-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="4" width="18" height="4" rx="1"></rect>
+                            <rect x="3" y="10" width="18" height="4" rx="1"></rect>
+                            <rect x="3" y="16" width="18" height="4" rx="1"></rect>
+                        </svg>
+                        <span class="queue-badge" id="queue-badge">0</span>
+                    </div>
+                    <div class="queue-info" id="queue-info">
+                        <span class="queue-current" id="queue-current">Idle</span>
+                    </div>
+                    <!-- Detailed Popover -->
+                    <div class="queue-popover" id="queue-popover">
+                        <div class="queue-popover-header">
+                            <strong>Job Queue Status</strong>
+                            <button class="queue-popover-close" onclick="closeQueuePopover()">&times;</button>
+                        </div>
+                        <div class="queue-popover-content">
+                            <div class="queue-stats-row">
+                                <span class="queue-stat-label">Running:</span>
+                                <span class="queue-stat-value" id="popover-running">0</span>
+                            </div>
+                            <div class="queue-stats-row">
+                                <span class="queue-stat-label">Pending:</span>
+                                <span class="queue-stat-value" id="popover-pending">0</span>
+                            </div>
+                            <div class="queue-stats-row">
+                                <span class="queue-stat-label">Avg Wait:</span>
+                                <span class="queue-stat-value" id="popover-avg-wait">-</span>
+                            </div>
+                            <div class="queue-stats-row">
+                                <span class="queue-stat-label">LLM (DMR):</span>
+                                <span class="queue-stat-value" id="popover-dmr-status">
+                                    <span class="dmr-checking">checking...</span>
+                                </span>
+                            </div>
+                            <div class="queue-stats-row">
+                                <span class="queue-stat-label">Director:</span>
+                                <span class="queue-stat-value" id="popover-director-status">
+                                    <span class="director-checking">checking...</span>
+                                </span>
+                            </div>
+                            <div class="queue-current-job" id="popover-current-job" style="display: none;">
+                                <div class="queue-job-header">Current Job</div>
+                                <div class="queue-job-details">
+                                    <div><strong>Type:</strong> <span id="popover-job-type">-</span></div>
+                                    <div><strong>Task:</strong> <span id="popover-job-task">-</span></div>
+                                    <div><strong>Project:</strong> <span id="popover-job-project">-</span></div>
+                                    <div><strong>Started:</strong> <span id="popover-job-started">-</span></div>
+                                    <div><strong>Elapsed:</strong> <span id="popover-job-elapsed">-</span></div>
+                                </div>
+                            </div>
+                            <div class="queue-log-section" id="popover-log-section" style="display: none;">
+                                <div class="queue-log-header">
+                                    <span>Recent Output</span>
+                                    <button class="queue-log-refresh" onclick="refreshQueueLog()" title="Refresh">↻</button>
+                                </div>
+                                <pre class="queue-log-output" id="popover-log-output">Loading...</pre>
+                            </div>
+                            <div class="queue-pending-list" id="popover-pending-list" style="display: none;">
+                                <div class="queue-job-header">Up Next</div>
+                                <ul id="popover-next-jobs"></ul>
+                            </div>
+                            <!-- LLM Activity Feed -->
+                            <div class="llm-activity-section" id="llm-activity-section">
+                                <div class="queue-job-header">
+                                    <span>DMR Activity</span>
+                                    <button class="queue-log-refresh" onclick="refreshLLMActivity()" title="Refresh">↻</button>
+                                </div>
+                                <div class="llm-activity-feed" id="llm-activity-feed">
+                                    <div class="llm-activity-empty">No recent activity</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="queue-popover-footer">
+                            <a href="/api/queue/status" target="_blank" class="btn btn-xs btn-secondary">View Raw</a>
+                            <a href="/api/llm/activity" target="_blank" class="btn btn-xs btn-secondary">Activity</a>
+                            <button class="btn btn-xs btn-danger" id="popover-kill-btn" onclick="killCurrentJob()" style="display: none;">Kill Job</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="refresh-indicator" id="refresh-indicator" title="Auto-refreshing every 30s">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6M1 20v-6h6"></path>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    <span class="refresh-countdown">30</span>
+                </div>
+                <button class="icon-btn" id="theme-toggle" title="Toggle theme">
+                    <svg class="sun-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                    <svg class="moon-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="content">
+                <div class="goose-container">
+                    <div class="goose-header">
+                        <div class="goose-logo">G</div>
+                        <div class="goose-info">
+                            <h1>Goose AI Assistant</h1>
+                            <p>Workflow Hub's personal AI assistant with context awareness</p>
+                        </div>
+                    </div>
+
+                    <div class="goose-context">
+                        <h3>Context Information</h3>
+                        <p><strong>Workflow Hub Instance:</strong> Local Development</p>
+                        <p><strong>Current Mode:</strong> Integrated Assistant</p>
+                        <p><strong>Integration:</strong> Workflow Hub Native</p>
+                    </div>
+
+                    <div class="goose-placeholder">
+                        <div class="goose-placeholder-icon">🤖</div>
+                        <div class="goose-placeholder-text">
+                            <h2>Goose AI Assistant</h2>
+                            <p>This page provides an interface to interact with AI capabilities integrated into Workflow Hub.</p>
+                            <p>As a native integration, this assistant understands your current workflow context and can help with:</p>
+                            
+                            <div class="goose-features">
+                                <div class="goose-feature-card">
+                                    <div class="goose-feature-icon">🔧</div>
+                                    <div class="goose-feature-title">Development Assistance</div>
+                                    <p>Help with code implementation, debugging, and best practices</p>
+                                </div>
+                                <div class="goose-feature-card">
+                                    <div class="goose-feature-icon">📋</div>
+                                    <div class="goose-feature-title">Task Management</div>
+                                    <p>Break down requirements, create tasks, and organize workflows</p>
+                                </div>
+                                <div class="goose-feature-card">
+                                    <div class="goose-feature-icon">🛡️</div>
+                                    <div class="goose-feature-title">Security Review</div>
+                                    <p>Identify vulnerabilities and security best practices</p>
+                                </div>
+                            </div>
+                            
+                            <p>The Goose AI assistant is currently configured to work directly within this Workflow Hub instance with full context awareness.</p>
+                        </div>
+                    </div>
+
+                    <div class="goose-notice">
+                        <h3>About This Integration</h3>
+                        <p>This interface represents a simplified version of the full Goose AI experience. In a production environment, this would connect to a full Goose web interface with enhanced capabilities.</p>
+                        <p>For now, you can:</p>
+                        <ul>
+                            <li>Access AI assistance directly from this interface</li>
+                            <li>Work with your current Workflow Hub projects</li>
+                            <li>Get context-aware help for development tasks</li>
+                            <li>View current workflow state and progress</li>
+                        </ul>
+                        <p>This implementation provides the foundational integration for future expansion to a full Goose web interface.</p>
+                    </div>
+
+                    <!-- Goose Web Embed -->
+                    <div class="goose-embed-section">
+                        <!-- Fallback controls (forms target hidden iframe to avoid page navigation) -->
+                        <iframe name="goose-hidden-target" style="display:none"></iframe>
+                        <div id="goose-embed-controls" class="goose-embed-controls">
+                            <div id="goose-status-text" style="margin-bottom:8px;color:var(--text-secondary);">Goose status: unknown</div>
+                            <form id="goose-start-form" method="post" action="/api/goose/start" target="goose-hidden-target" style="display:inline-block; margin-right:8px;">
+                                <input type="hidden" name="cwd" value="{{ repo_root }}">
+                                <input type="hidden" name="port" value="8080">
+                                <button type="submit" class="goose-button">Start Goose Web (dev)</button>
+                            </form>
+                            <form id="goose-stop-form" method="post" action="/api/goose/stop" target="goose-hidden-target" style="display:inline-block; margin-right:8px;">
+                                <input type="hidden" name="port" value="8080">
+                                <button type="submit" class="goose-button">Stop Goose (managed)</button>
+                            </form>
+                            <a id="goose-open-link" class="goose-button" href="http://localhost:8080" target="_blank">Open Goose in new tab</a>
+                        </div>
+                        <div id="goose-iframe-container" class="goose-iframe-container"></div>
+                        <div id="goose-embed-note" class="goose-embed-note" style="display: none;">
+                            Note: The Goose web interface is running on a different port. Cross-origin restrictions may apply.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Global Confirmation Modal -->
+    <div id="global-confirm-modal" class="modal">
+        <div class="modal-content" style="max-width: 400px; padding: 0;">
+            <div class="modal-header">
+                <h3 id="global-confirm-title">Confirm</h3>
+                <button class="modal-close" onclick="closeConfirmModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="global-confirm-message" style="color: var(--text-primary); margin: 0;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+                <button class="btn btn-danger" id="global-confirm-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- React (production builds via CDN) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- Core app scripts -->
+    <script src="/static/js/app.js?v=9"></script>
+    <script src="/static/js/task-actions.js?v=3"></script>
+    <script src="/static/js/react-components.js?v=1"></script>
+    <!-- Bug Report Widget - auto-captures current project from URL -->
+    <script>
+        // Add Task Button Handler
+        document.addEventListener('DOMContentLoaded', function() {
+            const addTaskButton = document.getElementById('add-task-nav-button');
+            if (addTaskButton) {
+                addTaskButton.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    // Check if task-create-modal already exists in the page
+                    const modal = document.getElementById('task-create-modal');
+                    if (modal) {
+                        // If modal exists (from task_board.html), open it
+                        openTaskCreateModal(null); // null project_id for global task
+                    } else {
+                        // If modal doesn't exist, we might need to load it or show an error
+                        alert('Task creation functionality not available in this context');
+                    }
+                });
+            }
+        });
+    </script>
+
+    <script>
+        window.BUG_REPORT_API = '/api/bugs/create';
+        window.BUG_REPORT_APP = 'Workflow Hub';
+        window.BUG_REPORT_APP = 'Workflow Hub';
+        // Auto-detect project from URL if on project/run page
+        (function () {
+            const match = window.location.pathname.match(/\/ui\/(?:project|run)\/(\d+)/);
+            if (match) {
+                window.BUG_REPORT_PROJECT_ID = match[1];
+            }
+        })();
+    </script>
+
+    <!-- Queue Status Polling and Popover -->
+    <script>
+        (function() {
+            const QUEUE_POLL_INTERVAL = 5000; // 5 seconds
+            let lastQueueStatus = null;
+            let currentJobId = null;
+            let popoverOpen = false;
+
+            function formatElapsed(startedAt) {
+                if (!startedAt) return '-';
+                const start = new Date(startedAt);
+                const now = new Date();
+                const elapsedMs = now - start;
+                const mins = Math.floor(elapsedMs / 60000);
+                const secs = Math.floor((elapsedMs % 60000) / 1000);
+                return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+            }
+
+            function formatTime(dateStr) {
+                if (!dateStr) return '-';
+                return new Date(dateStr).toLocaleTimeString();
+            }
+
+            function updateQueueStatus() {
+                // Include pending job details and DMR status when popover is open
+                let url = '/api/queue/status';
+                if (popoverOpen) {
+                    url += '?pending=5&dmr=1';
+                }
+                fetch(url)
+                    .then(r => r.json())
+                    .then(data => {
+                        const queue = data.queue || {};
+                        const workers = data.workers || {};
+                        const pending = queue.pending?.total || 0;
+                        const running = queue.running || [];
+                        const runningCount = queue.running_count || 0;
+
+                        // Update badge
+                        const badge = document.getElementById('queue-badge');
+                        const totalJobs = pending + runningCount;
+                        if (badge) {
+                            badge.textContent = totalJobs;
+                            badge.classList.toggle('has-jobs', totalJobs > 0);
+                            badge.classList.toggle('is-running', runningCount > 0);
+                        }
+
+                        // Update current task info in nav
+                        const currentEl = document.getElementById('queue-current');
+                        const indicator = document.getElementById('queue-indicator');
+                        if (currentEl && indicator) {
+                            if (runningCount > 0 && running.length > 0) {
+                                const job = running[0];
+                                currentJobId = job.id;
+                                const taskId = job.task_id;
+                                const jobType = job.job_type?.replace(/_/g, ' ') || 'job';
+                                const elapsed = formatElapsed(job.started_at);
+
+                                if (taskId) {
+                                    currentEl.innerHTML = `<a href="/ui/task/${taskId}/" class="queue-task-link">T${taskId}</a> ${elapsed}`;
+                                } else {
+                                    currentEl.textContent = `${jobType} ${elapsed}`;
+                                }
+                                indicator.classList.add('is-processing');
+
+                                if (pending > 0) {
+                                    currentEl.innerHTML += ` <span class="queue-pending-count">+${pending}</span>`;
+                                }
+                            } else if (pending > 0) {
+                                currentEl.textContent = `${pending} queued`;
+                                indicator.classList.remove('is-processing');
+                                currentJobId = null;
+                            } else {
+                                currentEl.textContent = 'Idle';
+                                indicator.classList.remove('is-processing');
+                                currentJobId = null;
+                            }
+                        }
+
+                        // Update popover if open
+                        if (popoverOpen) {
+                            updatePopover(data);
+                        }
+
+                        lastQueueStatus = data;
+                    })
+                    .catch(err => {
+                        console.error('Queue status error:', err);
+                    });
+            }
+
+            function updatePopover(data) {
+                const queue = data.queue || {};
+                const running = queue.running || [];
+                const pending = queue.pending?.total || 0;
+                const runningCount = queue.running_count || 0;
+
+                // Stats
+                document.getElementById('popover-running').textContent = runningCount;
+                document.getElementById('popover-pending').textContent = pending;
+                document.getElementById('popover-avg-wait').textContent =
+                    queue.avg_wait_seconds ? `${Math.round(queue.avg_wait_seconds)}s` : '-';
+
+                // DMR status
+                const dmrEl = document.getElementById('popover-dmr-status');
+                const dmr = data.dmr;
+                if (dmr) {
+                    if (dmr.available) {
+                        dmrEl.innerHTML = `<span class="dmr-ready">● Ready</span> <span class="dmr-models">(${dmr.models} models)</span>`;
+                    } else {
+                        dmrEl.innerHTML = `<span class="dmr-offline">● Offline</span> <span class="dmr-error">${dmr.error || ''}</span>`;
+                    }
+                }
+
+                // Director status
+                const directorEl = document.getElementById('popover-director-status');
+                const director = data.director;
+                if (director) {
+                    if (director.running) {
+                        directorEl.innerHTML = `<span class="director-running">● Running</span> <span class="director-interval">(${director.poll_interval}s)</span>`;
+                    } else {
+                        directorEl.innerHTML = `<span class="director-stopped">● Stopped</span> <button class="btn-start-director" onclick="startDirector()">Start</button>`;
+                    }
+                }
+
+                // Current job details
+                const jobSection = document.getElementById('popover-current-job');
+                const logSection = document.getElementById('popover-log-section');
+                const killBtn = document.getElementById('popover-kill-btn');
+
+                if (runningCount > 0 && running.length > 0) {
+                    const job = running[0];
+                    jobSection.style.display = 'block';
+                    killBtn.style.display = 'inline-block';
+
+                    document.getElementById('popover-job-type').textContent =
+                        job.job_type?.replace(/_/g, ' ') || '-';
+
+                    if (job.task_id) {
+                        document.getElementById('popover-job-task').innerHTML =
+                            `<a href="/ui/task/${job.task_id}/">Task #${job.task_id}</a>`;
+                    } else {
+                        document.getElementById('popover-job-task').textContent = '-';
+                    }
+
+                    if (job.project_id) {
+                        document.getElementById('popover-job-project').innerHTML =
+                            `<a href="/ui/project/${job.project_id}/">Project #${job.project_id}</a>`;
+                    } else {
+                        document.getElementById('popover-job-project').textContent = '-';
+                    }
+
+                    document.getElementById('popover-job-started').textContent = formatTime(job.started_at);
+                    document.getElementById('popover-job-elapsed').textContent = formatElapsed(job.started_at);
+
+                    // Show log section for running jobs
+                    logSection.style.display = 'block';
+                } else {
+                    jobSection.style.display = 'none';
+                    logSection.style.display = 'none';
+                    killBtn.style.display = 'none';
+                }
+
+                // Pending jobs list
+                const pendingSection = document.getElementById('popover-pending-list');
+                const nextJobsList = document.getElementById('popover-next-jobs');
+                if (pending > 0) {
+                    pendingSection.style.display = 'block';
+                    const pendingJobs = queue.pending_jobs || [];
+                    if (pendingJobs.length > 0) {
+                        nextJobsList.innerHTML = pendingJobs.map(job => {
+                            const type = job.job_type?.replace(/_/g, ' ') || 'job';
+                            const taskLink = job.task_id
+                                ? `<a href="/ui/task/${job.task_id}/">T${job.task_id}</a>`
+                                : '-';
+                            return `<li class="queue-pending-item">
+                                <span class="pending-type">${type}</span>
+                                <span class="pending-task">${taskLink}</span>
+                            </li>`;
+                        }).join('');
+                        // Add "and X more" if there are more
+                        if (pending > pendingJobs.length) {
+                            nextJobsList.innerHTML += `<li class="queue-pending-item queue-pending-more">
+                                ...and ${pending - pendingJobs.length} more
+                            </li>`;
+                        }
+                    } else {
+                        nextJobsList.innerHTML = `<li class="queue-pending-item">${pending} job${pending > 1 ? 's' : ''} waiting...</li>`;
+                    }
+                } else {
+                    pendingSection.style.display = 'none';
+                }
+            }
+
+            window.refreshQueueLog = function() {
+                const logOutput = document.getElementById('popover-log-output');
+                logOutput.textContent = 'Fetching logs...';
+
+                // Try to fetch task output if we have a task_id
+                if (lastQueueStatus?.queue?.running?.[0]?.task_id) {
+                    const taskId = lastQueueStatus.queue.running[0].task_id;
+                    fetch(`/api/tasks/${taskId}/details`)
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.task?.output) {
+                                // Show last 500 chars of output
+                                const output = data.task.output;
+                                const truncated = output.length > 500 ? '...' + output.slice(-500) : output;
+                                logOutput.textContent = truncated || 'No output yet';
+                            } else {
+                                logOutput.textContent = 'No output available';
+                            }
+                        })
+                        .catch(() => {
+                            logOutput.textContent = 'Failed to fetch logs';
+                        });
+                } else {
+                    logOutput.textContent = 'No task associated with current job';
+                }
+            };
+
+            window.killCurrentJob = function() {
+                if (!currentJobId) return;
+                if (!confirm('Kill the currently running job?')) return;
+
+                fetch(`/api/queue/jobs/${currentJobId}/kill`, { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateQueueStatus();
+                        } else {
+                            alert('Failed to kill job: ' + (data.error || 'Unknown error'));
+                        }
+                    })
+                    .catch(err => {
+                        alert('Error: ' + err.message);
+                    });
+            };
+
+            window.closeQueuePopover = function() {
+                document.getElementById('queue-popover').classList.remove('open');
+                popoverOpen = false;
+            };
+
+            window.startDirector = function() {
+                fetch('/api/director/start', { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'started' || data.status === 'already_running') {
+                            updateQueueStatus();
+                        } else {
+                            alert('Failed to start Director: ' + (data.message || 'Unknown error'));
+                        }
+                    })
+                    .catch(err => {
+                        alert('Error starting Director: ' + err.message);
+                    });
+            };
+
+            window.stopDirector = function() {
+                fetch('/api/director/stop', { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        updateQueueStatus();
+                    })
+                    .catch(err => {
+                        alert('Error stopping Director: ' + err.message);
+                    });
+            };
+
+            window.refreshLLMActivity = function() {
+                const feedEl = document.getElementById('llm-activity-feed');
+                feedEl.innerHTML = '<div class="llm-activity-loading">Loading...</div>';
+
+                fetch('/api/llm/activity?limit=5')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.activity && data.activity.length > 0) {
+                            feedEl.innerHTML = data.activity.map(item => {
+                                const roleClass = `role-${item.role}`;
+                                const typeClass = `type-${item.type}`;
+                                const statusClass = item.status ? `status-${item.status}` : '';
+                                const time = item.timestamp ? formatTime(item.timestamp) : '';
+                                const typeLabel = item.type === 'agent' ? '🤖' : item.type === 'llm' ? '💬' : '📝';
+                                return `<div class="llm-activity-item ${roleClass} ${typeClass} ${statusClass}">
+                                    <div class="llm-activity-header">
+                                        <span class="llm-activity-role">${typeLabel} ${item.role}</span>
+                                        <span class="llm-activity-model">${item.model}</span>
+                                        <span class="llm-activity-time">${time}</span>
+                                    </div>
+                                    <div class="llm-activity-summary">${escapeHtml(item.summary)}</div>
+                                </div>`;
+                            }).join('');
+                        } else {
+                            feedEl.innerHTML = '<div class="llm-activity-empty">No recent activity</div>';
+                        }
+                    })
+                    .catch(err => {
+                        feedEl.innerHTML = '<div class="llm-activity-error">Failed to load activity</div>';
+                    });
+            };
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            function togglePopover() {
+                const popover = document.getElementById('queue-popover');
+                popoverOpen = !popoverOpen;
+                popover.classList.toggle('open', popoverOpen);
+
+                if (popoverOpen && lastQueueStatus) {
+                    updatePopover(lastQueueStatus);
+                    // Auto-fetch logs if there's a running job
+                    if (lastQueueStatus.queue?.running_count > 0) {
+                        refreshQueueLog();
+                    }
+                    // Always fetch LLM activity
+                    refreshLLMActivity();
+                }
+            }
+
+            // Initialize
+            document.addEventListener('DOMContentLoaded', function() {
+                updateQueueStatus();
+                setInterval(updateQueueStatus, QUEUE_POLL_INTERVAL);
+
+                // Click handler for popover toggle
+                const queueNav = document.getElementById('queue-status-nav');
+                queueNav.addEventListener('click', function(e) {
+                    // Don't toggle if clicking links or buttons inside popover
+                    if (e.target.closest('.queue-popover a, .queue-popover button')) {
+                        return;
+                    }
+                    // Don't toggle if clicking inside popover content
+                    if (e.target.closest('.queue-popover') && popoverOpen) {
+                        return;
+                    }
+                    togglePopover();
+                });
+
+                // Close popover when clicking outside
+                document.addEventListener('click', function(e) {
+                    if (popoverOpen && !e.target.closest('.queue-status-nav')) {
+                        closeQueuePopover();
+                    }
+                });
+            });
+        })();
+    </script>
+    <script src="/static/bug-widget.js"></script>
+
+    <script>
+        // Goose web embed / control
+        (function() {
+            const GOOSE_PORT = parseInt(new URLSearchParams(window.location.search).get('port')) || 8080;
+            const statusUrl = `/api/goose/status?port=${GOOSE_PORT}`;
+            const startUrl = `/api/goose/start`;
+            const stopUrl = `/api/goose/stop`;
+
+            function el(id) { return document.getElementById(id); }
+
+            function renderControls(status) {
+                const container = document.getElementById('goose-embed-controls');
+                if (!container) return;
+
+                // If the fallback forms exist, update their status text and the open link
+                const startForm = container.querySelector('#goose-start-form');
+                const stopForm = container.querySelector('#goose-stop-form');
+                const statusText = container.querySelector('#goose-status-text');
+                const openLink = container.querySelector('#goose-open-link');
+
+                const runningText = status.running ? `Goose web running at ${status.url}` : 'Goose web not running';
+
+                if (statusText) statusText.textContent = `Goose status: ${status.running ? 'running' : 'stopped'}`;
+                if (openLink) openLink.href = status.url || `http://localhost:${GOOSE_PORT}`;
+
+                // If fallback controls are present, keep them and just update; otherwise rebuild
+                if (startForm || stopForm) {
+                    // Enable/disable buttons appropriately
+                    if (startForm) {
+                        const startBtn = startForm.querySelector('button[type="submit"]');
+                        if (startBtn) startBtn.textContent = status.running ? 'Reload / Open in new tab' : 'Start Goose Web (dev)';
+                        // Keep start form visible regardless so user can always open/restart
+                        startForm.style.display = 'inline-block';
+                    }
+                    if (stopForm) {
+                        const stopBtn = stopForm.querySelector('button[type="submit"]');
+                        if (stopBtn) stopBtn.style.display = (status.managed || status.running) ? 'inline-block' : 'none';
+                    }
+                    return;
+                }
+
+                // Otherwise, build dynamic controls (old behavior)
+                container.innerHTML = '';
+
+                const statusLine = document.createElement('div');
+                statusLine.className = 'goose-status-line';
+                statusLine.textContent = status.running ? `Goose web running at ${status.url}` : 'Goose web not running';
+                container.appendChild(statusLine);
+
+                const btnStart = document.createElement('button');
+                btnStart.className = 'goose-button';
+                btnStart.textContent = status.running ? 'Reload in new tab' : 'Start Goose Web (dev)';
+
+                btnStart.onclick = function() {
+                    if (status.running) {
+                        window.open(status.url, '_blank');
+                    } else {
+                        fetch(startUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ cwd: '{{ repo_root|escapejs }}', port: GOOSE_PORT })
+                        }).then(r => r.json()).then(resp => {
+                            if (resp.running) {
+                                embedOrOpen(resp.url);
+                            } else {
+                                alert('Failed to start Goose web: ' + (resp.error || JSON.stringify(resp)));
+                            }
+                        }).catch(e => alert('Error starting Goose: ' + e.message));
+                    }
+                };
+
+                container.appendChild(btnStart);
+
+                if (status.managed || status.running) {
+                    const btnStop = document.createElement('button');
+                    btnStop.className = 'goose-button';
+                    btnStop.textContent = 'Stop (managed)';
+                    btnStop.onclick = function() {
+                        fetch(stopUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ port: GOOSE_PORT })
+                        }).then(r => r.json()).then(() => {
+                            location.reload();
+                        }).catch(e => alert('Error stopping Goose: ' + e.message));
+                    };
+                    container.appendChild(btnStop);
+                }
+
+                const openBtn = document.createElement('a');
+                openBtn.className = 'goose-button';
+                openBtn.textContent = 'Open in new tab';
+                openBtn.href = status.url;
+                openBtn.target = '_blank';
+                container.appendChild(openBtn);
+            }
+
+            function embedOrOpen(url) {
+                // Try to iframe; if cross-origin blocked, open new tab
+                const iframeContainer = document.getElementById('goose-iframe-container');
+                if (!iframeContainer) return window.open(url, '_blank');
+
+                // Clear
+                iframeContainer.innerHTML = '';
+                try {
+                    const iframe = document.createElement('iframe');
+                    iframe.src = url;
+                    iframe.style.width = '100%';
+                    iframe.style.height = '800px';
+                    iframe.style.border = '1px solid var(--border)';
+                    iframeContainer.appendChild(iframe);
+
+                    // Test for cross-origin: try to access iframe.location
+                    iframe.onload = function() {
+                        try {
+                            const _ = iframe.contentWindow.location.href; // may throw
+                        } catch (e) {
+                            // Cross-origin - fallback to open
+                            iframeContainer.innerHTML = '';
+                            window.open(url, '_blank');
+                        }
+                    };
+                } catch (e) {
+                    window.open(url, '_blank');
+                }
+            }
+
+            function checkStatus() {
+                fetch(statusUrl).then(r => r.json()).then(status => {
+                    renderControls(status);
+                    if (status.running) {
+                        // Auto-embed by default if same-origin
+                        const sameOrigin = status.url.startsWith(window.location.origin);
+                        if (sameOrigin) {
+                            embedOrOpen(status.url);
+                        } else {
+                            // Show notice that cross-origin may block iframe
+                            const note = document.getElementById('goose-embed-note');
+                            if (note) note.style.display = 'block';
+                        }
+                    } else {
+                        // If not running, optionally auto-start when ?autostart=1 is present
+                        const params = new URLSearchParams(window.location.search);
+                        const auto = params.get('autostart');
+                        if (auto === '1') {
+                            // Start it via API (post cwd and port)
+                            fetch(startUrl, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ cwd: '{{ repo_root|escapejs }}', port: GOOSE_PORT })
+                            }).then(r => r.json()).then(resp => {
+                                if (resp.running) {
+                                    // Embed or open depending on CORS
+                                    embedOrOpen(resp.url);
+                                    // Re-render controls with new status
+                                    renderControls({ running: true, managed: resp.managed || false, url: resp.url });
+                                } else {
+                                    console.warn('Auto-start failed:', resp);
+                                }
+                            }).catch(e => console.warn('Auto-start error:', e));
+                        }
+                     }
+                 }).catch(err => {
+                     console.error('Goose status error', err);
+                 });
+             }
+
+             document.addEventListener('DOMContentLoaded', function() {
+                 checkStatus();
+             });
+
+             // Hidden iframe onload handler to show API responses from form posts
+            document.addEventListener('DOMContentLoaded', function() {
+                const ifr = document.getElementsByName('goose-hidden-target')[0];
+                if (ifr) {
+                    ifr.onload = function() {
+                        try {
+                            const bodyText = ifr.contentDocument && ifr.contentDocument.body ? ifr.contentDocument.body.textContent : '';
+                            if (!bodyText) return;
+                            const json = JSON.parse(bodyText);
+                            const statusText = document.getElementById('goose-status-text');
+                            if (json.running !== undefined) {
+                                if (statusText) statusText.textContent = json.running ? `Goose running at ${json.url}` : `Goose stopped`;
+                            } else if (json.stopped) {
+                                if (statusText) statusText.textContent = json.stopped ? 'Goose stopped' : statusText.textContent;
+                            }
+                        } catch (e) {
+                            // ignore parse errors
+                        }
+                    };
+                }
+            });
+         })();
+    </script>
+</body>
+</html>

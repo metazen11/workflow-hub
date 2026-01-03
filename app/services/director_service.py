@@ -25,6 +25,8 @@ from app.models.run import Run, RunState
 from app.models.project import Project
 from app.models.report import AgentReport, AgentRole, ReportStatus
 from app.models.audit import log_event
+from app.services.quality_requirements_service import load_quality_requirements
+from django.conf import settings
 
 
 # Default acceptance criteria templates by task type pattern
@@ -64,6 +66,7 @@ class DirectorService:
     # Pipeline stage progression
     STAGE_ORDER = [
         TaskPipelineStage.NONE,
+        TaskPipelineStage.PM,
         TaskPipelineStage.DEV,
         TaskPipelineStage.QA,
         TaskPipelineStage.SEC,
@@ -73,6 +76,7 @@ class DirectorService:
 
     # Map stages to agent roles
     STAGE_TO_AGENT = {
+        TaskPipelineStage.PM: AgentRole.PM,
         TaskPipelineStage.DEV: AgentRole.DEV,
         TaskPipelineStage.QA: AgentRole.QA,
         TaskPipelineStage.SEC: AgentRole.SECURITY,
@@ -188,22 +192,16 @@ class DirectorService:
         if not project:
             return (False, "Project not found", None)
 
-        # Create or get run for this task
-        run = None
-        if task.run_id:
-            run = self.db.query(Run).filter(Run.id == task.run_id).first()
-
-        if not run:
-            # Create a new run for this task
-            from app.services.run_service import RunService
-            run_service = RunService(self.db)
-            run = run_service.create_run(
-                project_id=project.id,
-                name=f"Execute Task: {task.task_id} - {task.title[:50]}",
-                actor="director"
-            )
-            task.run_id = run.id
-            self.db.commit()
+        # Create a new run for this task
+        # NOTE: task.run_id removed in refactor - always create new run per task execution
+        from app.services.run_service import RunService
+        run_service = RunService(self.db)
+        run = run_service.create_run(
+            project_id=project.id,
+            name=f"Execute Task: {task.task_id} - {task.title[:50]}",
+            actor="director"
+        )
+        self.db.commit()
 
         # Get project path
         project_path = project.repo_path or os.path.join(
@@ -212,7 +210,20 @@ class DirectorService:
             project.name.lower().replace(" ", "_")
         )
 
-        # Spawn agent_runner in background thread
+        # Determine agent role based on pipeline stage
+        stage = task.pipeline_stage
+        if stage == TaskPipelineStage.DEV:
+            agent_role = "dev"
+        elif stage == TaskPipelineStage.QA:
+            agent_role = "qa"
+        elif stage == TaskPipelineStage.SEC:
+            agent_role = "security"
+        elif stage == TaskPipelineStage.DOCS:
+            agent_role = "docs"
+        else:
+            agent_role = "pm"  # Default to PM for planning stages
+
+        # Spawn agent_runner in background thread using task-centric mode
         def run_agent():
             try:
                 agent_runner_path = os.path.join(
@@ -220,11 +231,24 @@ class DirectorService:
                     "scripts",
                     "agent_runner.py"
                 )
-                subprocess.run(
-                    ["python", agent_runner_path, str(run.id), project_path],
+                # Use task command for task-centric execution with work_cycle API
+                cmd = [
+                    "python", agent_runner_path, "task",
+                    "--agent", agent_role,
+                    "--task-id", str(task.id),
+                    "--run-id", str(run.id),
+                    "--project-path", project_path
+                ]
+                print(f"[Agent] Running: {' '.join(cmd)}")
+                result = subprocess.run(
+                    cmd,
                     timeout=1800,  # 30 minute timeout
-                    capture_output=True
+                    capture_output=True,
+                    text=True
                 )
+                if result.returncode != 0:
+                    print(f"[Agent] stderr: {result.stderr}")
+                print(f"[Agent] stdout: {result.stdout[:500] if result.stdout else 'empty'}")
             except Exception as e:
                 print(f"Agent execution error for task {task.task_id}: {e}")
 
@@ -307,8 +331,12 @@ class DirectorService:
             Task.pipeline_stage != TaskPipelineStage.COMPLETE
         )
 
+        # NOTE: Task.run_id removed in refactor - filter by project of the run if run_id provided
         if run_id:
-            query = query.filter(Task.run_id == run_id)
+            from app.models.run import Run
+            run = self.db.query(Run).filter(Run.id == run_id).first()
+            if run:
+                query = query.filter(Task.project_id == run.project_id)
 
         # Order by priority (higher first), then by stage (further along first)
         tasks = query.order_by(
@@ -356,6 +384,17 @@ class DirectorService:
             # Unknown stage, start from DEV
             next_stage = TaskPipelineStage.DEV
 
+        # Prevent completion if subtasks are incomplete
+        if next_stage == TaskPipelineStage.COMPLETE and self._has_incomplete_subtasks(task):
+            return False, "Cannot complete task with incomplete subtasks"
+
+        # Apply configured subtask templates for this transition
+        created_count = self._apply_subtask_templates(task, current_stage, next_stage)
+        if created_count:
+            return False, "Subtasks created for this transition; complete them before advancing"
+        if self._has_incomplete_subtasks(task):
+            return False, "Awaiting subtask completion before advancing"
+
         # Update task
         old_stage = task.pipeline_stage
         task.pipeline_stage = next_stage
@@ -383,6 +422,128 @@ class DirectorService:
         )
 
         return True, f"Advanced from {old_stage.value if old_stage else 'none'} to {next_stage.value}"
+
+    def _has_incomplete_subtasks(self, task: Task) -> bool:
+        """Return True if any subtasks are not done."""
+        return any(subtask.status != TaskStatus.DONE for subtask in (task.subtasks or []))
+
+    def _apply_subtask_templates(
+        self,
+        task: Task,
+        current_stage: TaskPipelineStage,
+        next_stage: TaskPipelineStage
+    ) -> int:
+        """Create subtasks based on configured pipeline templates for a transition."""
+        templates = self._get_subtask_templates(task.project_id)
+        if not templates:
+            return 0
+
+        created = 0
+        existing_titles = {subtask.title for subtask in (task.subtasks or [])}
+        transition_from = (current_stage.value if current_stage else "none").lower()
+        transition_to = (next_stage.value if next_stage else "none").lower()
+
+        for template in templates:
+            if template.get("trigger_from") != transition_from:
+                continue
+            if template.get("trigger_to") != transition_to:
+                continue
+
+            requirements = template.get("template_items")
+            if not isinstance(requirements, list):
+                template_path = template.get("template_path")
+                if template_path and not os.path.isabs(template_path):
+                    template_path = os.path.join(settings.BASE_DIR, template_path)
+                requirements = load_quality_requirements(template_path)
+            if not requirements:
+                continue
+
+            auto_stage = template.get("auto_assign_stage", "dev").lower()
+            try:
+                stage_enum = TaskPipelineStage.get_stage_map().get(auto_stage.upper()) or TaskPipelineStage.DEV
+            except Exception:
+                stage_enum = TaskPipelineStage.DEV
+
+            for requirement in requirements:
+                title = requirement.get("subtask_title") or f"Subtask: {requirement.get('title', 'Check')}"
+                if title in existing_titles:
+                    continue
+
+                subtask = Task(
+                    project_id=task.project_id,
+                    task_id=self._next_task_id(task.project_id),
+                    title=title,
+                    description=requirement.get("description", ""),
+                    status=TaskStatus.BACKLOG,
+                    priority=task.priority,
+                    pipeline_stage=stage_enum,
+                    acceptance_criteria=requirement.get("acceptance_criteria", []),
+                    parent_task_id=task.id
+                )
+                self.db.add(subtask)
+                if template.get("inherit_requirements", True) and task.requirements:
+                    subtask.requirements.extend(task.requirements)
+                created += 1
+
+        if created:
+            self.db.commit()
+            log_event(
+                self.db,
+                actor="director",
+                action="create_subtasks_from_template",
+                entity_type="task",
+                entity_id=task.id,
+                details={"count": created, "task_id": task.task_id}
+            )
+
+        return created
+
+    def _get_subtask_templates(self, project_id: int) -> list:
+        """Load subtask templates from active pipeline config or defaults."""
+        try:
+            from app.models.pipeline_config import PipelineConfig
+            config = self.db.query(PipelineConfig).filter(
+                PipelineConfig.project_id == project_id,
+                PipelineConfig.is_active == True
+            ).order_by(PipelineConfig.version.desc()).first()
+
+            if config:
+                if isinstance(config.settings, dict):
+                    templates = config.settings.get("subtask_templates")
+                    if isinstance(templates, list):
+                        return templates
+                if isinstance(config.nodes, list):
+                    node_templates = []
+                    for node in config.nodes:
+                        if node.get("type") != "subtask":
+                            continue
+                        data = node.get("data") or {}
+                        node_templates.append({
+                            "trigger_from": (data.get("triggerFrom") or "pm").lower(),
+                            "trigger_to": (data.get("triggerTo") or "dev").lower(),
+                            "template_path": data.get("templatePath") or "config/qa_requirements.json",
+                            "template_items": data.get("templateItems") if isinstance(data.get("templateItems"), list) else None,
+                            "auto_assign_stage": (data.get("autoAssignStage") or "dev").lower(),
+                            "inherit_requirements": bool(data.get("inheritRequirements", True)),
+                        })
+                    if node_templates:
+                        return node_templates
+        except Exception:
+            pass
+
+        # Default template (PM -> DEV)
+        return [{
+            "trigger_from": "pm",
+            "trigger_to": "dev",
+            "template_path": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "qa_requirements.json"),
+            "auto_assign_stage": "dev",
+            "inherit_requirements": True
+        }]
+
+    def _next_task_id(self, project_id: int) -> str:
+        """Generate next task_id for a project."""
+        count = self.db.query(Task).filter(Task.project_id == project_id).count()
+        return f"T{count + 1:03d}"
 
     def _loop_back_to_dev(self, task: Task, report: AgentReport) -> Tuple[bool, str]:
         """Loop a task back to DEV stage after failure.
@@ -463,8 +624,12 @@ class DirectorService:
         """
         query = self.db.query(Task).filter(Task.pipeline_stage == stage)
 
+        # NOTE: Task.run_id removed in refactor - filter by project of the run if run_id provided
         if run_id:
-            query = query.filter(Task.run_id == run_id)
+            from app.models.run import Run
+            run = self.db.query(Run).filter(Run.id == run_id).first()
+            if run:
+                query = query.filter(Task.project_id == run.project_id)
 
         return query.order_by(Task.priority.desc()).all()
 
@@ -477,7 +642,12 @@ class DirectorService:
         Returns:
             Dict with stage counts and completion percentage
         """
-        tasks = self.db.query(Task).filter(Task.run_id == run_id).all()
+        # NOTE: Task.run_id removed in refactor - get tasks by project of the run
+        from app.models.run import Run
+        run = self.db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return {"total": 0, "stages": {}, "percent_complete": 0}
+        tasks = self.db.query(Task).filter(Task.project_id == run.project_id).all()
 
         if not tasks:
             return {"total": 0, "stages": {}, "percent_complete": 0}
@@ -521,9 +691,14 @@ class DirectorService:
         triggered_tasks = []
         processed = 0
 
-        # Get all active tasks for this run (include NULL pipeline_stage)
+        # Get all active tasks for this run's project (include NULL pipeline_stage)
+        # NOTE: Task.run_id removed in refactor - get tasks by project of the run
+        from app.models.run import Run
+        run = self.db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return {"work_queue": [], "enriched": [], "triggered": [], "message": "Run not found"}
         tasks = self.db.query(Task).filter(
-            Task.run_id == run_id,
+            Task.project_id == run.project_id,
             Task.status != TaskStatus.DONE
         ).order_by(Task.priority.desc()).limit(max_tasks).all()
 
@@ -661,11 +836,8 @@ class TaskOrchestrator:
         """Check if task has a passing agent report for the current stage.
 
         This is where we'd check for proof-of-work or agent reports.
-        For now, we check the AgentReport table for this task's run.
+        NOTE: task.run_id removed in refactor - check reports for recent project runs.
         """
-        if not task.run_id:
-            return False
-
         # Map stage to role
         stage_to_role = {
             TaskPipelineStage.DEV: AgentRole.DEV,
@@ -678,14 +850,21 @@ class TaskOrchestrator:
         if not role:
             return False
 
-        # Look for a passing report from this agent
-        report = self.db.query(AgentReport).filter(
-            AgentReport.run_id == task.run_id,
-            AgentReport.role == role,
-            AgentReport.status == ReportStatus.PASS
-        ).order_by(AgentReport.created_at.desc()).first()
+        # Get recent runs for this project and look for passing reports
+        recent_runs = self.db.query(Run).filter(
+            Run.project_id == task.project_id
+        ).order_by(Run.created_at.desc()).limit(5).all()
 
-        return report is not None
+        for run in recent_runs:
+            report = self.db.query(AgentReport).filter(
+                AgentReport.run_id == run.id,
+                AgentReport.role == role,
+                AgentReport.status == ReportStatus.PASS
+            ).order_by(AgentReport.created_at.desc()).first()
+            if report:
+                return True
+
+        return False
 
     def auto_start_backlog_tasks(self, max_to_start: int = 2) -> List[Dict]:
         """Auto-start BACKLOG tasks if there's bandwidth.
@@ -898,9 +1077,11 @@ class TaskOrchestrator:
 
         # Find tasks that are IN_PROGRESS but don't have an active run
         # or have a run that's in a failed/stuck state
+        # Include PM stage for planning/scoping work
         tasks = self.db.query(Task).filter(
             Task.status == TaskStatus.IN_PROGRESS,
             Task.pipeline_stage.in_([
+                TaskPipelineStage.PM,
                 TaskPipelineStage.DEV,
                 TaskPipelineStage.QA,
                 TaskPipelineStage.SEC,
@@ -913,17 +1094,25 @@ class TaskOrchestrator:
             if count >= max_triggers:
                 break
 
-            # Check if task already has an active run
-            if task.run_id:
-                run = self.db.query(Run).filter(Run.id == task.run_id).first()
-                if run and not run.killed:
-                    # Check if run is in a non-terminal state (still active)
-                    active_states = [
-                        RunState.PM, RunState.DEV, RunState.QA, RunState.SEC,
-                        RunState.DOCS, RunState.TESTING
-                    ]
-                    if run.state in active_states:
-                        continue  # Skip - already has active run
+            # Check if task already has an active run for its project
+            # NOTE: Task.run_id removed in refactor - check recent project runs instead
+            recent_runs = self.db.query(Run).filter(
+                Run.project_id == task.project_id,
+                Run.killed == False
+            ).order_by(Run.created_at.desc()).limit(3).all()
+
+            has_active_run = False
+            for run in recent_runs:
+                active_states = [
+                    RunState.PM, RunState.DEV, RunState.QA, RunState.SEC,
+                    RunState.DOCS, RunState.TESTING
+                ]
+                if run.state in active_states:
+                    has_active_run = True
+                    break
+
+            if has_active_run:
+                continue  # Skip - already has active run for this project
 
             # Validate task is ready
             is_ready, issues = self.director.validate_task_readiness(task)
@@ -957,6 +1146,7 @@ def run_director_daemon(db_getter, run_id: int = None, poll_interval: int = 30, 
     - Triggers agents for tasks that need work
     - Retries stuck tasks (up to 3 times, 5 min intervals)
     - Blocks tasks that exceed retry limits
+    - Updates database heartbeat for status monitoring
 
     Args:
         db_getter: Function that returns a database session
@@ -980,6 +1170,13 @@ def run_director_daemon(db_getter, run_id: int = None, poll_interval: int = 30, 
     while True:
         try:
             db = next(db_getter())
+
+            # Update heartbeat in database for status monitoring
+            try:
+                from app.models.director_settings import DirectorSettings
+                DirectorSettings.update_heartbeat(db)
+            except Exception as e:
+                print(f"Failed to update heartbeat: {e}")
 
             # Initialize or update orchestrator with fresh db session
             if orchestrator is None:

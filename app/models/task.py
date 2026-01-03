@@ -1,37 +1,45 @@
-"""Task model."""
+"""Task model - Simplified for core refactor.
+
+Tasks are the primary unit of work. They:
+- Belong to a Project
+- Have Claims that define what must be true when done
+- Have WorkCycles that track agent work sessions
+- Have simple states: BACKLOG → IN_PROGRESS → VALIDATING → DONE
+
+Pipeline stages (PM, DEV, QA, SEC) are deprecated - claims define validation.
+"""
 import enum
-from typing import List, Optional
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum, Table, JSON, Boolean
+from typing import Optional
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum, JSON, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship, Session
 from app.db import Base
 
 
 class TaskStatus(enum.Enum):
-    """Task status values."""
-    BACKLOG = "backlog"
-    IN_PROGRESS = "in_progress"
-    BLOCKED = "blocked"
-    DONE = "done"
-    FAILED = "failed"  # Added for workflow queue
+    """Task status values - simplified."""
+    BACKLOG = "backlog"          # Not started
+    IN_PROGRESS = "in_progress"  # Agent working
+    VALIDATING = "validating"    # Running claim tests
+    BLOCKED = "blocked"          # Waiting on dependencies
+    DONE = "done"                # Complete, claims validated
+    FAILED = "failed"            # Claims failed, needs investigation
 
 
 class TaskPipelineStage(enum.Enum):
     """Pipeline stage a task is currently in.
 
-    Each stage has a value (db storage) and a label (UI display).
-    When adding new stages, add them here and the UI will auto-update.
+    DEPRECATED: Pipeline stages are being replaced by claim-based validation.
+    Kept for backward compatibility during migration.
 
     Pipeline flow: NONE → PM → DEV → QA → SEC → DOCS → COMPLETE
-
-    NOTE: Values must be UPPERCASE to match PostgreSQL native enum storage.
     """
-    NONE = "NONE"  # Not in pipeline yet (backlog)
-    PM = "PM"  # Being planned/defined by PM agent (requirements, acceptance criteria)
-    DEV = "DEV"  # Being implemented by DEV agent
-    QA = "QA"  # Being tested by QA agent
-    SEC = "SEC"  # Being reviewed by Security agent
-    DOCS = "DOCS"  # Documentation stage
+    NONE = "NONE"      # Not in pipeline yet (backlog)
+    PM = "PM"          # Planning/definition
+    DEV = "DEV"        # Implementation
+    QA = "QA"          # Testing
+    SEC = "SEC"        # Security review
+    DOCS = "DOCS"      # Documentation
     COMPLETE = "COMPLETE"  # Passed all stages
 
     @property
@@ -50,12 +58,7 @@ class TaskPipelineStage(enum.Enum):
 
     @classmethod
     def get_stage_map(cls) -> dict:
-        """Build stage map for API lookups (case-insensitive).
-
-        Returns dict mapping uppercase stage values to enum members.
-        Use: stage_map = TaskPipelineStage.get_stage_map()
-             stage = stage_map.get(user_input.upper())
-        """
+        """Build stage map for API lookups (case-insensitive)."""
         return {stage.value.upper(): stage for stage in cls}
 
     @classmethod
@@ -64,55 +67,51 @@ class TaskPipelineStage(enum.Enum):
         return [stage.value.lower() for stage in cls]
 
 
-# Association table for Task <-> Requirement many-to-many
-task_requirements = Table(
-    "task_requirements",
-    Base.metadata,
-    Column("task_id", Integer, ForeignKey("tasks.id"), primary_key=True),
-    Column("requirement_id", Integer, ForeignKey("requirements.id"), primary_key=True),
-)
-
-
 class Task(Base):
-    """A task (T1, T2, etc.) linked to requirements."""
+    """A task - the primary unit of work."""
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    task_id = Column(String(20), nullable=False)  # e.g., "T1", "T2"
+    task_id = Column(String(20), nullable=False)  # e.g., "T001", "T002"
     title = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
-    acceptance_criteria = Column(JSON, default=list)  # List of testable criteria
     status = Column(Enum(TaskStatus), default=TaskStatus.BACKLOG)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    # Workflow queue fields
+    # Priority and blocking
     priority = Column(Integer, default=5)  # 1-10, higher = more important
     blocked_by = Column(JSON, default=list)  # List of task_ids that must complete first
-    run_id = Column(Integer, ForeignKey("runs.id"), nullable=True)  # Link to workflow run
-    pipeline_stage = Column(Enum(TaskPipelineStage), default=TaskPipelineStage.NONE)  # Current pipeline stage
-    completed = Column(Boolean, default=False)  # Explicit completion flag for memory/history
-    completed_at = Column(DateTime(timezone=True), nullable=True)  # When task was completed
+
+    # Legacy fields (kept for backward compatibility)
+    # NOTE: run_id dropped in refactor migration - Run model deprecated
+    pipeline_stage = Column(Enum(TaskPipelineStage), default=TaskPipelineStage.NONE)
+    acceptance_criteria = Column(JSON, default=list)
+
+    # Completion tracking
+    completed = Column(Boolean, default=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Claim validation summary (denormalized for quick access)
+    claims_total = Column(Integer, default=0)
+    claims_validated = Column(Integer, default=0)
+    claims_failed = Column(Integer, default=0)
+
+    parent_task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     project = relationship("Project", back_populates="tasks")
-    requirements = relationship("Requirement", secondary=task_requirements, back_populates="tasks")
-    run = relationship("Run", backref="tasks")
+    requirements = relationship("Requirement", secondary="task_requirements", back_populates="tasks")
+    parent = relationship("Task", remote_side=[id], back_populates="subtasks")
+    subtasks = relationship("Task", back_populates="parent")
+    # work_cycles and claims relationships defined via backref
 
     def is_blocked(self, session: Session) -> bool:
-        """Check if this task is blocked by incomplete dependencies.
-
-        Args:
-            session: SQLAlchemy session for querying dependency status
-
-        Returns:
-            True if any dependency task is not DONE, False otherwise
-        """
+        """Check if this task is blocked by incomplete dependencies."""
         if not self.blocked_by:
             return False
 
-        # Query for all blocking tasks that are not DONE
         blocking_tasks = session.query(Task).filter(
             Task.project_id == self.project_id,
             Task.task_id.in_(self.blocked_by),
@@ -123,6 +122,7 @@ class Task(Base):
 
     def to_dict(self) -> dict:
         """Serialize task to dictionary."""
+        effective_requirements = self.get_effective_requirements()
         return {
             "id": self.id,
             "project_id": self.project_id,
@@ -130,13 +130,43 @@ class Task(Base):
             "title": self.title,
             "description": self.description,
             "status": self.status.value if self.status else None,
-            "pipeline_stage": self.pipeline_stage.value if self.pipeline_stage else "none",
+            "pipeline_stage": self.pipeline_stage.value if self.pipeline_stage else "NONE",
             "priority": self.priority,
             "blocked_by": self.blocked_by or [],
-            "run_id": self.run_id,
+            "parent_task_id": self.parent_task_id,
+            "subtask_count": len(self.subtasks) if self.subtasks else 0,
             "completed": self.completed,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
-            "requirement_ids": [r.req_id for r in self.requirements],
+            "acceptance_criteria": self.acceptance_criteria or [],
+            "claims_total": self.claims_total,
+            "claims_validated": self.claims_validated,
+            "claims_failed": self.claims_failed,
+            "effective_requirement_ids": [req.req_id for req in effective_requirements],
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+    def to_summary(self) -> dict:
+        """Compact format for listings."""
+        return {
+            "id": self.id,
+            "task_id": self.task_id,
+            "title": self.title,
+            "status": self.status.value if self.status else None,
+            "priority": self.priority,
+            "claims_total": self.claims_total,
+            "claims_validated": self.claims_validated,
+        }
+
+    def get_effective_requirements(self):
+        """Return requirements inherited from parent tasks (deduped)."""
+        effective = list(self.requirements or [])
+        seen_ids = {req.id for req in effective}
+        parent = self.parent
+        while parent:
+            for req in parent.requirements or []:
+                if req.id not in seen_ids:
+                    effective.append(req)
+                    seen_ids.add(req.id)
+            parent = parent.parent
+        return effective

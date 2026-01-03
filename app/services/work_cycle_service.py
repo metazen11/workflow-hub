@@ -1,10 +1,10 @@
-"""Handoff service for building agent context from DB and git.
+"""WorkCycle service for building agent context from DB and git.
 
 This service generates context for each agent run by:
 1. Querying DB for previous agent reports
 2. Getting recent git commits
 3. Building role-specific expectations
-4. Optionally writing to _spec/HANDOFF.md for file-based interface
+4. Optionally writing to _spec/WORK_CYCLE.md for file-based interface
 """
 import subprocess
 from datetime import datetime
@@ -106,7 +106,7 @@ def get_git_diff_summary(repo_path: str) -> str:
     return ""
 
 
-def build_handoff_context(
+def build_work_cycle_context(
     db: Session,
     run_id: int,
     role: str,
@@ -114,7 +114,7 @@ def build_handoff_context(
     include_raw_output: bool = False,
     max_report_chars: int = 2000
 ) -> str:
-    """Build comprehensive handoff context from DB and git.
+    """Build comprehensive work_cycle context from DB and git.
 
     Args:
         db: SQLAlchemy session
@@ -130,21 +130,27 @@ def build_handoff_context(
     # Get run and project
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
-        return f"# Handoff Context\nRun {run_id} not found."
+        return f"# WorkCycle Context\nRun {run_id} not found."
 
     project = db.query(Project).filter(Project.id == run.project_id).first()
     if not project:
-        return f"# Handoff Context\nProject not found for run {run_id}."
+        return f"# WorkCycle Context\nProject not found for run {run_id}."
 
-    # Get specific task or all tasks for this run
+    # Get specific task or all tasks for this run's project
+    # NOTE: Task.run_id removed in refactor - get tasks from project
     if task_id:
         task = db.query(Task).filter(
-            Task.run_id == run_id,
+            Task.project_id == run.project_id,
             Task.task_id == task_id
         ).first()
         tasks = [task] if task else []
     else:
-        tasks = db.query(Task).filter(Task.run_id == run_id).all()
+        # Get in-progress tasks for this project
+        from app.models.task import TaskStatus
+        tasks = db.query(Task).filter(
+            Task.project_id == run.project_id,
+            Task.status == TaskStatus.IN_PROGRESS
+        ).all()
 
     # Get all agent reports for this run, ordered by creation
     reports = db.query(AgentReport).filter(
@@ -177,7 +183,7 @@ def build_handoff_context(
 
     # Header
     task_label = f" | Task: {task_id}" if task_id else ""
-    sections.append(f"""# Handoff Context
+    sections.append(f"""# WorkCycle Context
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 Run ID: {run_id} | Project: {project.name}{task_label}
 """)
@@ -286,6 +292,40 @@ and {loopback_stage} found problems. Your job is to FIX these specific issues.
             else:
                 sections.append("No acceptance criteria defined.")
 
+            # Parent task context (if this is a subtask)
+            if getattr(task, "parent", None):
+                parent = task.parent
+                parent_status = parent.status.value if parent.status else "unknown"
+                parent_stage = parent.pipeline_stage.value if parent.pipeline_stage else "none"
+                sections.append(f"""
+### Parent Task Context: {parent.task_id}
+**Title**: {parent.title}
+**Status**: {parent_status}
+**Pipeline Stage**: {parent_stage}
+
+#### Parent Description
+{parent.description or 'No description provided.'}
+""")
+                if parent.acceptance_criteria:
+                    sections.append("#### Parent Acceptance Criteria")
+                    for i, criteria in enumerate(parent.acceptance_criteria, 1):
+                        sections.append(f"{i}. {criteria}")
+                else:
+                    sections.append("#### Parent Acceptance Criteria\nNo acceptance criteria defined.")
+
+            # Effective requirements (including inherited)
+            effective_requirements = []
+            try:
+                effective_requirements = task.get_effective_requirements()
+            except Exception:
+                effective_requirements = []
+            if effective_requirements:
+                sections.append("### Requirements (Inherited Included)")
+                for req in effective_requirements:
+                    req_id = getattr(req, "req_id", None) or f"R{req.id}"
+                    title = getattr(req, "title", None) or "Untitled requirement"
+                    sections.append(f"- {req_id}: {title}")
+
             # Show blocking dependencies
             if task.blocked_by:
                 sections.append(f"\n**Blocked By**: {', '.join(task.blocked_by)}")
@@ -299,7 +339,7 @@ and {loopback_stage} found problems. Your job is to FIX these specific issues.
                 sections.append(f"- **{task.task_id}**: {task.title} [{status}] (stage: {stage})")
             sections.append("")
 
-    # Previous agent reports - the key handoff data
+    # Previous agent reports - the key work_cycle data
     if reports:
         sections.append("## Previous Agent Work")
         for report in reports:
@@ -375,7 +415,7 @@ def _format_details(details: dict) -> str:
     return "\n".join(lines)
 
 
-def write_handoff_file(
+def write_work_cycle_file(
     db: Session,
     run_id: int,
     role: str,
@@ -383,9 +423,9 @@ def write_handoff_file(
     task_id: Optional[str] = None,
     include_raw_output: bool = False
 ) -> str:
-    """Write handoff context to task-specific file (READ-ONLY for agents).
+    """Write work_cycle context to task-specific file (READ-ONLY for agents).
 
-    Creates: _spec/HANDOFF_{run_id}_{task_id}.md
+    Creates: _spec/WORK_CYCLE_{run_id}_{task_id}.md
     This file is generated fresh before each agent run and should NOT
     be modified by agents. Agents output via the report API instead.
 
@@ -394,30 +434,30 @@ def write_handoff_file(
         run_id: Current run ID
         role: Agent role about to execute
         project_path: Path to project repository
-        task_id: Optional task ID for task-specific handoff
+        task_id: Optional task ID for task-specific work_cycle
         include_raw_output: Include full raw output
 
     Returns:
         Path to written file
     """
-    context = build_handoff_context(db, run_id, role, task_id=task_id, include_raw_output=include_raw_output)
+    context = build_work_cycle_context(db, run_id, role, task_id=task_id, include_raw_output=include_raw_output)
 
     spec_dir = Path(project_path) / "_spec"
     spec_dir.mkdir(exist_ok=True)
 
     # Task-specific filename to avoid conflicts
     if task_id:
-        filename = f"HANDOFF_{run_id}_{task_id}.md"
+        filename = f"WORK_CYCLE_{run_id}_{task_id}.md"
     else:
-        filename = f"HANDOFF_{run_id}.md"
+        filename = f"WORK_CYCLE_{run_id}.md"
 
-    handoff_path = spec_dir / filename
-    handoff_path.write_text(context)
+    work_cycle_path = spec_dir / filename
+    work_cycle_path.write_text(context)
 
-    return str(handoff_path)
+    return str(work_cycle_path)
 
 
-def get_handoff_for_prompt(
+def get_work_cycle_for_prompt(
     db: Session,
     run_id: int,
     role: str,
@@ -426,10 +466,10 @@ def get_handoff_for_prompt(
     write_file: bool = True,
     include_images: bool = None
 ) -> str:
-    """Get handoff context and optionally write to task-specific file.
+    """Get work_cycle context and optionally write to task-specific file.
 
     This is the main entry point for agent_runner integration.
-    Creates READ-ONLY handoff files that agents should not modify.
+    Creates READ-ONLY work_cycle files that agents should not modify.
 
     Args:
         db: SQLAlchemy session
@@ -437,13 +477,13 @@ def get_handoff_for_prompt(
         role: Agent role about to execute
         project_path: Path to project
         task_id: Optional task ID for task-specific context
-        write_file: Whether to write handoff file
+        write_file: Whether to write work_cycle file
         include_images: Whether to enrich with image descriptions (None = check settings)
 
     Returns:
         Context string for agent prompt
     """
-    context = build_handoff_context(db, run_id, role, task_id=task_id, include_raw_output=False)
+    context = build_work_cycle_context(db, run_id, role, task_id=task_id, include_raw_output=False)
 
     # Enrich with image descriptions if enabled
     if include_images is None:
@@ -463,22 +503,22 @@ def get_handoff_for_prompt(
 
     if write_file:
         try:
-            filepath = write_handoff_file(
+            filepath = write_work_cycle_file(
                 db, run_id, role, project_path,
                 task_id=task_id, include_raw_output=True
             )
-            print(f"Wrote handoff file: {filepath}")
+            print(f"Wrote work_cycle file: {filepath}")
         except Exception as e:
-            print(f"Warning: Could not write handoff file: {e}")
+            print(f"Warning: Could not write work_cycle file: {e}")
 
     return context
 
 
 # =============================================================================
-# Handoff CRUD Operations (Database-backed)
+# WorkCycle CRUD Operations (Database-backed)
 # =============================================================================
 
-def create_handoff(
+def create_work_cycle(
     db: Session,
     task_id: int,
     to_role: str,
@@ -488,27 +528,27 @@ def create_handoff(
     from_role: str = None,
     created_by: str = "system",
     write_file: bool = True
-) -> "Handoff":
-    """Create a new handoff for a task.
+) -> "WorkCycle":
+    """Create a new work_cycle for a task.
 
-    Builds context from previous handoffs, reports, and proofs,
+    Builds context from previous work_cycles, reports, and proofs,
     then stores in DB and optionally writes to file.
 
     Args:
         db: SQLAlchemy session
-        task_id: Task to create handoff for
+        task_id: Task to create work_cycle for
         to_role: Agent role that should pick this up
         stage: Pipeline stage (dev, qa, sec, docs, pm)
         project_id: Project ID (auto-detected from task if not provided)
         run_id: Optional run ID for context
-        from_role: Previous agent role (null if first handoff)
+        from_role: Previous agent role (null if first work_cycle)
         created_by: Who created this (system, human, auto-trigger)
         write_file: Whether to write context to file
 
     Returns:
-        Created Handoff record
+        Created WorkCycle record
     """
-    from app.models.handoff import Handoff, HandoffStatus
+    from app.models.work_cycle import WorkCycle, WorkCycleStatus
     from app.models.task import Task
 
     # Get task to auto-fill project_id if needed
@@ -520,7 +560,7 @@ def create_handoff(
         project_id = task.project_id
 
     # Build context markdown using existing function
-    context_markdown = build_handoff_context(
+    context_markdown = build_work_cycle_context(
         db=db,
         run_id=run_id or 0,  # Use 0 if no run, will still get task context
         role=to_role,
@@ -543,7 +583,7 @@ def create_handoff(
     context_file = None
     if write_file and task.project and task.project.repo_path:
         try:
-            context_file = write_handoff_file(
+            context_file = write_work_cycle_file(
                 db=db,
                 run_id=run_id or 0,
                 role=to_role,
@@ -552,164 +592,164 @@ def create_handoff(
                 include_raw_output=True
             )
         except Exception as e:
-            print(f"Warning: Could not write handoff file: {e}")
+            print(f"Warning: Could not write work_cycle file: {e}")
 
-    # Create handoff record
-    handoff = Handoff(
+    # Create work_cycle record
+    work_cycle = WorkCycle(
         project_id=project_id,
         task_id=task_id,
         run_id=run_id,
         from_role=from_role,
         to_role=to_role,
         stage=stage,
-        status=HandoffStatus.PENDING,
+        status=WorkCycleStatus.PENDING,
         context=context,
         context_markdown=context_markdown,
         context_file=context_file,
         created_by=created_by
     )
 
-    db.add(handoff)
+    db.add(work_cycle)
     db.commit()
-    db.refresh(handoff)
+    db.refresh(work_cycle)
 
-    return handoff
+    return work_cycle
 
 
-def get_current_handoff(db: Session, task_id: int) -> "Handoff":
-    """Get the current pending/in_progress handoff for a task.
+def get_current_work_cycle(db: Session, task_id: int) -> "WorkCycle":
+    """Get the current pending/in_progress work_cycle for a task.
 
-    Returns the most recent handoff that is not yet completed.
+    Returns the most recent work_cycle that is not yet completed.
     """
-    from app.models.handoff import Handoff, HandoffStatus
+    from app.models.work_cycle import WorkCycle, WorkCycleStatus
 
-    return db.query(Handoff).filter(
-        Handoff.task_id == task_id,
-        Handoff.status.in_([HandoffStatus.PENDING, HandoffStatus.IN_PROGRESS])
-    ).order_by(Handoff.created_at.desc()).first()
-
-
-def get_handoff_by_id(db: Session, handoff_id: int) -> "Handoff":
-    """Get a specific handoff by ID."""
-    from app.models.handoff import Handoff
-    return db.query(Handoff).filter(Handoff.id == handoff_id).first()
+    return db.query(WorkCycle).filter(
+        WorkCycle.task_id == task_id,
+        WorkCycle.status.in_([WorkCycleStatus.PENDING, WorkCycleStatus.IN_PROGRESS])
+    ).order_by(WorkCycle.created_at.desc()).first()
 
 
-def accept_handoff(db: Session, handoff_id: int) -> "Handoff":
-    """Mark a handoff as accepted (agent starting work).
+def get_work_cycle_by_id(db: Session, work_cycle_id: int) -> "WorkCycle":
+    """Get a specific work_cycle by ID."""
+    from app.models.work_cycle import WorkCycle
+    return db.query(WorkCycle).filter(WorkCycle.id == work_cycle_id).first()
+
+
+def accept_work_cycle(db: Session, work_cycle_id: int) -> "WorkCycle":
+    """Mark a work_cycle as accepted (agent starting work).
 
     Args:
         db: SQLAlchemy session
-        handoff_id: Handoff to accept
+        work_cycle_id: WorkCycle to accept
 
     Returns:
-        Updated Handoff record
+        Updated WorkCycle record
 
     Raises:
-        ValueError: If handoff not found or not in PENDING state
+        ValueError: If work_cycle not found or not in PENDING state
     """
-    from app.models.handoff import Handoff, HandoffStatus
+    from app.models.work_cycle import WorkCycle, WorkCycleStatus
     from datetime import datetime
 
-    handoff = db.query(Handoff).filter(Handoff.id == handoff_id).first()
-    if not handoff:
-        raise ValueError(f"Handoff {handoff_id} not found")
+    work_cycle = db.query(WorkCycle).filter(WorkCycle.id == work_cycle_id).first()
+    if not work_cycle:
+        raise ValueError(f"WorkCycle {work_cycle_id} not found")
 
-    if handoff.status != HandoffStatus.PENDING:
-        raise ValueError(f"Handoff {handoff_id} is not pending (status: {handoff.status.value})")
+    if work_cycle.status != WorkCycleStatus.PENDING:
+        raise ValueError(f"WorkCycle {work_cycle_id} is not pending (status: {work_cycle.status.value})")
 
-    handoff.status = HandoffStatus.IN_PROGRESS
-    handoff.accepted_at = datetime.utcnow()
+    work_cycle.status = WorkCycleStatus.IN_PROGRESS
+    work_cycle.accepted_at = datetime.utcnow()
     db.commit()
-    db.refresh(handoff)
+    db.refresh(work_cycle)
 
-    return handoff
+    return work_cycle
 
 
-def complete_handoff(
+def complete_work_cycle(
     db: Session,
-    handoff_id: int,
+    work_cycle_id: int,
     report_status: str,
     report_summary: str = None,
     report_details: dict = None,
     agent_report_id: int = None
-) -> "Handoff":
-    """Complete a handoff with the agent's report.
+) -> "WorkCycle":
+    """Complete a work_cycle with the agent's report.
 
     Args:
         db: SQLAlchemy session
-        handoff_id: Handoff to complete
+        work_cycle_id: WorkCycle to complete
         report_status: "pass" or "fail"
         report_summary: Summary of what agent did
         report_details: Full report details (JSON)
         agent_report_id: Optional link to AgentReport record
 
     Returns:
-        Updated Handoff record
+        Updated WorkCycle record
 
     Raises:
-        ValueError: If handoff not found or not in IN_PROGRESS state
+        ValueError: If work_cycle not found or not in IN_PROGRESS state
     """
-    from app.models.handoff import Handoff, HandoffStatus
+    from app.models.work_cycle import WorkCycle, WorkCycleStatus
     from datetime import datetime
 
-    handoff = db.query(Handoff).filter(Handoff.id == handoff_id).first()
-    if not handoff:
-        raise ValueError(f"Handoff {handoff_id} not found")
+    work_cycle = db.query(WorkCycle).filter(WorkCycle.id == work_cycle_id).first()
+    if not work_cycle:
+        raise ValueError(f"WorkCycle {work_cycle_id} not found")
 
-    if handoff.status != HandoffStatus.IN_PROGRESS:
-        raise ValueError(f"Handoff {handoff_id} is not in progress (status: {handoff.status.value})")
+    if work_cycle.status != WorkCycleStatus.IN_PROGRESS:
+        raise ValueError(f"WorkCycle {work_cycle_id} is not in progress (status: {work_cycle.status.value})")
 
-    handoff.status = HandoffStatus.COMPLETED
-    handoff.completed_at = datetime.utcnow()
-    handoff.report_status = report_status
-    handoff.report_summary = report_summary
-    handoff.report = report_details
-    handoff.agent_report_id = agent_report_id
+    work_cycle.status = WorkCycleStatus.COMPLETED
+    work_cycle.completed_at = datetime.utcnow()
+    work_cycle.report_status = report_status
+    work_cycle.report_summary = report_summary
+    work_cycle.report = report_details
+    work_cycle.agent_report_id = agent_report_id
 
     db.commit()
-    db.refresh(handoff)
+    db.refresh(work_cycle)
 
-    return handoff
+    return work_cycle
 
 
-def fail_handoff(db: Session, handoff_id: int, reason: str = None) -> "Handoff":
-    """Mark a handoff as failed (timeout, error, etc.).
+def fail_work_cycle(db: Session, work_cycle_id: int, reason: str = None) -> "WorkCycle":
+    """Mark a work_cycle as failed (timeout, error, etc.).
 
     Args:
         db: SQLAlchemy session
-        handoff_id: Handoff to fail
+        work_cycle_id: WorkCycle to fail
         reason: Optional reason for failure
 
     Returns:
-        Updated Handoff record
+        Updated WorkCycle record
     """
-    from app.models.handoff import Handoff, HandoffStatus
+    from app.models.work_cycle import WorkCycle, WorkCycleStatus
     from datetime import datetime
 
-    handoff = db.query(Handoff).filter(Handoff.id == handoff_id).first()
-    if not handoff:
-        raise ValueError(f"Handoff {handoff_id} not found")
+    work_cycle = db.query(WorkCycle).filter(WorkCycle.id == work_cycle_id).first()
+    if not work_cycle:
+        raise ValueError(f"WorkCycle {work_cycle_id} not found")
 
-    handoff.status = HandoffStatus.FAILED
-    handoff.completed_at = datetime.utcnow()
-    handoff.report_status = "fail"
-    handoff.report_summary = reason or "Handoff failed"
+    work_cycle.status = WorkCycleStatus.FAILED
+    work_cycle.completed_at = datetime.utcnow()
+    work_cycle.report_status = "fail"
+    work_cycle.report_summary = reason or "WorkCycle failed"
 
     db.commit()
-    db.refresh(handoff)
+    db.refresh(work_cycle)
 
-    return handoff
+    return work_cycle
 
 
-def get_handoff_history(
+def get_work_cycle_history(
     db: Session,
     task_id: int = None,
     project_id: int = None,
     stage: str = None,
     limit: int = 50
 ) -> list:
-    """Get handoff history for a task or project.
+    """Get work_cycle history for a task or project.
 
     Args:
         db: SQLAlchemy session
@@ -719,17 +759,51 @@ def get_handoff_history(
         limit: Max results
 
     Returns:
-        List of Handoff records
+        List of WorkCycle records
     """
-    from app.models.handoff import Handoff
+    from app.models.work_cycle import WorkCycle
 
-    query = db.query(Handoff)
+    query = db.query(WorkCycle)
 
     if task_id:
-        query = query.filter(Handoff.task_id == task_id)
+        query = query.filter(WorkCycle.task_id == task_id)
     if project_id:
-        query = query.filter(Handoff.project_id == project_id)
+        query = query.filter(WorkCycle.project_id == project_id)
     if stage:
-        query = query.filter(Handoff.stage == stage)
+        query = query.filter(WorkCycle.stage == stage)
 
-    return query.order_by(Handoff.created_at.desc()).limit(limit).all()
+    return query.order_by(WorkCycle.created_at.desc()).limit(limit).all()
+
+
+def cleanup_stale_work_cycles(db: Session, limit: int = 100) -> list:
+    """Mark stale work_cycles as completed when tasks are already DONE."""
+    from app.models.work_cycle import WorkCycle, WorkCycleStatus
+    from app.models.task import Task, TaskStatus
+    from datetime import datetime
+
+    query = db.query(WorkCycle).join(Task, WorkCycle.task_id == Task.id).filter(
+        Task.status == TaskStatus.DONE,
+        WorkCycle.status.in_([WorkCycleStatus.PENDING, WorkCycleStatus.IN_PROGRESS])
+    ).order_by(WorkCycle.created_at.asc())
+
+    if limit:
+        query = query.limit(limit)
+
+    stale = query.all()
+    if not stale:
+        return []
+
+    now = datetime.utcnow()
+    for work_cycle in stale:
+        work_cycle.status = WorkCycleStatus.COMPLETED
+        work_cycle.completed_at = now
+        if not work_cycle.report_status:
+            work_cycle.report_status = "pass"
+        if not work_cycle.report_summary:
+            work_cycle.report_summary = "Stale work_cycle closed: task already done"
+
+    db.commit()
+    for work_cycle in stale:
+        db.refresh(work_cycle)
+
+    return stale

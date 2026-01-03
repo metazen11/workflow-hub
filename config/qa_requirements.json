@@ -1,0 +1,114 @@
+[
+  {
+    "id": "CP-MUST-001",
+    "title": "Write tests before implementation",
+    "subtask_title": "QA: verify tests were written before implementation",
+    "description": "Ensure tests were created before corresponding code changes.",
+    "acceptance_criteria": ["Test commits precede implementation commits"]
+  },
+  {
+    "id": "CP-MUST-002",
+    "title": "Reuse existing patterns (DRY)",
+    "subtask_title": "QA: verify existing patterns reused (DRY)",
+    "description": "Check for duplicated logic and confirm refactors reuse helpers.",
+    "acceptance_criteria": ["No duplicated logic for the new behavior"]
+  },
+  {
+    "id": "CP-MUST-003",
+    "title": "Use SQLAlchemy for all DB operations",
+    "subtask_title": "QA: verify SQLAlchemy used (no Django ORM)",
+    "description": "Ensure all database access uses SQLAlchemy and not Django ORM.",
+    "acceptance_criteria": ["No Django ORM usage in new code"]
+  },
+  {
+    "id": "CP-MUST-004",
+    "title": "Validate and sanitize all user input",
+    "subtask_title": "QA: verify input validation and sanitization",
+    "description": "Check server-side validation and html.escape usage for strings.",
+    "acceptance_criteria": ["Input validation present for new endpoints"]
+  },
+  {
+    "id": "CP-MUST-005",
+    "title": "Return structured JSON responses",
+    "subtask_title": "QA: verify structured JSON responses",
+    "description": "Responses must use success/error envelope.",
+    "acceptance_criteria": ["API returns {success: true|false, ...}"]
+  },
+  {
+    "id": "CP-MUST-006",
+    "title": "Templates extend base.html",
+    "subtask_title": "QA: verify templates extend base.html",
+    "description": "All new templates should extend base.html.",
+    "acceptance_criteria": ["Templates use {% extends \"base.html\" %}"]
+  },
+  {
+    "id": "CP-MUST-007",
+    "title": "Use CSS variables for styling",
+    "subtask_title": "QA: verify CSS variables used",
+    "description": "No hardcoded colors; use CSS variables only.",
+    "acceptance_criteria": ["Styling uses CSS variables"]
+  },
+  {
+    "id": "CP-MUST-008",
+    "title": "Complete one task before starting another",
+    "subtask_title": "QA: verify scope focused and task completed",
+    "description": "No unrelated refactors or features outside the task.",
+    "acceptance_criteria": ["Changes stay within task scope"]
+  },
+  {
+    "id": "CP-MUSTNOT-001",
+    "title": "Do not skip tests",
+    "subtask_title": "QA: ensure tests not skipped",
+    "description": "Task is not complete until tests pass.",
+    "acceptance_criteria": ["Tests executed and passing"]
+  },
+  {
+    "id": "CP-MUSTNOT-002",
+    "title": "Do not use Django ORM",
+    "subtask_title": "QA: ensure no Django ORM usage",
+    "description": "SQLAlchemy only for DB operations.",
+    "acceptance_criteria": ["No Django ORM usage detected"]
+  },
+  {
+    "id": "CP-MUSTNOT-003",
+    "title": "Do not hardcode secrets",
+    "subtask_title": "QA: ensure no hardcoded secrets",
+    "description": "Secrets must use env vars or .env file.",
+    "acceptance_criteria": ["No hardcoded secrets in code"]
+  },
+  {
+    "id": "CP-MUSTNOT-004",
+    "title": "Do not add unrequested features",
+    "subtask_title": "QA: ensure no unrequested features",
+    "description": "Stay focused on assigned task only.",
+    "acceptance_criteria": ["No extra features outside requirements"]
+  },
+  {
+    "id": "CP-MUSTNOT-005",
+    "title": "Do not use heavy CSS frameworks",
+    "subtask_title": "QA: ensure no heavy CSS frameworks",
+    "description": "No Bootstrap/Tailwind unless already present.",
+    "acceptance_criteria": ["No new heavy framework dependencies"]
+  },
+  {
+    "id": "CP-MUSTNOT-006",
+    "title": "Do not create new files unnecessarily",
+    "subtask_title": "QA: ensure reuse of existing files",
+    "description": "Extend existing files when possible.",
+    "acceptance_criteria": ["New files only when necessary"]
+  },
+  {
+    "id": "CP-MUSTNOT-007",
+    "title": "Do not concatenate SQL strings",
+    "subtask_title": "QA: ensure parameterized queries only",
+    "description": "Use parameterized queries or SQLAlchemy.",
+    "acceptance_criteria": ["No string-concatenated SQL"]
+  },
+  {
+    "id": "CP-MUSTNOT-008",
+    "title": "Do not reload pages for data updates",
+    "subtask_title": "QA: ensure AJAX/fetch used for updates",
+    "description": "CRUD updates should use AJAX/fetch.",
+    "acceptance_criteria": ["No full page reloads for data updates"]
+  }
+]

@@ -583,6 +583,12 @@ secrets.yaml
             # Security findings: look for vulnerabilities, issues, findings
             findings.extend(self._extract_security_findings(details))
 
+        # Identify parent task to attach findings as subtasks (latest in-progress)
+        parent_task = self.db.query(Task).filter(
+            Task.project_id == run.project_id,
+            Task.status == TaskStatus.IN_PROGRESS
+        ).order_by(Task.updated_at.desc()).first()
+
         # Get existing task count for numbering
         existing_count = self.db.query(Task).filter(Task.project_id == run.project_id).count()
 
@@ -613,9 +619,12 @@ secrets.yaml
                 priority=finding.get("priority", 5),
                 run_id=run_id,
                 pipeline_stage=TaskPipelineStage.DEV,  # Start in DEV stage
-                acceptance_criteria=finding.get("acceptance_criteria", [])
+                acceptance_criteria=finding.get("acceptance_criteria", []),
+                parent_task_id=parent_task.id if parent_task else None
             )
             self.db.add(task)
+            if parent_task and parent_task.requirements:
+                task.requirements.extend(parent_task.requirements)
             created_tasks.append(task)
 
             log_event(self.db, actor, "create_task_from_finding", "task", None,
@@ -779,8 +788,9 @@ secrets.yaml
         Sets tasks that are at NONE stage to the specified stage.
         Returns count of tasks updated.
         """
+        # NOTE: Task.run_id removed in refactor - get tasks by project
         tasks = self.db.query(Task).filter(
-            Task.run_id == run.id,
+            Task.project_id == run.project_id,
             Task.pipeline_stage == TaskPipelineStage.NONE
         ).all()
 
@@ -833,8 +843,9 @@ secrets.yaml
         ]
         target_index = stage_order.index(target_stage)
 
-        # Get all tasks linked to this run
-        tasks = self.db.query(Task).filter(Task.run_id == run.id).all()
+        # Get all tasks linked to this run's project
+        # NOTE: Task.run_id removed in refactor - get tasks by project
+        tasks = self.db.query(Task).filter(Task.project_id == run.project_id).all()
 
         updated = 0
         for task in tasks:
@@ -856,9 +867,9 @@ secrets.yaml
 
                 updated += 1
 
-                # Create handoff for the new stage (if not COMPLETE)
+                # Create work_cycle for the new stage (if not COMPLETE)
                 if target_stage != TaskPipelineStage.COMPLETE:
-                    self._create_task_handoff(
+                    self._create_task_work_cycle(
                         task=task,
                         run=run,
                         to_role=self._stage_to_role(target_stage),
@@ -880,26 +891,26 @@ secrets.yaml
         }
         return stage_to_role.get(stage)
 
-    def _create_task_handoff(
+    def _create_task_work_cycle(
         self,
         task: Task,
         run: Run,
         to_role: str,
         from_role: str = None
     ) -> None:
-        """Create a handoff for a task when it advances to a new stage.
+        """Create a work_cycle for a task when it advances to a new stage.
 
-        Uses handoff_service to build context and persist to DB.
+        Uses work_cycle_service to build context and persist to DB.
         """
         if not to_role:
             return
 
         try:
-            from app.services import handoff_service
+            from app.services import work_cycle_service
 
             stage = task.pipeline_stage.value.lower() if task.pipeline_stage else to_role
 
-            handoff_service.create_handoff(
+            work_cycle_service.create_work_cycle(
                 db=self.db,
                 task_id=task.id,
                 to_role=to_role,
@@ -912,7 +923,7 @@ secrets.yaml
             )
         except Exception as e:
             # Log but don't fail the state transition
-            print(f"Warning: Could not create handoff for task {task.id}: {e}")
+            print(f"Warning: Could not create work_cycle for task {task.id}: {e}")
 
     def get_task_progress(self, run_id: int) -> dict:
         """Get task pipeline progress summary for a run.
@@ -928,7 +939,8 @@ secrets.yaml
         if not run:
             return {"error": "Run not found"}
 
-        tasks = self.db.query(Task).filter(Task.run_id == run_id).all()
+        # NOTE: Task.run_id removed in refactor - get tasks by project
+        tasks = self.db.query(Task).filter(Task.project_id == run.project_id).all()
 
         # Count by stage
         stage_counts = {stage.value: 0 for stage in TaskPipelineStage}

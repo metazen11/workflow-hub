@@ -62,7 +62,7 @@ class TestTaskBoardView(unittest.TestCase):
         self.assertEqual(context['project'].name, "Test Project")
         self.assertEqual(len(context['board']['dev']), 1)
         self.assertEqual(len(context['board']['qa']), 1)
-        self.assertEqual(context['active_page'], 'projects')
+        self.assertEqual(context['active_page'], 'board')
 
     @patch("app.views.ui.get_db")
     def test_task_board_not_found(self, mock_get_db):

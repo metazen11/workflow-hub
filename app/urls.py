@@ -5,6 +5,7 @@ from app.views import api, ui
 urlpatterns = [
     # UI
     path('ui/', ui.dashboard, name='dashboard'),
+    path('ui/board/', ui.global_board_view, name='global_board'),
     path('ui/projects/', ui.projects_list, name='projects_list'),
     path('ui/projects/<int:project_id>/board', ui.task_board_view, name='task_board_view'),
     path('ui/project/<int:project_id>/', ui.project_view, name='project_view'),
@@ -16,8 +17,14 @@ urlpatterns = [
     path('ui/bugs/<int:bug_id>/', ui.bug_detail_view, name='bug_detail_view'),
     path('ui/ledger/', ui.ledger_view, name='ledger'),
     path('ui/ledger/<str:entry_id>/', ui.ledger_entry_view, name='ledger_entry'),
+    path('ui/settings/', ui.settings_view, name='settings'),
+    path('ui/activity/', ui.activity_view, name='activity'),
+    path('ui/goose/', ui.goose_view, name='goose'),
+    path('ui/ledger/', ui.ledger_view, name='ledger'),
 
-    # API
+    # API endpoints
+
+    # System status
     path('api/status', api.api_status, name='api_status'),
 
     # Projects
@@ -30,7 +37,7 @@ urlpatterns = [
     path('api/projects/<int:project_id>/execute', api.project_execute, name='project_execute'),
     path('api/projects/<int:project_id>/refresh', api.project_refresh, name='project_refresh'),
     path('api/projects/<int:project_id>/context', api.orchestrator_context, name='orchestrator_context'),
-    path('api/projects/<int:project_id>/handoff/history', api.project_handoff_history, name='project_handoff_history'),
+    path('api/projects/<int:project_id>/work_cycle/history', api.project_work_cycle_history, name='project_work_cycle_history'),
 
     # Credentials
     path('api/projects/<int:project_id>/credentials', api.credentials_list, name='credentials_list'),
@@ -68,17 +75,24 @@ urlpatterns = [
     path('api/tasks/<int:task_id>/advance-stage', api.task_advance_stage, name='task_advance_stage'),
     path('api/tasks/<int:task_id>/set-stage', api.task_set_stage, name='task_set_stage'),
     path('api/tasks/<int:task_id>/start', api.task_start, name='task_start'),
+    path('api/tasks/<int:task_id>/start-work', api.task_start_work, name='task_start_work'),
+    path('api/tasks/<int:task_id>/job-status', api.task_job_status, name='task_job_status'),
     path('api/tasks/<int:task_id>/advance', api.task_advance, name='task_advance'),
     path('api/tasks/<int:task_id>/loop-back', api.task_loop_back, name='task_loop_back'),
     path('api/tasks/<int:task_id>/director/prepare', api.task_director_prepare, name='task_director_prepare'),
+    path('api/tasks/<int:task_id>/enhance', api.task_enhance, name='task_enhance'),
+    path('api/tasks/<int:task_id>/simplify', api.task_simplify, name='task_simplify'),
 
-    # Task Handoffs (agent work cycle tracking)
-    path('api/tasks/<int:task_id>/handoff', api.task_handoff_current, name='task_handoff_current'),
-    path('api/tasks/<int:task_id>/handoff/create', api.task_handoff_create, name='task_handoff_create'),
-    path('api/tasks/<int:task_id>/handoff/accept', api.task_handoff_accept, name='task_handoff_accept'),
-    path('api/tasks/<int:task_id>/handoff/complete', api.task_handoff_complete, name='task_handoff_complete'),
-    path('api/tasks/<int:task_id>/handoff/fail', api.task_handoff_fail, name='task_handoff_fail'),
-    path('api/tasks/<int:task_id>/handoff/history', api.task_handoff_history, name='task_handoff_history'),
+    # Task WorkCycles (agent work cycle tracking)
+    path('api/tasks/<int:task_id>/work_cycle', api.task_work_cycle_current, name='task_work_cycle_current'),
+    path('api/tasks/<int:task_id>/work_cycle/create', api.task_work_cycle_create, name='task_work_cycle_create'),
+    path('api/tasks/<int:task_id>/work_cycle/accept', api.task_work_cycle_accept, name='task_work_cycle_accept'),
+    path('api/tasks/<int:task_id>/work_cycle/complete', api.task_work_cycle_complete, name='task_work_cycle_complete'),
+    path('api/tasks/<int:task_id>/work_cycle/fail', api.task_work_cycle_fail, name='task_work_cycle_fail'),
+    path('api/tasks/<int:task_id>/work_cycle/history', api.task_work_cycle_history, name='task_work_cycle_history'),
+    path('api/work_cycles/cleanup-stale', api.work_cycles_cleanup_stale, name='work_cycles_cleanup_stale'),
+    path('api/work_cycles/<int:work_cycle_id>/delete', api.work_cycle_delete, name='work_cycle_delete'),
+    path('api/tasks/auto-assign-dev', api.tasks_auto_assign_dev, name='tasks_auto_assign_dev'),
 
     # Runs
     path('api/projects/<int:project_id>/runs', api.runs_list, name='runs_list'),
@@ -111,6 +125,17 @@ urlpatterns = [
     path('api/director/settings', api.director_settings_update, name='director_settings'),
     path('api/director/activity', api.director_activity, name='director_activity'),
     path('api/director/run-cycle', api.director_run_cycle, name='director_run_cycle'),
+
+    # Goose web control (dev convenience)
+    path('api/goose/start', api.goose_start, name='goose_start'),
+    path('api/goose/stop', api.goose_stop, name='goose_stop'),
+    path('api/goose/status', api.goose_status, name='goose_status'),
+
+    # App Settings (Admin Panel - future: requires permission)
+    path('api/settings', api.app_settings_list, name='app_settings_list'),
+    path('api/settings/update', api.app_settings_update, name='app_settings_update'),
+    path('api/settings/seed', api.app_settings_seed, name='app_settings_seed'),
+    path('api/settings/<str:key>', api.app_settings_get, name='app_settings_get'),
 
     # Audit
     path('api/audit', api.audit_log, name='audit_log'),
@@ -183,4 +208,19 @@ urlpatterns = [
     path('api/runs/<int:run_id>/claims/validate', api.run_claims_validate, name='run_claims_validate'),
     path('api/runs/<int:run_id>/claims/summary', api.run_claims_summary, name='run_claims_summary'),
     path('api/tasks/<int:task_id>/claims', api.task_claims, name='task_claims'),
+
+    # Job Queue (LLM and agent request queue)
+    path('api/queue/status', api.queue_status, name='queue_status'),
+    path('api/queue/enqueue', api.queue_enqueue, name='queue_enqueue'),
+    path('api/queue/jobs/<int:job_id>', api.queue_job_status, name='queue_job_status'),
+    path('api/queue/jobs/<int:job_id>/wait', api.queue_job_wait, name='queue_job_wait'),
+    path('api/queue/jobs/<int:job_id>/cancel', api.queue_job_cancel, name='queue_job_cancel'),
+    path('api/queue/jobs/<int:job_id>/kill', api.queue_job_kill, name='queue_job_kill'),
+    path('api/queue/cleanup', api.queue_cleanup, name='queue_cleanup'),
+    path('api/queue/kill-all', api.queue_kill_all, name='queue_kill_all'),
+    path('api/queue/check-timeouts', api.queue_check_timeouts, name='queue_check_timeouts'),
+
+    # LLM Activity Feed
+    path('api/llm/activity', api.llm_activity, name='llm_activity'),
+    path('api/llm/activity/full', api.llm_activity_full, name='llm_activity_full'),
 ]

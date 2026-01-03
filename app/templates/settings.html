@@ -1,0 +1,578 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - Workflow Hub{% endblock %}
+{% block page_title %}Settings{% endblock %}
+
+{% block content %}
+<style>
+/* Settings Page Styles */
+.settings-container {
+    max-width: 900px;
+}
+
+.settings-category {
+    margin-bottom: 2rem;
+}
+
+.settings-category-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.settings-category-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text);
+    text-transform: capitalize;
+}
+
+.settings-category-icon {
+    color: var(--primary);
+}
+
+.setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border-light);
+    gap: 1rem;
+}
+
+.setting-row:last-child {
+    border-bottom: none;
+}
+
+.setting-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.setting-key {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--text);
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+}
+
+.setting-description {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.setting-input-wrapper {
+    flex: 0 0 300px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.setting-input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: var(--bg);
+    color: var(--text);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.setting-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-alpha);
+}
+
+.setting-input.modified {
+    border-color: var(--warning);
+    background: var(--warning-bg);
+}
+
+.setting-input.saved {
+    border-color: var(--success);
+    background: var(--success-bg);
+}
+
+.setting-input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.setting-secret {
+    font-family: var(--font-mono);
+    letter-spacing: 2px;
+}
+
+.setting-save-btn {
+    padding: 0.5rem 0.75rem;
+    border: none;
+    border-radius: 6px;
+    background: var(--primary);
+    color: white;
+    font-size: 0.85rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.2s;
+}
+
+.setting-save-btn.visible {
+    opacity: 1;
+}
+
+.setting-save-btn:hover {
+    background: var(--primary-hover);
+}
+
+.setting-save-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.settings-actions {
+    display: flex;
+    gap: 1rem;
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.badge-readonly {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.4rem;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    color: var(--text-muted);
+    margin-left: 0.5rem;
+}
+
+.badge-secret {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.4rem;
+    background: var(--warning-bg);
+    color: var(--warning);
+    border-radius: 4px;
+    margin-left: 0.5rem;
+}
+
+/* Toast notification */
+.toast {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    padding: 1rem 1.5rem;
+    background: var(--success);
+    color: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateY(100px);
+    opacity: 0;
+    transition: all 0.3s ease;
+    z-index: 1000;
+}
+
+.toast.show {
+    transform: translateY(0);
+    opacity: 1;
+}
+
+.toast.error {
+    background: var(--danger);
+}
+
+/* Loading spinner */
+.spinner-small {
+    width: 14px;
+    height: 14px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Empty state */
+.settings-empty {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-muted);
+}
+
+.settings-empty-icon {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+/* Director status card */
+.director-status-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    margin-bottom: 2rem;
+}
+
+.director-status-info {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.director-status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--danger);
+}
+
+.director-status-indicator.running {
+    background: var(--success);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.director-status-text {
+    font-weight: 500;
+}
+
+.director-toggle-btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.director-toggle-btn.start {
+    background: var(--success);
+    color: white;
+}
+
+.director-toggle-btn.stop {
+    background: var(--danger);
+    color: white;
+}
+</style>
+
+<div class="settings-container">
+    <!-- Director Status Card -->
+    <div class="director-status-card">
+        <div class="director-status-info">
+            <div class="director-status-indicator" id="director-indicator"></div>
+            <div>
+                <div class="director-status-text" id="director-status-text">Loading...</div>
+                <div class="setting-description">Auto-processes tasks through the pipeline</div>
+            </div>
+        </div>
+        <button class="director-toggle-btn" id="director-toggle-btn" onclick="toggleDirector()">
+            Loading...
+        </button>
+    </div>
+
+    <!-- Settings Loading/Content -->
+    <div id="settings-content">
+        <div class="settings-empty">
+            <svg class="settings-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"></path>
+            </svg>
+            <p>Loading settings...</p>
+        </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="settings-actions">
+        <button class="btn btn-secondary" onclick="seedDefaults()">Seed Defaults</button>
+        <button class="btn btn-primary" onclick="saveAllModified()">Save All Changes</button>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+let settings = {};
+let modifiedSettings = {};
+
+// Category icons
+const categoryIcons = {
+    'llm': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10H12V2z"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>',
+    'agent': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>',
+    'queue': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>',
+    'ui': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>',
+    'general': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2"/></svg>'
+};
+
+async function loadSettings() {
+    try {
+        const resp = await fetch('/api/settings');
+        const data = await resp.json();
+        settings = data.settings;
+        renderSettings();
+    } catch (err) {
+        showToast('Failed to load settings', true);
+    }
+}
+
+function renderSettings() {
+    const container = document.getElementById('settings-content');
+
+    if (!Object.keys(settings).length) {
+        container.innerHTML = `
+            <div class="settings-empty">
+                <svg class="settings-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2"></path>
+                </svg>
+                <p>No settings found. Click "Seed Defaults" to create initial settings.</p>
+            </div>
+        `;
+        return;
+    }
+
+    let html = '';
+    for (const [category, items] of Object.entries(settings)) {
+        const icon = categoryIcons[category] || categoryIcons['general'];
+        html += `
+            <div class="settings-category">
+                <div class="settings-category-header">
+                    <span class="settings-category-icon">${icon}</span>
+                    <span class="settings-category-title">${category}</span>
+                </div>
+                <div class="settings-list">
+        `;
+
+        for (const setting of items) {
+            const inputType = setting.is_secret ? 'password' : 'text';
+            const readonlyBadge = !setting.editable ? '<span class="badge-readonly">read-only</span>' : '';
+            const secretBadge = setting.is_secret ? '<span class="badge-secret">secret</span>' : '';
+
+            html += `
+                <div class="setting-row" data-key="${setting.key}">
+                    <div class="setting-info">
+                        <div class="setting-key">${setting.key}${readonlyBadge}${secretBadge}</div>
+                        <div class="setting-description">${setting.description || ''}</div>
+                    </div>
+                    <div class="setting-input-wrapper">
+                        <input type="${inputType}"
+                               class="setting-input ${setting.is_secret ? 'setting-secret' : ''}"
+                               value="${setting.value || ''}"
+                               data-key="${setting.key}"
+                               data-original="${setting.value || ''}"
+                               ${!setting.editable ? 'disabled' : ''}
+                               onchange="markModified(this)"
+                               onkeyup="markModified(this)">
+                        <button class="setting-save-btn"
+                                data-key="${setting.key}"
+                                onclick="saveSetting('${setting.key}')"
+                                ${!setting.editable ? 'disabled' : ''}>
+                            Save
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        html += '</div></div>';
+    }
+
+    container.innerHTML = html;
+}
+
+function markModified(input) {
+    const key = input.dataset.key;
+    const original = input.dataset.original;
+    const current = input.value;
+    const saveBtn = document.querySelector(`.setting-save-btn[data-key="${key}"]`);
+
+    if (current !== original) {
+        input.classList.add('modified');
+        input.classList.remove('saved');
+        saveBtn.classList.add('visible');
+        modifiedSettings[key] = current;
+    } else {
+        input.classList.remove('modified');
+        saveBtn.classList.remove('visible');
+        delete modifiedSettings[key];
+    }
+}
+
+async function saveSetting(key) {
+    const input = document.querySelector(`.setting-input[data-key="${key}"]`);
+    const saveBtn = document.querySelector(`.setting-save-btn[data-key="${key}"]`);
+
+    saveBtn.innerHTML = '<div class="spinner-small"></div>';
+    saveBtn.disabled = true;
+
+    try {
+        const resp = await fetch('/api/settings/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                settings: [{ key: key, value: input.value }]
+            })
+        });
+
+        const data = await resp.json();
+
+        if (data.status === 'updated') {
+            input.classList.remove('modified');
+            input.classList.add('saved');
+            input.dataset.original = input.value;
+            delete modifiedSettings[key];
+
+            setTimeout(() => {
+                input.classList.remove('saved');
+                saveBtn.classList.remove('visible');
+            }, 2000);
+
+            showToast(`Saved ${key}`);
+        } else {
+            showToast(data.error || 'Failed to save', true);
+        }
+    } catch (err) {
+        showToast('Failed to save setting', true);
+    } finally {
+        saveBtn.innerHTML = 'Save';
+        saveBtn.disabled = false;
+    }
+}
+
+async function saveAllModified() {
+    const keys = Object.keys(modifiedSettings);
+    if (!keys.length) {
+        showToast('No changes to save');
+        return;
+    }
+
+    const updates = keys.map(key => ({ key, value: modifiedSettings[key] }));
+
+    try {
+        const resp = await fetch('/api/settings/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ settings: updates })
+        });
+
+        const data = await resp.json();
+
+        if (data.status === 'updated') {
+            // Update all inputs
+            for (const key of keys) {
+                const input = document.querySelector(`.setting-input[data-key="${key}"]`);
+                const saveBtn = document.querySelector(`.setting-save-btn[data-key="${key}"]`);
+                if (input) {
+                    input.classList.remove('modified');
+                    input.classList.add('saved');
+                    input.dataset.original = input.value;
+                    setTimeout(() => {
+                        input.classList.remove('saved');
+                        saveBtn.classList.remove('visible');
+                    }, 2000);
+                }
+            }
+            modifiedSettings = {};
+            showToast(`Saved ${data.count} settings`);
+        }
+    } catch (err) {
+        showToast('Failed to save settings', true);
+    }
+}
+
+async function seedDefaults() {
+    try {
+        const resp = await fetch('/api/settings/seed', { method: 'POST' });
+        const data = await resp.json();
+
+        if (data.status === 'seeded') {
+            showToast(`Seeded ${data.count} settings`);
+            loadSettings();
+        }
+    } catch (err) {
+        showToast('Failed to seed defaults', true);
+    }
+}
+
+// Director controls
+async function loadDirectorStatus() {
+    try {
+        const resp = await fetch('/api/director/status');
+        const data = await resp.json();
+        updateDirectorUI(data.running);
+    } catch (err) {
+        console.error('Failed to load director status:', err);
+    }
+}
+
+function updateDirectorUI(running) {
+    const indicator = document.getElementById('director-indicator');
+    const statusText = document.getElementById('director-status-text');
+    const toggleBtn = document.getElementById('director-toggle-btn');
+
+    if (running) {
+        indicator.classList.add('running');
+        statusText.textContent = 'Director Running';
+        toggleBtn.textContent = 'Stop Director';
+        toggleBtn.className = 'director-toggle-btn stop';
+    } else {
+        indicator.classList.remove('running');
+        statusText.textContent = 'Director Stopped';
+        toggleBtn.textContent = 'Start Director';
+        toggleBtn.className = 'director-toggle-btn start';
+    }
+}
+
+async function toggleDirector() {
+    const indicator = document.getElementById('director-indicator');
+    const isRunning = indicator.classList.contains('running');
+    const endpoint = isRunning ? '/api/director/stop' : '/api/director/start';
+
+    try {
+        const resp = await fetch(endpoint, { method: 'POST' });
+        const data = await resp.json();
+
+        if (data.status === 'started' || data.status === 'stopping') {
+            updateDirectorUI(!isRunning);
+            showToast(data.message);
+        } else if (data.status === 'already_running' || data.status === 'not_running') {
+            showToast(data.message);
+        }
+    } catch (err) {
+        showToast('Failed to toggle director', true);
+    }
+}
+
+function showToast(message, isError = false) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = 'toast show' + (isError ? ' error' : '');
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, 3000);
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    loadSettings();
+    loadDirectorStatus();
+});
+</script>
+{% endblock %}
