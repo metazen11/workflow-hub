@@ -361,22 +361,20 @@ class GooseProvider(AgentProvider):
                         "details": {"error": "Ensure 'goose' is in PATH or set GOOSE_PATH"}
                     }
 
-            # Determine session name for context persistence
-            # Each task gets its own session to maintain conversation history
-            session_name = f"task_{task_id}" if task_id else f"run_{run_id}"
+            # Session name for this run - each invocation gets a fresh start
+            session_name = f"run_{run_id}"
             session_dir = os.path.join(project_path, ".goose", "sessions", session_name)
 
-            # Build command using goose run (supports both new and resumed sessions)
-            # goose run -n <name> -t <prompt> for new session
-            # goose run -n <name> --resume -t <prompt> for resuming
+            # IMPORTANT: Always clear session before each call to prevent context accumulation
+            # This ensures each agent run starts fresh without accumulated context from
+            # previous runs that could cause context limit errors
             if os.path.exists(session_dir):
-                # Resume existing session - Goose will have context from previous calls
-                print(f"  Resuming Goose session '{session_name}' ({role}) with {LLM_TIMEOUT}s timeout...")
-                cmd = [self.executable, "run", "-n", session_name, "--resume", "-t", prompt]
-            else:
-                # Start new session for this task
-                print(f"  Starting new Goose session '{session_name}' ({role}) with {LLM_TIMEOUT}s timeout...")
-                cmd = [self.executable, "run", "-n", session_name, "-t", prompt]
+                print(f"  Clearing Goose session '{session_name}' for fresh start...")
+                self.clear_session(project_path, run_id=run_id)
+
+            # Start new session for this run
+            print(f"  Starting Goose session '{session_name}' ({role}) with {LLM_TIMEOUT}s timeout...")
+            cmd = [self.executable, "run", "-n", session_name, "-t", prompt]
 
             result = subprocess.run(
                 cmd,

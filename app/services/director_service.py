@@ -957,9 +957,12 @@ class TaskOrchestrator:
                     })
                 continue
 
-            # Retry: log and update tracker
+            # Retry: update tracker and actually trigger agent
             tracker["count"] += 1
             tracker["last_attempt"] = now
+
+            # Actually trigger the agent for retry
+            success, msg, run_id = self.director.trigger_agent_for_task(task)
 
             actions.append({
                 "action": "retry",
@@ -967,12 +970,16 @@ class TaskOrchestrator:
                 "task_ref": task.task_id,
                 "attempt": tracker["count"],
                 "max_retries": self.MAX_RETRIES,
-                "stage": task.pipeline_stage.value if task.pipeline_stage else "none"
+                "stage": task.pipeline_stage.value if task.pipeline_stage else "none",
+                "run_id": run_id if success else None,
+                "triggered": success
             })
 
             log_event(self.db, "director", "retry_task", "task", task.id, {
                 "attempt": tracker["count"],
-                "stage": task.pipeline_stage.value if task.pipeline_stage else "none"
+                "stage": task.pipeline_stage.value if task.pipeline_stage else "none",
+                "triggered": success,
+                "run_id": run_id if success else None
             })
 
         return actions
@@ -1108,6 +1115,26 @@ class TaskOrchestrator:
                     RunState.DOCS, RunState.TESTING
                 ]
                 if run.state in active_states:
+                    # Check if this run has a failed report and is stale
+                    # Auto-kill runs with failed reports after 5 minutes
+                    latest_report = self.db.query(AgentReport).filter(
+                        AgentReport.run_id == run.id
+                    ).order_by(AgentReport.created_at.desc()).first()
+
+                    if latest_report and latest_report.status == ReportStatus.FAIL:
+                        from datetime import datetime, timedelta
+                        stale_threshold = datetime.utcnow() - timedelta(minutes=5)
+                        if latest_report.created_at.replace(tzinfo=None) < stale_threshold:
+                            # Auto-kill stale failed run
+                            run.killed = True
+                            self.db.commit()
+                            log_event(self.db, "director", "auto_kill_run", "run", run.id, {
+                                "reason": "stale_failed_report",
+                                "report_status": "fail",
+                                "report_summary": latest_report.summary[:100] if latest_report.summary else None
+                            })
+                            continue  # Don't count this run as active
+
                     has_active_run = True
                     break
 
