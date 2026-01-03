@@ -849,15 +849,26 @@ def ledger_entry_view(request, entry_id):
 
 
 def global_board_view(request):
-    """Global task board across all projects."""
+    """Global task board across all projects with optional project filter."""
     db = next(get_db())
     try:
         open_bugs = _get_open_bugs_count(db)
 
-        # Get all in-progress tasks grouped by pipeline stage
-        tasks = db.query(Task).filter(
+        # Get project filter from query param
+        project_filter = request.GET.get('project')
+        project_id = int(project_filter) if project_filter and project_filter.isdigit() else None
+
+        # Get all projects for filter dropdown
+        all_projects = db.query(Project).order_by(Project.name).all()
+
+        # Build query with optional project filter
+        query = db.query(Task).filter(
             Task.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.BACKLOG])
-        ).order_by(Task.priority.desc(), Task.updated_at.desc()).all()
+        )
+        if project_id:
+            query = query.filter(Task.project_id == project_id)
+
+        tasks = query.order_by(Task.priority.desc(), Task.updated_at.desc()).all()
 
         # Build kanban columns by pipeline stage
         kanban = _build_task_kanban_dict()
@@ -879,8 +890,10 @@ def global_board_view(request):
         context = {
             'active_page': 'board',
             'open_bugs_count': open_bugs if open_bugs > 0 else None,
-            'kanban': kanban,
+            'board': kanban,  # Use 'board' key to match template expectations
             'pipeline_stages': _get_pipeline_stages_for_template(),
+            'projects': [{'id': p.id, 'name': p.name} for p in all_projects],
+            'selected_project_id': project_id,
         }
 
         return render(request, 'task_board.html', context)

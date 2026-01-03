@@ -1,22 +1,38 @@
 {% extends 'base.html' %}
 
-{% block title %}Task Board - {{ project.name }}{% endblock %}
+{% block title %}Task Board{% if project %} - {{ project.name }}{% endif %}{% endblock %}
 
 {% block content %}
 <div class="row mb-4 align-items-center">
     <div class="col-md-6">
         <h1>
             <i class="bi bi-kanban me-2"></i>Task Board
+            {% if project %}
             <small class="text-muted fs-5 ms-2">{{ project.name }}</small>
+            {% endif %}
         </h1>
+        {% if project %}
         <p class="text-muted mb-0">{{ project.description|truncatechars:100 }}</p>
+        {% endif %}
     </div>
     <div class="col-md-6 text-end">
         <div class="d-inline-flex align-items-center gap-2">
             <!-- Search -->
             <input type="text" class="form-control form-control-sm" id="searchInput"
                    placeholder="Search tasks..." style="width: 150px;">
-            <!-- Filters -->
+
+            <!-- Project filter (for global board) -->
+            {% if projects %}
+            <select class="form-select form-select-sm" id="projectFilter" style="width: auto;"
+                    onchange="window.location.href = this.value ? '/ui/board/?project=' + this.value : '/ui/board/'">
+                <option value="">All Projects</option>
+                {% for proj in projects %}
+                <option value="{{ proj.id }}" {% if proj.id == selected_project_id %}selected{% endif %}>{{ proj.name }}</option>
+                {% endfor %}
+            </select>
+            {% endif %}
+
+            <!-- Priority filter -->
             <select class="form-select form-select-sm" id="priorityFilter" style="width: auto;">
                 <option value="all">All Priorities</option>
                 <option value="high">High & Critical</option>
@@ -24,14 +40,15 @@
                 <option value="low">Low</option>
             </select>
 
+            {% if project %}
             <div class="vr mx-2"></div>
-
             <a href="/ui/project/{{ project.id }}/" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-arrow-left me-1"></i>Project
             </a>
             <button class="btn btn-primary btn-sm" onclick="openTaskCreateModal({{ project.id }})">
                 <i class="bi bi-plus-lg me-1"></i>New Task
             </button>
+            {% endif %}
         </div>
     </div>
 </div>
