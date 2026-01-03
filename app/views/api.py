@@ -70,7 +70,8 @@ def goose_start(request):
         return JsonResponse({"running": True, "url": f"http://localhost:{port}", "message": "Already running"})
 
     # Prefer a user-specified command, fallback to a common goose web invocation.
-    cmd_template = os.getenv('GOOSE_WEB_CMD', 'goose web --port {port} --cwd "{cwd}"')
+    # Note: goose web doesn't support --cwd; we use Popen(cwd=...) instead
+    cmd_template = os.getenv('GOOSE_WEB_CMD', 'goose web --port {port}')
     cmd = cmd_template.format(port=port, cwd=cwd)
     args = shlex.split(cmd)
 
