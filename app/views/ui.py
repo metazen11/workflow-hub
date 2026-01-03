@@ -876,15 +876,18 @@ def global_board_view(request):
             stage_key = task.pipeline_stage.value.lower() if task.pipeline_stage else 'none'
             if stage_key in kanban:
                 project = db.query(Project).filter(Project.id == task.project_id).first()
+                # Build dict with all fields expected by kanban_card.html template
                 kanban[stage_key].append({
                     'id': task.id,
                     'task_id': task.task_id,
                     'title': task.title,
-                    'status': task.status.value,
-                    'status_class': _get_status_class(task.status.value.lower()),
-                    'priority': task.priority,
+                    'status': task.status.value if task.status else 'backlog',
+                    'status_class': _get_status_class(task.status.value.lower() if task.status else 'backlog'),
+                    'priority': task.priority or 5,
                     'project_id': task.project_id,
                     'project_name': project.name if project else 'Unknown',
+                    # Add pipeline_stage as a dict with 'value' key to match template's task.pipeline_stage.value
+                    'pipeline_stage': {'value': stage_key},
                 })
 
         context = {

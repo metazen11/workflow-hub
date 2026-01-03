@@ -1,5 +1,6 @@
 """URL configuration for Workflow Hub app."""
 from django.urls import path
+from django.http import HttpResponseRedirect
 from app.views import api, ui
 
 urlpatterns = [
@@ -12,6 +13,8 @@ urlpatterns = [
     path('ui/runs/', ui.runs_list, name='runs_list'),
     path('ui/run/<int:run_id>/', ui.run_view, name='run_view'),
     path('ui/task/<int:task_id>/', ui.task_view, name='task_view'),
+    path('ui/tasks/<int:task_id>', lambda r, task_id: HttpResponseRedirect(f'/ui/task/{task_id}/')),  # Redirect plural to singular
+    path('ui/tasks/<int:task_id>/', lambda r, task_id: HttpResponseRedirect(f'/ui/task/{task_id}/')),  # Redirect plural to singular
     path('ui/tasks/', ui.tasks_list, name='tasks_list'),
     path('ui/bugs/', ui.bugs_list, name='bugs_list'),
     path('ui/bugs/<int:bug_id>/', ui.bug_detail_view, name='bug_detail_view'),
