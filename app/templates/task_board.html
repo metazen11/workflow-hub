@@ -202,15 +202,26 @@
         background-color: rgba(59, 130, 246, 0.1);
     }
 
-    /* Task Cards */
+    /* Task Cards - compact style */
     .task-card {
         cursor: grab;
         transition: transform 0.15s, box-shadow 0.15s;
         background: var(--bg-card, #fff);
         border: 1px solid var(--border, #e2e8f0);
-        border-radius: 6px;
-        margin-bottom: 8px;
+        border-radius: 4px;
+        margin-bottom: 4px;
         position: relative;
+    }
+
+    .task-card .card-body {
+        padding: 6px 8px !important;
+    }
+
+    .task-card .card-title {
+        font-size: 0.75rem;
+        line-height: 1.25;
+        margin-bottom: 0 !important;
+        display: block;
     }
 
     .task-card:hover {
