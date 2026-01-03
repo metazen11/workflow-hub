@@ -1463,7 +1463,8 @@ a.activity-item.clickable:hover .activity-title {
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
-  max-height: 500px;
+  max-height: calc(100vh - 250px); /* Dynamic height based on viewport, leave room for header */
+  min-height: 300px;
 }
 
 .kanban-column-header {
@@ -1512,6 +1513,8 @@ a.activity-item.clickable:hover .activity-title {
   box-shadow: var(--shadow-sm);
   cursor: pointer;
   transition: all 0.15s ease;
+  min-height: 60px; /* Ensure cards don't get squished */
+  flex-shrink: 0; /* Don't shrink cards to fit */
 }
 
 .kanban-card:hover {
