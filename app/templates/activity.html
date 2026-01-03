@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+
+{% block title %}Activity Log - Workflow Hub{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Activity Log</h1>
+    <div class="page-actions">
+        <button class="btn btn-secondary" onclick="refreshActivity()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 4v6h-6M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            Refresh
+        </button>
+        <label class="auto-refresh-toggle">
+            <input type="checkbox" id="auto-refresh" checked>
+            Auto-refresh
+        </label>
+    </div>
+</div>
+
+<div class="activity-filters">
+    <select id="filter-type" onchange="refreshActivity()">
+        <option value="">All Types</option>
+        <option value="agent">Agent Runs</option>
+        <option value="llm">LLM Requests</option>
+        <option value="session">Sessions</option>
+    </select>
+    <select id="filter-status" onchange="refreshActivity()">
+        <option value="">All Status</option>
+        <option value="running">Running</option>
+        <option value="completed">Completed</option>
+        <option value="failed">Failed</option>
+        <option value="timeout">Timeout</option>
+    </select>
+    <input type="number" id="filter-limit" value="50" min="10" max="200" onchange="refreshActivity()">
+    <span class="filter-label">items</span>
+</div>
+
+<div class="activity-stats" id="activity-stats">
+    <div class="stat-card">
+        <div class="stat-value" id="stat-total">-</div>
+        <div class="stat-label">Total Jobs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-running">-</div>
+        <div class="stat-label">Running</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-completed">-</div>
+        <div class="stat-label">Completed (1h)</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-failed">-</div>
+        <div class="stat-label">Failed (1h)</div>
+    </div>
+</div>
+
+<div class="activity-log" id="activity-log">
+    <div class="loading">Loading activity...</div>
+</div>
+
+<style>
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.page-actions {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.auto-refresh-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.activity-filters {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 20px;
+    padding: 12px 16px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.activity-filters select,
+.activity-filters input {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.activity-filters input[type="number"] {
+    width: 80px;
+}
+
+.filter-label {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.activity-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.stat-card {
+    background: var(--bg-secondary);
+    padding: 16px;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-top: 4px;
+}
+
+.activity-log {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.activity-item {
+    display: grid;
+    grid-template-columns: 100px 80px 100px 1fr 100px 90px;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+    font-size: 0.875rem;
+}
+
+.activity-item:hover {
+    background: var(--bg-primary);
+}
+
+.activity-item:last-child {
+    border-bottom: none;
+}
+
+.activity-time {
+    color: var(--text-muted);
+    font-family: monospace;
+    font-size: 0.75rem;
+}
+
+.activity-type {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.activity-type.type-agent {
+    background: color-mix(in srgb, var(--warning) 20%, transparent);
+    color: var(--warning);
+}
+
+.activity-type.type-llm {
+    background: color-mix(in srgb, var(--primary) 20%, transparent);
+    color: var(--primary);
+}
+
+.activity-type.type-session {
+    background: color-mix(in srgb, var(--info) 20%, transparent);
+    color: var(--info);
+}
+
+.activity-summary {
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.activity-model {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.activity-status {
+    text-align: right;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.status-badge.running {
+    background: color-mix(in srgb, var(--warning) 20%, transparent);
+    color: var(--warning);
+}
+
+.status-badge.completed {
+    background: color-mix(in srgb, var(--success) 20%, transparent);
+    color: var(--success);
+}
+
+.status-badge.failed,
+.status-badge.timeout {
+    background: color-mix(in srgb, var(--danger) 20%, transparent);
+    color: var(--danger);
+}
+
+.status-badge.pending {
+    background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+    color: var(--text-muted);
+}
+
+.activity-header {
+    display: grid;
+    grid-template-columns: 100px 80px 100px 1fr 100px 90px;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--bg-primary);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+}
+
+.activity-task {
+    font-size: 0.8rem;
+}
+
+.activity-link {
+    color: var(--primary);
+    text-decoration: none;
+}
+
+.activity-link:hover {
+    text-decoration: underline;
+}
+
+.loading, .empty-state {
+    padding: 48px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+    .activity-item,
+    .activity-header {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+
+    .activity-header {
+        display: none;
+    }
+
+    .activity-item {
+        display: block;
+    }
+
+    .activity-time,
+    .activity-model {
+        display: inline-block;
+        margin-right: 8px;
+    }
+}
+</style>
+
+<script>
+let autoRefreshInterval = null;
+
+function formatTime(isoString) {
+    if (!isoString) return '-';
+    const date = new Date(isoString);
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function refreshActivity() {
+    const limit = document.getElementById('filter-limit').value || 50;
+    const filterType = document.getElementById('filter-type').value;
+    const filterStatus = document.getElementById('filter-status').value;
+
+    const logEl = document.getElementById('activity-log');
+
+    // Fetch full activity data
+    fetch(`/api/llm/activity/full?limit=${limit}`)
+        .then(r => r.json())
+        .then(data => {
+            // Update stats
+            document.getElementById('stat-total').textContent = data.total_jobs || 0;
+            document.getElementById('stat-running').textContent = data.running_count || 0;
+            document.getElementById('stat-completed').textContent = data.completed_count || 0;
+            document.getElementById('stat-failed').textContent = data.failed_count || 0;
+
+            // Filter activity
+            let activity = data.activity || [];
+            if (filterType) {
+                activity = activity.filter(a => a.type === filterType);
+            }
+            if (filterStatus) {
+                activity = activity.filter(a => a.status === filterStatus);
+            }
+
+            if (activity.length === 0) {
+                logEl.innerHTML = '<div class="empty-state">No activity found</div>';
+                return;
+            }
+
+            let html = `
+                <div class="activity-header">
+                    <div>Time</div>
+                    <div>Type</div>
+                    <div>Task/Run</div>
+                    <div>Details</div>
+                    <div>Model</div>
+                    <div>Status</div>
+                </div>
+            `;
+
+            html += activity.map(item => {
+                const typeIcon = item.type === 'agent' ? '🤖' : item.type === 'llm' ? '💬' : '📝';
+                // Build task/project link
+                let linkHtml = '-';
+                if (item.task_id) {
+                    linkHtml = `<a href="/ui/task/${item.task_id}/" class="activity-link">Task #${item.task_id}</a>`;
+                } else if (item.project_id) {
+                    linkHtml = `<a href="/ui/project/${item.project_id}/" class="activity-link">Project #${item.project_id}</a>`;
+                }
+                // Format runtime if available
+                let runtimeStr = '';
+                if (item.runtime) {
+                    if (item.runtime >= 60) {
+                        runtimeStr = ` (${Math.floor(item.runtime / 60)}m ${Math.round(item.runtime % 60)}s)`;
+                    } else {
+                        runtimeStr = ` (${Math.round(item.runtime)}s)`;
+                    }
+                }
+                return `
+                    <div class="activity-item">
+                        <div class="activity-time">${formatTime(item.timestamp)}</div>
+                        <div>
+                            <span class="activity-type type-${item.type}">${typeIcon} ${item.type}</span>
+                        </div>
+                        <div class="activity-task">${linkHtml}</div>
+                        <div class="activity-summary" title="${escapeHtml(item.summary)}">${escapeHtml(item.summary)}${runtimeStr}</div>
+                        <div class="activity-model">${item.model || '-'}</div>
+                        <div class="activity-status">
+                            <span class="status-badge ${item.status}">${item.status}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            logEl.innerHTML = html;
+        })
+        .catch(err => {
+            logEl.innerHTML = `<div class="empty-state">Error loading activity: ${err.message}</div>`;
+        });
+}
+
+function toggleAutoRefresh() {
+    const checkbox = document.getElementById('auto-refresh');
+    if (checkbox.checked) {
+        autoRefreshInterval = setInterval(refreshActivity, 5000);
+    } else {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    refreshActivity();
+
+    // Set up auto-refresh
+    const checkbox = document.getElementById('auto-refresh');
+    checkbox.addEventListener('change', toggleAutoRefresh);
+    toggleAutoRefresh();
+});
+</script>
+{% endblock %}

@@ -42,9 +42,13 @@ coding_principles.md
 workspaces/
 projects/
 
+# Next.js build cache
+pipeline-editor/.next/
+
 # Task attachments (uploaded files)
 uploads/attachments/*
 !uploads/attachments/.gitkeep
 .cache/
 docker/.env
 docker/.env
+pipeline-editor/node_modules/

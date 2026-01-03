@@ -98,9 +98,13 @@ class Task(Base):
     claims_validated = Column(Integer, default=0)
     claims_failed = Column(Integer, default=0)
 
+    parent_task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)
+
     # Relationships
     project = relationship("Project", back_populates="tasks")
     requirements = relationship("Requirement", secondary="task_requirements", back_populates="tasks")
+    parent = relationship("Task", remote_side=[id], back_populates="subtasks")
+    subtasks = relationship("Task", back_populates="parent")
     # work_cycles and claims relationships defined via backref
 
     def is_blocked(self, session: Session) -> bool:
@@ -118,6 +122,7 @@ class Task(Base):
 
     def to_dict(self) -> dict:
         """Serialize task to dictionary."""
+        effective_requirements = self.get_effective_requirements()
         return {
             "id": self.id,
             "project_id": self.project_id,
@@ -128,12 +133,15 @@ class Task(Base):
             "pipeline_stage": self.pipeline_stage.value if self.pipeline_stage else "NONE",
             "priority": self.priority,
             "blocked_by": self.blocked_by or [],
+            "parent_task_id": self.parent_task_id,
+            "subtask_count": len(self.subtasks) if self.subtasks else 0,
             "completed": self.completed,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "acceptance_criteria": self.acceptance_criteria or [],
             "claims_total": self.claims_total,
             "claims_validated": self.claims_validated,
             "claims_failed": self.claims_failed,
+            "effective_requirement_ids": [req.req_id for req in effective_requirements],
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -149,3 +157,16 @@ class Task(Base):
             "claims_total": self.claims_total,
             "claims_validated": self.claims_validated,
         }
+
+    def get_effective_requirements(self):
+        """Return requirements inherited from parent tasks (deduped)."""
+        effective = list(self.requirements or [])
+        seen_ids = {req.id for req in effective}
+        parent = self.parent
+        while parent:
+            for req in parent.requirements or []:
+                if req.id not in seen_ids:
+                    effective.append(req)
+                    seen_ids.add(req.id)
+            parent = parent.parent
+        return effective

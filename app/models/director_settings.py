@@ -34,6 +34,7 @@ class DirectorSettings(Base):
     include_images = Column(Boolean, default=False, nullable=False)
     vision_model = Column(String(100), default="ai/qwen3-vl", nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    daemon_started_at = Column(DateTime(timezone=True), nullable=True)
 
     @classmethod
     def get_settings(cls, db):
@@ -69,6 +70,33 @@ class DirectorSettings(Base):
             "vision_model": self.vision_model,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+    def is_daemon_running(self):
+        """Check if daemon is running based on heartbeat timestamp."""
+        import datetime
+        if not self.daemon_started_at:
+            return False
+        # Consider daemon running if heartbeat is within last 2x poll interval
+        max_age = self.poll_interval * 2
+        elapsed = (datetime.datetime.now(datetime.timezone.utc) - self.daemon_started_at).total_seconds()
+        return elapsed < max_age
+
+    @classmethod
+    def update_heartbeat(cls, db):
+        """Update daemon heartbeat timestamp."""
+        import datetime
+        settings = cls.get_settings(db)
+        settings.daemon_started_at = datetime.datetime.now(datetime.timezone.utc)
+        db.commit()
+        return settings
+
+    @classmethod
+    def clear_heartbeat(cls, db):
+        """Clear daemon heartbeat (mark as stopped)."""
+        settings = cls.get_settings(db)
+        settings.daemon_started_at = None
+        db.commit()
+        return settings
 
     def __repr__(self):
         return f"<DirectorSettings(enabled={self.enabled}, poll_interval={self.poll_interval})>"

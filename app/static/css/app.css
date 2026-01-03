@@ -504,9 +504,44 @@ body {
   font-size: 0.75rem;
 }
 
+/* Director Status */
+.director-running {
+  color: var(--success);
+}
+
+.director-stopped {
+  color: var(--danger);
+}
+
+.director-interval {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.director-checking {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.btn-start-director {
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  margin-left: 8px;
+  background: var(--success);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-start-director:hover {
+  background: color-mix(in srgb, var(--success) 80%, black);
+}
+
 .queue-popover-footer {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   padding: 10px 12px;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
@@ -515,6 +550,89 @@ body {
 .btn-xs {
   padding: 4px 8px;
   font-size: 0.75rem;
+}
+
+/* LLM Activity Feed */
+.llm-activity-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.llm-activity-feed {
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 0.75rem;
+}
+
+.llm-activity-item {
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  border-left: 3px solid var(--border);
+}
+
+.llm-activity-item.role-assistant,
+.llm-activity-item.role-response {
+  border-left-color: var(--success);
+}
+
+.llm-activity-item.role-user,
+.llm-activity-item.role-prompt {
+  border-left-color: var(--primary);
+}
+
+.llm-activity-item.type-agent {
+  border-left-color: var(--warning);
+}
+
+.llm-activity-item.status-running {
+  background: color-mix(in srgb, var(--warning) 10%, var(--bg-secondary));
+}
+
+.llm-activity-item.status-failed {
+  border-left-color: var(--danger);
+}
+
+.llm-activity-header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.llm-activity-role {
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.llm-activity-model {
+  color: var(--text-muted);
+}
+
+.llm-activity-time {
+  margin-left: auto;
+}
+
+.llm-activity-summary {
+  color: var(--text-primary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.llm-activity-empty,
+.llm-activity-loading,
+.llm-activity-error {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.llm-activity-error {
+  color: var(--danger);
 }
 
 /* Hide on mobile */

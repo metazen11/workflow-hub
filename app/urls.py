@@ -18,8 +18,13 @@ urlpatterns = [
     path('ui/ledger/', ui.ledger_view, name='ledger'),
     path('ui/ledger/<str:entry_id>/', ui.ledger_entry_view, name='ledger_entry'),
     path('ui/settings/', ui.settings_view, name='settings'),
+    path('ui/activity/', ui.activity_view, name='activity'),
+    path('ui/goose/', ui.goose_view, name='goose'),
+    path('ui/ledger/', ui.ledger_view, name='ledger'),
 
-    # API
+    # API endpoints
+
+    # System status
     path('api/status', api.api_status, name='api_status'),
 
     # Projects
@@ -85,6 +90,9 @@ urlpatterns = [
     path('api/tasks/<int:task_id>/work_cycle/complete', api.task_work_cycle_complete, name='task_work_cycle_complete'),
     path('api/tasks/<int:task_id>/work_cycle/fail', api.task_work_cycle_fail, name='task_work_cycle_fail'),
     path('api/tasks/<int:task_id>/work_cycle/history', api.task_work_cycle_history, name='task_work_cycle_history'),
+    path('api/work_cycles/cleanup-stale', api.work_cycles_cleanup_stale, name='work_cycles_cleanup_stale'),
+    path('api/work_cycles/<int:work_cycle_id>/delete', api.work_cycle_delete, name='work_cycle_delete'),
+    path('api/tasks/auto-assign-dev', api.tasks_auto_assign_dev, name='tasks_auto_assign_dev'),
 
     # Runs
     path('api/projects/<int:project_id>/runs', api.runs_list, name='runs_list'),
@@ -117,6 +125,11 @@ urlpatterns = [
     path('api/director/settings', api.director_settings_update, name='director_settings'),
     path('api/director/activity', api.director_activity, name='director_activity'),
     path('api/director/run-cycle', api.director_run_cycle, name='director_run_cycle'),
+
+    # Goose web control (dev convenience)
+    path('api/goose/start', api.goose_start, name='goose_start'),
+    path('api/goose/stop', api.goose_stop, name='goose_stop'),
+    path('api/goose/status', api.goose_status, name='goose_status'),
 
     # App Settings (Admin Panel - future: requires permission)
     path('api/settings', api.app_settings_list, name='app_settings_list'),
@@ -206,4 +219,8 @@ urlpatterns = [
     path('api/queue/cleanup', api.queue_cleanup, name='queue_cleanup'),
     path('api/queue/kill-all', api.queue_kill_all, name='queue_kill_all'),
     path('api/queue/check-timeouts', api.queue_check_timeouts, name='queue_check_timeouts'),
+
+    # LLM Activity Feed
+    path('api/llm/activity', api.llm_activity, name='llm_activity'),
+    path('api/llm/activity/full', api.llm_activity_full, name='llm_activity_full'),
 ]

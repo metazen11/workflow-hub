@@ -292,6 +292,40 @@ and {loopback_stage} found problems. Your job is to FIX these specific issues.
             else:
                 sections.append("No acceptance criteria defined.")
 
+            # Parent task context (if this is a subtask)
+            if getattr(task, "parent", None):
+                parent = task.parent
+                parent_status = parent.status.value if parent.status else "unknown"
+                parent_stage = parent.pipeline_stage.value if parent.pipeline_stage else "none"
+                sections.append(f"""
+### Parent Task Context: {parent.task_id}
+**Title**: {parent.title}
+**Status**: {parent_status}
+**Pipeline Stage**: {parent_stage}
+
+#### Parent Description
+{parent.description or 'No description provided.'}
+""")
+                if parent.acceptance_criteria:
+                    sections.append("#### Parent Acceptance Criteria")
+                    for i, criteria in enumerate(parent.acceptance_criteria, 1):
+                        sections.append(f"{i}. {criteria}")
+                else:
+                    sections.append("#### Parent Acceptance Criteria\nNo acceptance criteria defined.")
+
+            # Effective requirements (including inherited)
+            effective_requirements = []
+            try:
+                effective_requirements = task.get_effective_requirements()
+            except Exception:
+                effective_requirements = []
+            if effective_requirements:
+                sections.append("### Requirements (Inherited Included)")
+                for req in effective_requirements:
+                    req_id = getattr(req, "req_id", None) or f"R{req.id}"
+                    title = getattr(req, "title", None) or "Untitled requirement"
+                    sections.append(f"- {req_id}: {title}")
+
             # Show blocking dependencies
             if task.blocked_by:
                 sections.append(f"\n**Blocked By**: {', '.join(task.blocked_by)}")
@@ -739,3 +773,37 @@ def get_work_cycle_history(
         query = query.filter(WorkCycle.stage == stage)
 
     return query.order_by(WorkCycle.created_at.desc()).limit(limit).all()
+
+
+def cleanup_stale_work_cycles(db: Session, limit: int = 100) -> list:
+    """Mark stale work_cycles as completed when tasks are already DONE."""
+    from app.models.work_cycle import WorkCycle, WorkCycleStatus
+    from app.models.task import Task, TaskStatus
+    from datetime import datetime
+
+    query = db.query(WorkCycle).join(Task, WorkCycle.task_id == Task.id).filter(
+        Task.status == TaskStatus.DONE,
+        WorkCycle.status.in_([WorkCycleStatus.PENDING, WorkCycleStatus.IN_PROGRESS])
+    ).order_by(WorkCycle.created_at.asc())
+
+    if limit:
+        query = query.limit(limit)
+
+    stale = query.all()
+    if not stale:
+        return []
+
+    now = datetime.utcnow()
+    for work_cycle in stale:
+        work_cycle.status = WorkCycleStatus.COMPLETED
+        work_cycle.completed_at = now
+        if not work_cycle.report_status:
+            work_cycle.report_status = "pass"
+        if not work_cycle.report_summary:
+            work_cycle.report_summary = "Stale work_cycle closed: task already done"
+
+    db.commit()
+    for work_cycle in stale:
+        db.refresh(work_cycle)
+
+    return stale

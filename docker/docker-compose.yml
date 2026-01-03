@@ -37,25 +37,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  app:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    container_name: wfhub-app
-    hostname: wfhub-app
-    env_file:
-      - ../.env
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      POSTGREST_URL: http://postgrest:3000
-    ports:
-      - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
-      postgrest:
-        condition: service_started
-    restart: unless-stopped
+  # DISABLED: Using local Django server for development
+  # app:
+  #   build:
+  #     context: ..
+  #     dockerfile: Dockerfile
+  #   container_name: wfhub-app
+  #   hostname: wfhub-app
+  #   env_file:
+  #     - ../.env
+  #   environment:
+  #     DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+  #     POSTGREST_URL: http://postgrest:3000
+  #   ports:
+  #     - "8000:8000"
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     postgrest:
+  #       condition: service_started
+  #   restart: unless-stopped
 
 volumes:
   pgdata:

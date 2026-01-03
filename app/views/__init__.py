@@ -1,59 +1,9 @@
-"""Views module."""
-from app.views.api import (
-    api_status,
-    projects_list,
-    project_detail,
-    project_create,
-    project_update,
-    project_execute,
-    project_refresh,
-    orchestrator_context,
-    requirements_list,
-    requirement_create,
-    tasks_list,
-    task_create,
-    task_update_status,
-    task_update,
-    task_execute,
-    task_context,
-    task_attachments_list,
-    task_attachment_upload,
-    task_attachment_download,
-    runs_list,
-    run_create,
-    run_detail,
-    run_submit_report,
-    run_advance,
-    run_set_state,
-    run_retry,
-    run_reset_to_dev,
-    run_create_tasks_from_findings,
-    run_approve_deploy,
-    run_kill,
-    credentials_list,
-    credential_create,
-    credential_detail,
-    credential_update,
-    credential_delete,
-    environments_list,
-    environment_create,
-    environment_detail,
-    environment_update,
-    environment_delete,
-    threat_intel_list,
-    threat_intel_create,
-    audit_log,
-    project_audit_log,
-    activity_feed,
-    webhooks_list,
-    webhook_create,
-    webhook_detail,
-    webhook_update,
-    webhook_delete,
-    bug_list,
-    bug_create,
-    bug_detail,
-    bug_update_status,
-    bug_kill,
-)
-from app.views.ui import dashboard, project_view, run_view, bugs_list, bug_detail_view, task_view, projects_list as projects_list_ui
+"""Views package exports submodules for URLs to import.
+
+Instead of importing many symbols from `api.py` (which required every symbol to exist
+at import time and caused ImportError if some were missing), we expose the submodules
+`api` and `ui` directly so callers can do `from app.views import api, ui` and then
+use `api.some_view` safely.
+"""
+
+from . import api, ui

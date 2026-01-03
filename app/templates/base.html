@@ -79,14 +79,27 @@
                         </svg>
                         Runs
                     </a>
-                    <a href="#" class="nav-item" id="add-task-nav-button">
+                    <a href="/ui/activity/" class="nav-item {% if active_page == 'activity' %}active{% endif %}">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
-                        Add Task
-                    </a>
-                </nav>
+                       Activity
+                   </a>
+                   <a href="/ui/goose/" class="nav-item {% if active_page == 'goose' %}active{% endif %}">
+                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2Z"></path>
+                           <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15"></path>
+                           <path d="M17 10H18C18.5523 10 19 10.4477 19 11V17C19 17.5523 18.5523 18 18 18H6C5.44772 18 5 17.5523 5 17V11C5 10.4477 5.44772 10 6 10H7"></path>
+                           <path d="M11 12V14"></path>
+                           <path d="M13 12V14"></path>
+                       </svg>
+                        Goose AI
+                   </a>
+                   <a href="#" class="nav-item" id="add-task-nav-button">
+                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                           <line x1="12" y1="5" x2="12" y2="19"></line>
+                           <line x1="5" y1="12" x2="19" y2="12"></line>
+                       </svg>
+                       Add Task
+                   </a>
             </div>
             <div class="top-nav-right">
                 <!-- Queue Status Indicator with Popover -->
@@ -127,6 +140,12 @@
                                     <span class="dmr-checking">checking...</span>
                                 </span>
                             </div>
+                            <div class="queue-stats-row">
+                                <span class="queue-stat-label">Director:</span>
+                                <span class="queue-stat-value" id="popover-director-status">
+                                    <span class="director-checking">checking...</span>
+                                </span>
+                            </div>
                             <div class="queue-current-job" id="popover-current-job" style="display: none;">
                                 <div class="queue-job-header">Current Job</div>
                                 <div class="queue-job-details">
@@ -148,22 +167,27 @@
                                 <div class="queue-job-header">Up Next</div>
                                 <ul id="popover-next-jobs"></ul>
                             </div>
+                            <!-- LLM Activity Feed -->
+                            <div class="llm-activity-section" id="llm-activity-section">
+                                <div class="queue-job-header">
+                                    <span>DMR Activity</span>
+                                    <button class="queue-log-refresh" onclick="refreshLLMActivity()" title="Refresh">↻</button>
+                                </div>
+                                <div class="llm-activity-feed" id="llm-activity-feed">
+                                    <div class="llm-activity-empty">No recent activity</div>
+                                </div>
+                            </div>
                         </div>
                         <div class="queue-popover-footer">
                             <a href="/api/queue/status" target="_blank" class="btn btn-xs btn-secondary">View Raw</a>
+                            <a href="/api/llm/activity" target="_blank" class="btn btn-xs btn-secondary">Activity</a>
                             <button class="btn btn-xs btn-danger" id="popover-kill-btn" onclick="killCurrentJob()" style="display: none;">Kill Job</button>
-                        </div>
-                    </div>
-                </div>
-                <a href="/api/status" class="nav-item-sm" target="_blank" title="API Status">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="16" x2="12" y2="12"></line>
-                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                    </svg>
-                </a>
-                <div class="refresh-indicator" id="refresh-indicator" title="Auto-refreshing every 30s">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+               </div>
+               <!--
+               <a href="/api/status" class="nav-item-sm" target="_blank" title="API Status">
+               -->
+               <div class="refresh-indicator" id="refresh-indicator" title="Auto-refreshing every 30s">
+                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M23 4v6h-6M1 20v-6h6"></path>
                         <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
                     </svg>
@@ -372,6 +396,17 @@
                     }
                 }
 
+                // Director status
+                const directorEl = document.getElementById('popover-director-status');
+                const director = data.director;
+                if (director) {
+                    if (director.running) {
+                        directorEl.innerHTML = `<span class="director-running">● Running</span> <span class="director-interval">(${director.poll_interval}s)</span>`;
+                    } else {
+                        directorEl.innerHTML = `<span class="director-stopped">● Stopped</span> <button class="btn-start-director" onclick="startDirector()">Start</button>`;
+                    }
+                }
+
                 // Current job details
                 const jobSection = document.getElementById('popover-current-job');
                 const logSection = document.getElementById('popover-log-section');
@@ -491,6 +526,70 @@
                 popoverOpen = false;
             };
 
+            window.startDirector = function() {
+                fetch('/api/director/start', { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'started' || data.status === 'already_running') {
+                            updateQueueStatus();
+                        } else {
+                            alert('Failed to start Director: ' + (data.message || 'Unknown error'));
+                        }
+                    })
+                    .catch(err => {
+                        alert('Error starting Director: ' + err.message);
+                    });
+            };
+
+            window.stopDirector = function() {
+                fetch('/api/director/stop', { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        updateQueueStatus();
+                    })
+                    .catch(err => {
+                        alert('Error stopping Director: ' + err.message);
+                    });
+            };
+
+            window.refreshLLMActivity = function() {
+                const feedEl = document.getElementById('llm-activity-feed');
+                feedEl.innerHTML = '<div class="llm-activity-loading">Loading...</div>';
+
+                fetch('/api/llm/activity?limit=5')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.activity && data.activity.length > 0) {
+                            feedEl.innerHTML = data.activity.map(item => {
+                                const roleClass = `role-${item.role}`;
+                                const typeClass = `type-${item.type}`;
+                                const statusClass = item.status ? `status-${item.status}` : '';
+                                const time = item.timestamp ? formatTime(item.timestamp) : '';
+                                const typeLabel = item.type === 'agent' ? '🤖' : item.type === 'llm' ? '💬' : '📝';
+                                return `<div class="llm-activity-item ${roleClass} ${typeClass} ${statusClass}">
+                                    <div class="llm-activity-header">
+                                        <span class="llm-activity-role">${typeLabel} ${item.role}</span>
+                                        <span class="llm-activity-model">${item.model}</span>
+                                        <span class="llm-activity-time">${time}</span>
+                                    </div>
+                                    <div class="llm-activity-summary">${escapeHtml(item.summary)}</div>
+                                </div>`;
+                            }).join('');
+                        } else {
+                            feedEl.innerHTML = '<div class="llm-activity-empty">No recent activity</div>';
+                        }
+                    })
+                    .catch(err => {
+                        feedEl.innerHTML = '<div class="llm-activity-error">Failed to load activity</div>';
+                    });
+            };
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
             function togglePopover() {
                 const popover = document.getElementById('queue-popover');
                 popoverOpen = !popoverOpen;
@@ -502,6 +601,8 @@
                     if (lastQueueStatus.queue?.running_count > 0) {
                         refreshQueueLog();
                     }
+                    // Always fetch LLM activity
+                    refreshLLMActivity();
                 }
             }
 

@@ -112,6 +112,26 @@ class TestTask:
         assert len(task.requirements) == 1
         assert task.requirements[0].req_id == "R1"
 
+    def test_subtask_inherits_parent_requirements(self, db_session, sample_project, sample_requirement):
+        """Subtask should inherit requirements from parent."""
+        parent = Task(
+            project_id=sample_project.id,
+            task_id="T1",
+            title="Parent Task"
+        )
+        parent.requirements.append(sample_requirement)
+        child = Task(
+            project_id=sample_project.id,
+            task_id="T2",
+            title="Child Task",
+            parent=parent
+        )
+        db_session.add_all([parent, child])
+        db_session.commit()
+
+        effective = child.get_effective_requirements()
+        assert sample_requirement in effective
+
 
 class TestRun:
     """Tests for Run model."""

@@ -583,6 +583,12 @@ secrets.yaml
             # Security findings: look for vulnerabilities, issues, findings
             findings.extend(self._extract_security_findings(details))
 
+        # Identify parent task to attach findings as subtasks (latest in-progress)
+        parent_task = self.db.query(Task).filter(
+            Task.project_id == run.project_id,
+            Task.status == TaskStatus.IN_PROGRESS
+        ).order_by(Task.updated_at.desc()).first()
+
         # Get existing task count for numbering
         existing_count = self.db.query(Task).filter(Task.project_id == run.project_id).count()
 
@@ -613,9 +619,12 @@ secrets.yaml
                 priority=finding.get("priority", 5),
                 run_id=run_id,
                 pipeline_stage=TaskPipelineStage.DEV,  # Start in DEV stage
-                acceptance_criteria=finding.get("acceptance_criteria", [])
+                acceptance_criteria=finding.get("acceptance_criteria", []),
+                parent_task_id=parent_task.id if parent_task else None
             )
             self.db.add(task)
+            if parent_task and parent_task.requirements:
+                task.requirements.extend(parent_task.requirements)
             created_tasks.append(task)
 
             log_event(self.db, actor, "create_task_from_finding", "task", None,

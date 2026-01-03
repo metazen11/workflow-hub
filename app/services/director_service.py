@@ -25,6 +25,8 @@ from app.models.run import Run, RunState
 from app.models.project import Project
 from app.models.report import AgentReport, AgentRole, ReportStatus
 from app.models.audit import log_event
+from app.services.quality_requirements_service import load_quality_requirements
+from django.conf import settings
 
 
 # Default acceptance criteria templates by task type pattern
@@ -64,6 +66,7 @@ class DirectorService:
     # Pipeline stage progression
     STAGE_ORDER = [
         TaskPipelineStage.NONE,
+        TaskPipelineStage.PM,
         TaskPipelineStage.DEV,
         TaskPipelineStage.QA,
         TaskPipelineStage.SEC,
@@ -73,6 +76,7 @@ class DirectorService:
 
     # Map stages to agent roles
     STAGE_TO_AGENT = {
+        TaskPipelineStage.PM: AgentRole.PM,
         TaskPipelineStage.DEV: AgentRole.DEV,
         TaskPipelineStage.QA: AgentRole.QA,
         TaskPipelineStage.SEC: AgentRole.SECURITY,
@@ -380,6 +384,17 @@ class DirectorService:
             # Unknown stage, start from DEV
             next_stage = TaskPipelineStage.DEV
 
+        # Prevent completion if subtasks are incomplete
+        if next_stage == TaskPipelineStage.COMPLETE and self._has_incomplete_subtasks(task):
+            return False, "Cannot complete task with incomplete subtasks"
+
+        # Apply configured subtask templates for this transition
+        created_count = self._apply_subtask_templates(task, current_stage, next_stage)
+        if created_count:
+            return False, "Subtasks created for this transition; complete them before advancing"
+        if self._has_incomplete_subtasks(task):
+            return False, "Awaiting subtask completion before advancing"
+
         # Update task
         old_stage = task.pipeline_stage
         task.pipeline_stage = next_stage
@@ -407,6 +422,128 @@ class DirectorService:
         )
 
         return True, f"Advanced from {old_stage.value if old_stage else 'none'} to {next_stage.value}"
+
+    def _has_incomplete_subtasks(self, task: Task) -> bool:
+        """Return True if any subtasks are not done."""
+        return any(subtask.status != TaskStatus.DONE for subtask in (task.subtasks or []))
+
+    def _apply_subtask_templates(
+        self,
+        task: Task,
+        current_stage: TaskPipelineStage,
+        next_stage: TaskPipelineStage
+    ) -> int:
+        """Create subtasks based on configured pipeline templates for a transition."""
+        templates = self._get_subtask_templates(task.project_id)
+        if not templates:
+            return 0
+
+        created = 0
+        existing_titles = {subtask.title for subtask in (task.subtasks or [])}
+        transition_from = (current_stage.value if current_stage else "none").lower()
+        transition_to = (next_stage.value if next_stage else "none").lower()
+
+        for template in templates:
+            if template.get("trigger_from") != transition_from:
+                continue
+            if template.get("trigger_to") != transition_to:
+                continue
+
+            requirements = template.get("template_items")
+            if not isinstance(requirements, list):
+                template_path = template.get("template_path")
+                if template_path and not os.path.isabs(template_path):
+                    template_path = os.path.join(settings.BASE_DIR, template_path)
+                requirements = load_quality_requirements(template_path)
+            if not requirements:
+                continue
+
+            auto_stage = template.get("auto_assign_stage", "dev").lower()
+            try:
+                stage_enum = TaskPipelineStage.get_stage_map().get(auto_stage.upper()) or TaskPipelineStage.DEV
+            except Exception:
+                stage_enum = TaskPipelineStage.DEV
+
+            for requirement in requirements:
+                title = requirement.get("subtask_title") or f"Subtask: {requirement.get('title', 'Check')}"
+                if title in existing_titles:
+                    continue
+
+                subtask = Task(
+                    project_id=task.project_id,
+                    task_id=self._next_task_id(task.project_id),
+                    title=title,
+                    description=requirement.get("description", ""),
+                    status=TaskStatus.BACKLOG,
+                    priority=task.priority,
+                    pipeline_stage=stage_enum,
+                    acceptance_criteria=requirement.get("acceptance_criteria", []),
+                    parent_task_id=task.id
+                )
+                self.db.add(subtask)
+                if template.get("inherit_requirements", True) and task.requirements:
+                    subtask.requirements.extend(task.requirements)
+                created += 1
+
+        if created:
+            self.db.commit()
+            log_event(
+                self.db,
+                actor="director",
+                action="create_subtasks_from_template",
+                entity_type="task",
+                entity_id=task.id,
+                details={"count": created, "task_id": task.task_id}
+            )
+
+        return created
+
+    def _get_subtask_templates(self, project_id: int) -> list:
+        """Load subtask templates from active pipeline config or defaults."""
+        try:
+            from app.models.pipeline_config import PipelineConfig
+            config = self.db.query(PipelineConfig).filter(
+                PipelineConfig.project_id == project_id,
+                PipelineConfig.is_active == True
+            ).order_by(PipelineConfig.version.desc()).first()
+
+            if config:
+                if isinstance(config.settings, dict):
+                    templates = config.settings.get("subtask_templates")
+                    if isinstance(templates, list):
+                        return templates
+                if isinstance(config.nodes, list):
+                    node_templates = []
+                    for node in config.nodes:
+                        if node.get("type") != "subtask":
+                            continue
+                        data = node.get("data") or {}
+                        node_templates.append({
+                            "trigger_from": (data.get("triggerFrom") or "pm").lower(),
+                            "trigger_to": (data.get("triggerTo") or "dev").lower(),
+                            "template_path": data.get("templatePath") or "config/qa_requirements.json",
+                            "template_items": data.get("templateItems") if isinstance(data.get("templateItems"), list) else None,
+                            "auto_assign_stage": (data.get("autoAssignStage") or "dev").lower(),
+                            "inherit_requirements": bool(data.get("inheritRequirements", True)),
+                        })
+                    if node_templates:
+                        return node_templates
+        except Exception:
+            pass
+
+        # Default template (PM -> DEV)
+        return [{
+            "trigger_from": "pm",
+            "trigger_to": "dev",
+            "template_path": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "qa_requirements.json"),
+            "auto_assign_stage": "dev",
+            "inherit_requirements": True
+        }]
+
+    def _next_task_id(self, project_id: int) -> str:
+        """Generate next task_id for a project."""
+        count = self.db.query(Task).filter(Task.project_id == project_id).count()
+        return f"T{count + 1:03d}"
 
     def _loop_back_to_dev(self, task: Task, report: AgentReport) -> Tuple[bool, str]:
         """Loop a task back to DEV stage after failure.
@@ -940,9 +1077,11 @@ class TaskOrchestrator:
 
         # Find tasks that are IN_PROGRESS but don't have an active run
         # or have a run that's in a failed/stuck state
+        # Include PM stage for planning/scoping work
         tasks = self.db.query(Task).filter(
             Task.status == TaskStatus.IN_PROGRESS,
             Task.pipeline_stage.in_([
+                TaskPipelineStage.PM,
                 TaskPipelineStage.DEV,
                 TaskPipelineStage.QA,
                 TaskPipelineStage.SEC,
@@ -1007,6 +1146,7 @@ def run_director_daemon(db_getter, run_id: int = None, poll_interval: int = 30, 
     - Triggers agents for tasks that need work
     - Retries stuck tasks (up to 3 times, 5 min intervals)
     - Blocks tasks that exceed retry limits
+    - Updates database heartbeat for status monitoring
 
     Args:
         db_getter: Function that returns a database session
@@ -1030,6 +1170,13 @@ def run_director_daemon(db_getter, run_id: int = None, poll_interval: int = 30, 
     while True:
         try:
             db = next(db_getter())
+
+            # Update heartbeat in database for status monitoring
+            try:
+                from app.models.director_settings import DirectorSettings
+                DirectorSettings.update_heartbeat(db)
+            except Exception as e:
+                print(f"Failed to update heartbeat: {e}")
 
             # Initialize or update orchestrator with fresh db session
             if orchestrator is None:

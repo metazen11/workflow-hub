@@ -37,6 +37,7 @@ from app.models.app_settings import AppSetting
 from app.models.deployment_history import DeploymentHistory, DeploymentStatus
 from app.models.llm_session import LLMSession
 from app.models.llm_job import LLMJob, JobType, JobStatus, JobPriority
+from app.models.pipeline_config import PipelineConfig, PipelineConfigHistory
 from app.models.claim import (
     Claim, ClaimTest, ClaimEvidence,
     ClaimScope, ClaimStatus, ClaimCategory,
@@ -95,6 +96,8 @@ __all__ = [
     'JobType',
     'JobStatus',
     'JobPriority',
+    'PipelineConfig',
+    'PipelineConfigHistory',
     'AuditEvent',
     'Webhook',
 

@@ -26,6 +26,136 @@ from app.models.task import TaskPipelineStage
 from app.models.report import AgentRole, ReportStatus
 from app.models.audit import log_event
 from app.services.run_service import RunService
+import shlex
+import urllib.request
+import socket
+import subprocess as _subprocess
+
+
+# Simple process tracker for local goose web instances (dev use only)
+GOOSE_PROCESSES = {}  # port -> Popen
+
+
+def _is_port_open(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except Exception:
+        return False
+
+
+@csrf_exempt
+def goose_start(request):
+    """Start a local Goose web service in the given cwd on the requested port (dev convenience).
+
+    POST body JSON: {"cwd": "/path/to/repo", "port": 8080}
+    Returns JSON {running: True, url: "http://localhost:port"} on success.
+    """
+    data = _get_json_body(request)
+    # Support form-encoded POST (fallback HTML forms) as well as JSON
+    if not data:
+        try:
+            post = request.POST
+            data = {k: post.get(k) for k in post.keys()} if post else {}
+        except Exception:
+            data = {}
+
+    cwd = data.get('cwd') or os.getcwd()
+    try:
+        port = int(data.get('port') or os.getenv('GOOSE_WEB_PORT', 8080))
+    except Exception:
+        port = int(os.getenv('GOOSE_WEB_PORT', 8080))
+
+    if port in GOOSE_PROCESSES and GOOSE_PROCESSES[port].poll() is None:
+        return JsonResponse({"running": True, "url": f"http://localhost:{port}", "message": "Already running"})
+
+    # Prefer a user-specified command, fallback to a common goose web invocation.
+    cmd_template = os.getenv('GOOSE_WEB_CMD', 'goose web --port {port} --cwd "{cwd}"')
+    cmd = cmd_template.format(port=port, cwd=cwd)
+    args = shlex.split(cmd)
+
+    log_dir = os.path.join(settings.BASE_DIR, 'logs')
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception:
+        log_dir = '/tmp'
+
+    stdout_path = os.path.join(log_dir, f'goose_{port}.out')
+    stderr_path = os.path.join(log_dir, f'goose_{port}.err')
+
+    try:
+        out_f = open(stdout_path, 'a')
+        err_f = open(stderr_path, 'a')
+        proc = _subprocess.Popen(args, cwd=cwd, stdout=out_f, stderr=err_f, start_new_session=True)
+        GOOSE_PROCESSES[port] = proc
+    except FileNotFoundError as e:
+        return JsonResponse({"running": False, "error": f"Command not found: {args[0]}. Install goose and try again.", "cmd": args}, status=500)
+    except Exception as e:
+        return JsonResponse({"running": False, "error": str(e), "cmd": args}, status=500)
+
+    # Wait briefly for port to open
+    import time
+    for _ in range(10):
+        if _is_port_open('127.0.0.1', port):
+            return JsonResponse({"running": True, "url": f"http://localhost:{port}"})
+        time.sleep(0.3)
+
+    return JsonResponse({"running": True, "url": f"http://localhost:{port}", "message": "Started but not yet responding"})
+
+
+@csrf_exempt
+def goose_stop(request):
+    """Stop a previously started local Goose web service.
+
+    POST body JSON: {"port": 8080}
+    """
+    data = _get_json_body(request)
+    if not data:
+        try:
+            post = request.POST
+            data = {k: post.get(k) for k in post.keys()} if post else {}
+        except Exception:
+            data = {}
+
+    try:
+        port = int(data.get('port') or os.getenv('GOOSE_WEB_PORT', 8080))
+    except Exception:
+        port = int(os.getenv('GOOSE_WEB_PORT', 8080))
+
+    proc = GOOSE_PROCESSES.get(port)
+    if not proc:
+        return JsonResponse({"stopped": True, "message": "No managed process"})
+
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    GOOSE_PROCESSES.pop(port, None)
+    return JsonResponse({"stopped": True})
+
+
+def goose_status(request):
+    """Return status of a goose web service. Query param `port` optional."""
+    port = int(request.GET.get('port') or os.getenv('GOOSE_WEB_PORT', 8080))
+    running = False
+    managed = False
+    proc = GOOSE_PROCESSES.get(port)
+    if proc and proc.poll() is None:
+        running = True
+        managed = True
+    # Also check if something is listening on the port
+    available = _is_port_open('127.0.0.1', port)
+    return JsonResponse({
+        "port": port,
+        "running": running or available,
+        "managed": managed,
+        "url": f"http://localhost:{port}"
+    })
 
 # Upload directory
 UPLOAD_DIR = os.path.join(settings.BASE_DIR, 'uploads', 'attachments')
@@ -242,6 +372,90 @@ def project_detail(request, project_id):
             "tasks": [t.to_dict() for t in project.tasks],
             "runs": [r.to_dict() for r in project.runs],
         })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def project_refresh(request, project_id):
+    """Refresh project details (UI helper).
+
+    POST /api/projects/{id}/refresh
+    Returns the same payload as project_detail for UI refresh.
+    """
+    db = next(get_db())
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return JsonResponse({"error": "Project not found"}, status=404)
+
+        log_event(db, "human", "refresh", "project", project_id, {})
+        return JsonResponse({
+            "project": project.to_dict(),
+            "requirements": [r.to_dict() for r in project.requirements],
+            "tasks": [t.to_dict() for t in project.tasks],
+            "runs": [r.to_dict() for r in project.runs],
+        })
+    finally:
+        db.close()
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def orchestrator_context(request, project_id):
+    """Return project context for orchestrator/agent use.
+
+    GET /api/projects/{id}/context
+
+    Query params:
+    - include_files: Comma-separated list of files to include from repo_path
+    """
+    import os
+
+    include_files = request.GET.get("include_files")
+    if include_files:
+        include_files = [f.strip() for f in include_files.split(",") if f.strip()]
+
+    db = next(get_db())
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return JsonResponse({"error": "Project not found"}, status=404)
+
+        context = {
+            "project": project.to_dict(),
+            "commands": {
+                "build": project.build_command,
+                "test": project.test_command,
+                "run": project.run_command,
+                "deploy": project.deploy_command,
+                **(project.additional_commands or {})
+            },
+            "files": {},
+        }
+
+        if project.repo_path and os.path.isdir(project.repo_path):
+            priority_files = include_files or [
+                "CLAUDE.md",
+                "coding_principles.md",
+                "todo.json",
+                "_spec/BRIEF.md",
+                "_spec/WORK_CYCLE.md",
+                "_spec/SESSION_CONTEXT.md",
+            ]
+            for filename in priority_files:
+                filepath = os.path.join(project.repo_path, filename)
+                if os.path.isfile(filepath):
+                    try:
+                        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                            content = f.read()
+                            if len(content) < 10000:
+                                context["files"][filename] = content
+                    except Exception:
+                        continue
+
+        return JsonResponse(context)
     finally:
         db.close()
 
@@ -509,6 +723,8 @@ def task_create(request, project_id):
         blocked_by: List of blocking task IDs
         acceptance_criteria: List of criteria strings
         run_id: Associate with a run
+        parent_task_id: Optional parent task ID for subtasks
+        inherit_requirements: If true, copy parent requirements (default true)
         auto_attach: If true, parse description for file paths and attach (default true)
     """
     import os
@@ -541,6 +757,15 @@ def task_create(request, project_id):
             elif stage_str.lower() == 'backlog':
                 pipeline_stage = TaskPipelineStage.NONE
 
+        parent_task_id = data.get("parent_task_id")
+        parent_task = None
+        if parent_task_id:
+            parent_task = db.query(Task).filter(Task.id == parent_task_id).first()
+            if not parent_task:
+                return JsonResponse({"error": "parent_task_id not found"}, status=404)
+            if parent_task.project_id != project_id:
+                return JsonResponse({"error": "parent_task_id must belong to same project"}, status=400)
+
         task = Task(
             project_id=project_id,
             task_id=task_id,
@@ -550,11 +775,17 @@ def task_create(request, project_id):
             blocked_by=data.get("blocked_by", []),
             acceptance_criteria=data.get("acceptance_criteria", []),
             status=TaskStatus.BACKLOG,
-            pipeline_stage=pipeline_stage
+            pipeline_stage=pipeline_stage,
+            parent_task_id=parent_task_id
         )
         db.add(task)
         db.commit()
         db.refresh(task)
+
+        inherit_requirements = data.get("inherit_requirements", True)
+        if parent_task and inherit_requirements and parent_task.requirements:
+            task.requirements.extend(parent_task.requirements)
+            db.commit()
 
         # Auto-attach files referenced in description
         attached_files = []
@@ -1255,1757 +1486,6 @@ def run_director_process(request, run_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def task_director_prepare(request, task_id):
-    """Have the director prepare and optionally run a specific task.
-
-    The director will:
-    - Enrich the task with missing acceptance criteria
-    - Validate task readiness
-    - Optionally trigger agent execution
-
-    Body:
-        auto_trigger (bool): If True, automatically trigger agent for this task
-    """
-    from app.services.director_service import DirectorService
-
-    data = _get_json_body(request) or {}
-    auto_trigger = data.get("auto_trigger", True)
-
-    db = next(get_db())
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        director = DirectorService(db)
-
-        # Prepare (enrich + validate)
-        result = director.prepare_and_run_task(task) if auto_trigger else {
-            "task_id": task.task_id,
-            "enriched": False,
-            "triggered": False,
-            "message": ""
-        }
-
-        # If not auto-triggering, just enrich
-        if not auto_trigger:
-            enriched, msg = director.enrich_task(task)
-            is_ready, issues = director.validate_task_readiness(task)
-            result["enriched"] = enriched
-            result["issues"] = issues
-            result["message"] = msg if enriched else ("Ready for agent" if is_ready else "; ".join(issues))
-
-        return JsonResponse(result)
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def task_enhance(request, task_id):
-    """Use LLM to enhance task description with project context.
-
-    Takes the current task description and uses an LLM to:
-    - Clarify the requirements
-    - Add technical context from the project
-    - Suggest implementation details
-    - Improve acceptance criteria
-
-    Body:
-        field (str): Which field to enhance - 'description' or 'criteria' (default: 'description')
-    """
-    from app.services.llm_service import query_llm
-
-    data = _get_json_body(request) or {}
-    field = data.get("field", "description")
-
-    db = next(get_db())
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        project = task.project
-        if not project:
-            return JsonResponse({"error": "Task has no project"}, status=400)
-
-        # Build enhancement prompt based on field
-        if field == "criteria":
-            current_content = "\n".join(task.acceptance_criteria) if task.acceptance_criteria else "(none)"
-            prompt = f"""Enhance these acceptance criteria for the task:
-
-Task: {task.title}
-Description: {task.description or '(none)'}
-
-Current Acceptance Criteria:
-{current_content}
-
-Please provide improved acceptance criteria that are:
-1. Specific and testable
-2. Clear about expected behavior
-3. Include edge cases where relevant
-4. Measurable (pass/fail)
-
-Return ONLY the enhanced criteria, one per line, without numbering or bullets."""
-
-        else:  # description
-            prompt = f"""Enhance this task description with technical context:
-
-Task Title: {task.title}
-Current Description: {task.description or '(none)'}
-
-Acceptance Criteria:
-{chr(10).join(task.acceptance_criteria) if task.acceptance_criteria else '(none)'}
-
-Please provide an enhanced description that:
-1. Clarifies the requirements
-2. Adds relevant technical context based on the project
-3. Suggests implementation approach
-4. Identifies potential challenges
-5. Is concise but comprehensive
-
-Return ONLY the enhanced description, no headers or labels."""
-
-        # Query LLM with project context
-        result = query_llm(
-            prompt=prompt,
-            project_id=project.id,
-            task_id=task.id,
-            system_prompt=f"""You are a technical project manager enhancing task specifications for the project "{project.name}".
-Your goal is to make the task clearer and more actionable for developers.
-Be concise but thorough. Focus on practical implementation details.""",
-            include_context=True,
-            temperature=0.7,
-            db_session=db
-        )
-
-        enhanced_content = result.get("content", "").strip()
-
-        if not enhanced_content:
-            return JsonResponse({"error": "LLM returned empty response"}, status=500)
-
-        # Update the task
-        if field == "criteria":
-            # Parse criteria (one per line)
-            new_criteria = [c.strip() for c in enhanced_content.split("\n") if c.strip()]
-            task.acceptance_criteria = new_criteria
-            db.commit()
-            return JsonResponse({
-                "success": True,
-                "field": "criteria",
-                "enhanced": new_criteria,
-                "original": current_content
-            })
-        else:
-            original = task.description
-            task.description = enhanced_content
-            db.commit()
-            return JsonResponse({
-                "success": True,
-                "field": "description",
-                "enhanced": enhanced_content,
-                "original": original
-            })
-
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def task_simplify(request, task_id):
-    """Simplify a complex task into step-by-step implementation instructions.
-
-    Takes a verbose task description and uses LLM to create:
-    - Clear, numbered steps
-    - Specific file paths and line numbers
-    - Exact code changes (old -> new)
-    - Verification commands
-
-    This makes tasks executable by agents without interpretation.
-    """
-    from app.services.llm_service import query_llm
-
-    db = next(get_db())
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        project = task.project
-        if not project:
-            return JsonResponse({"error": "Task has no project"}, status=400)
-
-        prompt = f"""Simplify this task into step-by-step implementation instructions.
-
-Task: {task.title}
-Description:
-{task.description or '(none)'}
-
-Acceptance Criteria:
-{chr(10).join(f'- {c}' for c in task.acceptance_criteria) if task.acceptance_criteria else '(none)'}
-
-Create a simplified implementation plan with:
-1. Numbered steps (1, 2, 3...)
-2. Each step has ONE specific action
-3. Include exact file paths
-4. Include exact code snippets to add/modify
-5. Use format: "In FILE, find OLD_CODE and replace with NEW_CODE"
-6. End with verification command
-
-Keep it concise - agents work better with simple, direct instructions.
-
-Example format:
-1. Open `app/templates/file.html`
-2. Find: `<div class="old">`
-3. Replace with: `<div class="new">`
-4. Verify: `curl http://localhost:8000/path | grep "new"`
-
-Return ONLY the numbered steps, no preamble."""
-
-        result = query_llm(
-            prompt=prompt,
-            project_id=project.id,
-            task_id=task.id,
-            system_prompt=f"""You are a senior developer creating implementation instructions for the project "{project.name}".
-Your goal is to make complex tasks simple and executable.
-Be extremely specific - include exact file paths, line numbers, code snippets.
-Each step should be ONE atomic action.""",
-            include_context=True,
-            temperature=0.3,  # Lower temperature for more precise output
-            db_session=db
-        )
-
-        simplified = result.get("content", "").strip()
-
-        if not simplified:
-            return JsonResponse({"error": "LLM returned empty response"}, status=500)
-
-        # Store original and update description with simplified version
-        original = task.description
-        task.description = f"""## Implementation Steps
-
-{simplified}
-
----
-<details>
-<summary>Original Description</summary>
-
-{original}
-</details>"""
-        db.commit()
-
-        return JsonResponse({
-            "success": True,
-            "simplified": simplified,
-            "original": original,
-            "task": task.to_dict()
-        })
-
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-    finally:
-        db.close()
-
-
-# --- Threat Intel ---
-
-def threat_intel_list(request):
-    """List all threat intel entries."""
-    db = next(get_db())
-    try:
-        entries = db.query(ThreatIntel).order_by(ThreatIntel.date_reported.desc()).all()
-        return JsonResponse({"threat_intel": [e.to_dict() for e in entries]})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def threat_intel_create(request):
-    """Create a threat intel entry."""
-    data = _get_json_body(request)
-    if not data:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    db = next(get_db())
-    try:
-        entry = ThreatIntel(
-            date_reported=date.fromisoformat(data.get("date_reported", date.today().isoformat())),
-            source=data.get("source"),
-            summary=data.get("summary"),
-            affected_tech=data.get("affected_tech"),
-            action=data.get("action"),
-            status=ThreatStatus.NEW
-        )
-        db.add(entry)
-        db.commit()
-        db.refresh(entry)
-        log_event(db, "security", "create", "threat_intel", entry.id, {"source": entry.source})
-        return JsonResponse({"threat_intel": entry.to_dict()}, status=201)
-    finally:
-        db.close()
-
-
-# --- Credentials ---
-
-def credentials_list(request, project_id):
-    """List credentials for a project."""
-    db = next(get_db())
-    try:
-        credentials = db.query(Credential).filter(Credential.project_id == project_id).all()
-        return JsonResponse({"credentials": [c.to_dict() for c in credentials]})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def credential_create(request, project_id):
-    """Create a credential for a project."""
-    data = _get_json_body(request)
-    if not data:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    db = next(get_db())
-    try:
-        cred_type = data.get("credential_type", "api_key")
-        try:
-            cred_type_enum = CredentialType(cred_type)
-        except ValueError:
-            cred_type_enum = CredentialType.OTHER
-
-        from app.services.crypto_service import encrypt
-        credential = Credential(
-            project_id=project_id,
-            name=data.get("name"),
-            credential_type=cred_type_enum,
-            service=data.get("service"),
-            description=data.get("description"),
-            username=data.get("username"),
-            password_encrypted=encrypt(data.get("password", "")),
-            api_key_encrypted=encrypt(data.get("api_key", "")),
-            token_encrypted=encrypt(data.get("token", "")),
-            ssh_key_path=data.get("ssh_key_path"),
-            ssh_key_encrypted=encrypt(data.get("ssh_key", "")),
-            database_url_encrypted=encrypt(data.get("database_url", "")),
-            environment=data.get("environment"),
-        )
-        db.add(credential)
-        db.commit()
-        db.refresh(credential)
-        log_event(db, "human", "create", "credential", credential.id, {"name": credential.name})
-        return JsonResponse({"credential": credential.to_dict()}, status=201)
-    finally:
-        db.close()
-
-
-def credential_detail(request, credential_id):
-    """Get credential details."""
-    db = next(get_db())
-    try:
-        credential = db.query(Credential).filter(Credential.id == credential_id).first()
-        if not credential:
-            return JsonResponse({"error": "Credential not found"}, status=404)
-        return JsonResponse({"credential": credential.to_dict()})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["PUT", "PATCH"])
-def credential_update(request, credential_id):
-    """Update a credential."""
-    data = _get_json_body(request)
-    if not data:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    db = next(get_db())
-    try:
-        credential = db.query(Credential).filter(Credential.id == credential_id).first()
-        if not credential:
-            return JsonResponse({"error": "Credential not found"}, status=404)
-
-        # Update allowed fields
-        for field in ["name", "service", "description", "username", "environment", "ssh_key_path"]:
-            if field in data:
-                setattr(credential, field, data[field])
-
-        # Update encrypted fields
-        from app.services.crypto_service import encrypt
-        for field in ["password", "api_key", "token", "ssh_key", "database_url"]:
-            if field in data:
-                setattr(credential, f"{field}_encrypted", encrypt(data[field] or ""))
-
-        if "credential_type" in data:
-            try:
-                credential.credential_type = CredentialType(data["credential_type"])
-            except ValueError:
-                pass
-
-        db.commit()
-        db.refresh(credential)
-        log_event(db, "human", "update", "credential", credential.id, {"updated_fields": list(data.keys())})
-        return JsonResponse({"credential": credential.to_dict()})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["DELETE"])
-def credential_delete(request, credential_id):
-    """Delete a credential."""
-    db = next(get_db())
-    try:
-        credential = db.query(Credential).filter(Credential.id == credential_id).first()
-        if not credential:
-            return JsonResponse({"error": "Credential not found"}, status=404)
-
-        db.delete(credential)
-        db.commit()
-        log_event(db, "human", "delete", "credential", credential_id, {})
-        return JsonResponse({"success": True})
-    finally:
-        db.close()
-
-
-# --- Environments ---
-
-def environments_list(request, project_id):
-    """List environments for a project."""
-    db = next(get_db())
-    try:
-        environments = db.query(Environment).filter(Environment.project_id == project_id).all()
-        return JsonResponse({"environments": [e.to_dict() for e in environments]})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def environment_create(request, project_id):
-    """Create an environment for a project."""
-    data = _get_json_body(request)
-    if not data:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    db = next(get_db())
-    try:
-        env_type = data.get("env_type", "development")
-        try:
-            env_type_enum = EnvironmentType(env_type)
-        except ValueError:
-            env_type_enum = EnvironmentType.OTHER
-
-        environment = Environment(
-            project_id=project_id,
-            name=data.get("name"),
-            env_type=env_type_enum,
-            description=data.get("description"),
-            url=data.get("url"),
-            ip_address=data.get("ip_address"),
-            port=data.get("port"),
-            path=data.get("path"),
-            ssh_host=data.get("ssh_host"),
-            ssh_port=data.get("ssh_port", 22),
-            ssh_user=data.get("ssh_user"),
-            ssh_key_path=data.get("ssh_key_path"),
-            login_required=data.get("login_required", False),
-            login_url=data.get("login_url"),
-            auth_type=data.get("auth_type"),
-            database_host=data.get("database_host"),
-            database_port=data.get("database_port"),
-            database_name=data.get("database_name"),
-            deploy_command=data.get("deploy_command"),
-            health_check_url=data.get("health_check_url"),
-        )
-        db.add(environment)
-        db.commit()
-        db.refresh(environment)
-        log_event(db, "human", "create", "environment", environment.id, {"name": environment.name})
-        return JsonResponse({"environment": environment.to_dict()}, status=201)
-    finally:
-        db.close()
-
-
-def environment_detail(request, environment_id):
-    """Get environment details."""
-    db = next(get_db())
-    try:
-        environment = db.query(Environment).filter(Environment.id == environment_id).first()
-        if not environment:
-            return JsonResponse({"error": "Environment not found"}, status=404)
-        return JsonResponse({"environment": environment.to_dict()})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["PUT", "PATCH"])
-def environment_update(request, environment_id):
-    """Update an environment."""
-    data = _get_json_body(request)
-    if not data:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    db = next(get_db())
-    try:
-        environment = db.query(Environment).filter(Environment.id == environment_id).first()
-        if not environment:
-            return JsonResponse({"error": "Environment not found"}, status=404)
-
-        # Update allowed fields
-        for field in ["name", "description", "url", "ip_address", "port", "path",
-                      "ssh_host", "ssh_port", "ssh_user", "ssh_key_path",
-                      "login_required", "login_url", "auth_type",
-                      "database_host", "database_port", "database_name",
-                      "deploy_command", "health_check_url", "is_active"]:
-            if field in data:
-                setattr(environment, field, data[field])
-
-        if "env_type" in data:
-            try:
-                environment.env_type = EnvironmentType(data["env_type"])
-            except ValueError:
-                pass
-
-        db.commit()
-        db.refresh(environment)
-        log_event(db, "human", "update", "environment", environment.id, {"updated_fields": list(data.keys())})
-        return JsonResponse({"environment": environment.to_dict()})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["DELETE"])
-def environment_delete(request, environment_id):
-    """Delete an environment."""
-    db = next(get_db())
-    try:
-        environment = db.query(Environment).filter(Environment.id == environment_id).first()
-        if not environment:
-            return JsonResponse({"error": "Environment not found"}, status=404)
-
-        db.delete(environment)
-        db.commit()
-        log_event(db, "human", "delete", "environment", environment_id, {})
-        return JsonResponse({"success": True})
-    finally:
-        db.close()
-
-
-# --- Orchestrator Context ---
-
-def orchestrator_context(request, project_id):
-    """
-    Get full project context for orchestrator/agents.
-
-    GET /api/projects/{id}/context
-
-    Returns everything an agent needs to work on a project:
-    - Project metadata and all commands
-    - Key file contents (CLAUDE.md, coding_principles.md, todo.json, etc.)
-    - Tasks, environments, credentials (masked), requirements
-    - Recent work_cycles, proofs, and audit events
-
-    Query params:
-    - include_files: true/false (default true) - include key file contents
-    - include_history: true/false (default true) - include work_cycles/proofs
-    - max_file_size: int (default 50000) - max bytes per file
-    """
-    import os
-
-    include_files = request.GET.get("include_files", "true").lower() == "true"
-    include_history = request.GET.get("include_history", "true").lower() == "true"
-    max_file_size = int(request.GET.get("max_file_size", 50000))
-
-    db = next(get_db())
-    try:
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            return JsonResponse({"error": "Project not found"}, status=404)
-
-        # Get all related data
-        tasks = db.query(Task).filter(Task.project_id == project_id).all()
-        environments = db.query(Environment).filter(Environment.project_id == project_id).all()
-        credentials = db.query(Credential).filter(Credential.project_id == project_id).all()
-        requirements = db.query(Requirement).filter(Requirement.project_id == project_id).all()
-
-        result = {
-            "project": project.to_dict(include_children=True),
-            "tasks": [t.to_dict() for t in tasks],
-            "environments": [e.to_dict() for e in environments],
-            "credentials": [c.to_dict() for c in credentials],  # Masked by default
-            "requirements": [r.to_dict() for r in requirements],
-        }
-
-        # Commands summary for easy agent access
-        result["commands"] = {
-            "build": project.build_command,
-            "test": project.test_command,
-            "run": project.run_command,
-            "deploy": project.deploy_command,
-            **(project.additional_commands or {})
-        }
-
-        # Include key file contents if requested and repo_path exists
-        if include_files and project.repo_path and os.path.isdir(project.repo_path):
-            file_contents = {}
-
-            # Priority files for agent context
-            priority_files = [
-                "CLAUDE.md",
-                "coding_principles.md",
-                "todo.json",
-                "_spec/BRIEF.md",
-                "_spec/WORK_CYCLE.md",
-                "_spec/SESSION_CONTEXT.md",
-            ]
-
-            # Add project's key_files
-            all_files = priority_files + (project.key_files or [])
-            seen = set()
-
-            for filename in all_files:
-                if filename in seen:
-                    continue
-                seen.add(filename)
-
-                filepath = os.path.join(project.repo_path, filename)
-                if os.path.isfile(filepath):
-                    try:
-                        size = os.path.getsize(filepath)
-                        if size <= max_file_size:
-                            with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-                                file_contents[filename] = {
-                                    "content": f.read(),
-                                    "size": size
-                                }
-                        else:
-                            file_contents[filename] = {
-                                "content": f"[File too large: {size} bytes, max {max_file_size}]",
-                                "size": size,
-                                "truncated": True
-                            }
-                    except Exception as e:
-                        file_contents[filename] = {"error": str(e)}
-
-            result["files"] = file_contents
-
-        # Include recent history if requested
-        if include_history:
-            # Recent work_cycles
-            recent_work_cycles = db.query(WorkCycle).filter(
-                WorkCycle.project_id == project_id
-            ).order_by(WorkCycle.created_at.desc()).limit(10).all()
-            result["recent_work_cycles"] = [h.to_dict() for h in recent_work_cycles]
-
-            # Recent proofs
-            recent_proofs = db.query(Proof).filter(
-                Proof.project_id == project_id
-            ).order_by(Proof.created_at.desc()).limit(10).all()
-            result["recent_proofs"] = [p.to_dict() for p in recent_proofs]
-
-            # Recent audit events for this project
-            recent_events = db.query(AuditEvent).filter(
-                AuditEvent.entity_type == "project",
-                AuditEvent.entity_id == project_id
-            ).order_by(AuditEvent.timestamp.desc()).limit(20).all()
-            result["recent_events"] = [
-                {
-                    "id": e.id,
-                    "action": e.action,
-                    "actor": e.actor,
-                    "details": e.details,
-                    "timestamp": e.timestamp.isoformat() if e.timestamp else None
-                } for e in recent_events
-            ]
-
-        return JsonResponse(result)
-    finally:
-        db.close()
-
-
-def task_context(request, task_id):
-    """
-    Get full task context for orchestrator/agents.
-    Includes task details with project and acceptance criteria.
-    """
-    db = next(get_db())
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        project = task.project
-
-        return JsonResponse({
-            "task": task.to_dict(),
-            "project": project.to_dict() if project else None,
-            "requirements": [r.to_dict() for r in task.requirements],
-        })
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def project_refresh(request, project_id):
-    """
-    Refresh project information by scanning the repository.
-    Detects tech stack, key files, etc.
-    """
-    db = next(get_db())
-    try:
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            return JsonResponse({"error": "Project not found"}, status=404)
-
-        if not project.repo_path or not os.path.exists(project.repo_path):
-            return JsonResponse({"error": "Project repo_path not set or doesn't exist"}, status=400)
-
-        # Scan repository for tech stack info
-        repo_path = project.repo_path
-        detected = {"languages": [], "frameworks": [], "key_files": [], "config_files": []}
-
-        # Check for Python
-        if os.path.exists(os.path.join(repo_path, "requirements.txt")):
-            detected["languages"].append("Python")
-            detected["key_files"].append("requirements.txt")
-        if os.path.exists(os.path.join(repo_path, "setup.py")):
-            detected["key_files"].append("setup.py")
-        if os.path.exists(os.path.join(repo_path, "pyproject.toml")):
-            detected["key_files"].append("pyproject.toml")
-
-        # Check for Node.js
-        if os.path.exists(os.path.join(repo_path, "package.json")):
-            detected["languages"].append("JavaScript")
-            detected["key_files"].append("package.json")
-
-        # Check for common frameworks
-        if os.path.exists(os.path.join(repo_path, "app.py")):
-            detected["frameworks"].append("Flask")
-            detected["key_files"].append("app.py")
-            if not project.entry_point:
-                project.entry_point = "app.py"
-
-        if os.path.exists(os.path.join(repo_path, "manage.py")):
-            detected["frameworks"].append("Django")
-            detected["key_files"].append("manage.py")
-
-        # Check for config files
-        for config in [".env", ".env.example", "config.yaml", "config.json", "settings.py"]:
-            if os.path.exists(os.path.join(repo_path, config)):
-                detected["config_files"].append(config)
-
-        # Update project
-        if detected["languages"]:
-            project.languages = list(set((project.languages or []) + detected["languages"]))
-        if detected["frameworks"]:
-            project.frameworks = list(set((project.frameworks or []) + detected["frameworks"]))
-        if detected["key_files"]:
-            project.key_files = list(set((project.key_files or []) + detected["key_files"]))
-        if detected["config_files"]:
-            project.config_files = list(set((project.config_files or []) + detected["config_files"]))
-
-        db.commit()
-        db.refresh(project)
-
-        log_event(db, "system", "refresh", "project", project.id, {"detected": detected})
-
-        return JsonResponse({
-            "project": project.to_dict(),
-            "detected": detected
-        })
-    finally:
-        db.close()
-
-
-# --- Audit Log ---
-
-def audit_log(request):
-    """List recent audit events, optionally filtered by project, entity_type, or entity_id."""
-    limit = int(request.GET.get("limit", 100))
-    project_id = request.GET.get("project_id")
-    entity_type = request.GET.get("entity_type")
-    entity_id = request.GET.get("entity_id")
-
-    db = next(get_db())
-    try:
-        # Direct entity filter (e.g., specific task or run)
-        if entity_type and entity_id:
-            events = db.query(AuditEvent).filter(
-                AuditEvent.entity_type == entity_type,
-                AuditEvent.entity_id == int(entity_id)
-            ).order_by(AuditEvent.timestamp.desc()).limit(limit).all()
-            return JsonResponse({"events": [e.to_dict() for e in events]})
-
-        if project_id:
-            # Filter events related to a project (runs, tasks, project itself)
-            project_id = int(project_id)
-
-            # Get all run IDs for this project
-            run_ids = [r.id for r in db.query(Run.id).filter(Run.project_id == project_id).all()]
-            # Get all task IDs for this project
-            task_ids = [t.id for t in db.query(Task.id).filter(Task.project_id == project_id).all()]
-
-            from sqlalchemy import or_
-            query = db.query(AuditEvent).filter(
-                or_(
-                    (AuditEvent.entity_type == "project") & (AuditEvent.entity_id == project_id),
-                    (AuditEvent.entity_type == "run") & (AuditEvent.entity_id.in_(run_ids)) if run_ids else False,
-                    (AuditEvent.entity_type == "task") & (AuditEvent.entity_id.in_(task_ids)) if task_ids else False,
-                )
-            )
-        else:
-            query = db.query(AuditEvent)
-
-        events = query.order_by(AuditEvent.timestamp.desc()).limit(limit).all()
-        return JsonResponse({"audit_events": [e.to_dict() for e in events]})
-    finally:
-        db.close()
-
-
-def project_audit_log(request, project_id):
-    """List audit events for a specific project."""
-    limit = int(request.GET.get("limit", 100))
-
-    db = next(get_db())
-    try:
-        # Get all run IDs for this project
-        run_ids = [r.id for r in db.query(Run.id).filter(Run.project_id == project_id).all()]
-        # Get all task IDs for this project
-        task_ids = [t.id for t in db.query(Task.id).filter(Task.project_id == project_id).all()]
-
-        from sqlalchemy import or_
-        query = db.query(AuditEvent).filter(
-            or_(
-                (AuditEvent.entity_type == "project") & (AuditEvent.entity_id == project_id),
-                (AuditEvent.entity_type == "run") & (AuditEvent.entity_id.in_(run_ids)) if run_ids else False,
-                (AuditEvent.entity_type == "task") & (AuditEvent.entity_id.in_(task_ids)) if task_ids else False,
-            )
-        )
-
-        events = query.order_by(AuditEvent.timestamp.desc()).limit(limit).all()
-        return JsonResponse({
-            "project_id": project_id,
-            "audit_events": [e.to_dict() for e in events]
-        })
-    finally:
-        db.close()
-
-
-# --- Webhooks ---
-
-def webhooks_list(request):
-    """List all webhook configurations."""
-    db = next(get_db())
-    try:
-        webhooks = db.query(Webhook).order_by(Webhook.created_at.desc()).all()
-        return JsonResponse({"webhooks": [w.to_dict() for w in webhooks]})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def webhook_create(request):
-    """Create a webhook configuration for n8n integration."""
-    data = _get_json_body(request)
-    if not data:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    name = data.get("name")
-    url = data.get("url")
-    events = data.get("events", [])
-
-    if not name or not url:
-        return JsonResponse({"error": "name and url required"}, status=400)
-
-    if not events:
-        return JsonResponse({"error": "at least one event type required"}, status=400)
-
-    db = next(get_db())
-    try:
-        webhook = Webhook(
-            name=name,
-            url=url,
-            secret=data.get("secret"),
-            events=",".join(events) if isinstance(events, list) else events,
-            active=data.get("active", True)
-        )
-        db.add(webhook)
-        db.commit()
-        db.refresh(webhook)
-        log_event(db, "human", "create", "webhook", webhook.id, {"name": name, "url": url})
-        return JsonResponse({"webhook": webhook.to_dict()}, status=201)
-    finally:
-        db.close()
-
-
-def webhook_detail(request, webhook_id):
-    """Get webhook details."""
-    db = next(get_db())
-    try:
-        webhook = db.query(Webhook).filter(Webhook.id == webhook_id).first()
-        if not webhook:
-            return JsonResponse({"error": "Webhook not found"}, status=404)
-        return JsonResponse({"webhook": webhook.to_dict()})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def webhook_update(request, webhook_id):
-    """Update a webhook configuration."""
-    data = _get_json_body(request)
-    if not data:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    db = next(get_db())
-    try:
-        webhook = db.query(Webhook).filter(Webhook.id == webhook_id).first()
-        if not webhook:
-            return JsonResponse({"error": "Webhook not found"}, status=404)
-
-        if "name" in data:
-            webhook.name = data["name"]
-        if "url" in data:
-            webhook.url = data["url"]
-        if "secret" in data:
-            webhook.secret = data["secret"]
-        if "events" in data:
-            events = data["events"]
-            webhook.events = ",".join(events) if isinstance(events, list) else events
-        if "active" in data:
-            webhook.active = data["active"]
-
-        db.commit()
-        log_event(db, "human", "update", "webhook", webhook_id, data)
-        return JsonResponse({"webhook": webhook.to_dict()})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["DELETE", "POST"])
-def webhook_delete(request, webhook_id):
-    """Delete a webhook configuration."""
-    db = next(get_db())
-    try:
-        webhook = db.query(Webhook).filter(Webhook.id == webhook_id).first()
-        if not webhook:
-            return JsonResponse({"error": "Webhook not found"}, status=404)
-
-        db.delete(webhook)
-        db.commit()
-        log_event(db, "human", "delete", "webhook", webhook_id, {})
-        return JsonResponse({"deleted": True})
-    finally:
-        db.close()
-
-
-# --- Bug Reports ---
-
-def _add_cors_headers(response):
-    """Add CORS headers for cross-origin widget requests."""
-    response['Access-Control-Allow-Origin'] = '*'
-    response['Access-Control-Allow-Methods'] = 'GET, POST, PATCH, OPTIONS'
-    response['Access-Control-Allow-Headers'] = 'Content-Type'
-    return response
-
-
-def _notify_webhooks(db, event_type: str, payload: dict):
-    """Send notifications to registered webhooks for an event.
-
-    Args:
-        db: Database session
-        event_type: Event type (e.g., 'bug_created', 'state_change')
-        payload: Data to send to webhook
-    """
-    import threading
-    import requests
-    import hmac
-    import hashlib
-    import json
-
-    from app.models.webhook import Webhook
-
-    webhooks = db.query(Webhook).filter(Webhook.active == True).all()
-
-    for webhook in webhooks:
-        events = webhook.events.split(",") if webhook.events else []
-        if event_type not in events and "*" not in events:
-            continue
-
-        def send_webhook(url, secret, data):
-            try:
-                headers = {"Content-Type": "application/json"}
-                body = json.dumps(data)
-
-                if secret:
-                    signature = hmac.new(
-                        secret.encode(), body.encode(), hashlib.sha256
-                    ).hexdigest()
-                    headers["X-Webhook-Signature"] = signature
-
-                requests.post(url, data=body, headers=headers, timeout=10)
-            except Exception as e:
-                print(f"Webhook failed: {url} - {e}")
-
-        # Send async to not block response
-        thread = threading.Thread(
-            target=send_webhook,
-            args=(webhook.url, webhook.secret, payload)
-        )
-        thread.start()
-
-
-def bug_list(request):
-    """List all bug reports."""
-    db = next(get_db())
-    try:
-        bugs = db.query(BugReport).order_by(BugReport.created_at.desc()).all()
-        response = JsonResponse({"bugs": [b.to_dict() for b in bugs]})
-        return _add_cors_headers(response)
-    finally:
-        db.close()
-
-
-@csrf_exempt
-def bug_create(request):
-    """Create a new bug report. Supports CORS for cross-origin widget."""
-    # Handle CORS preflight
-    if request.method == 'OPTIONS':
-        response = JsonResponse({})
-        return _add_cors_headers(response)
-
-    if request.method != 'POST':
-        return JsonResponse({"error": "Method not allowed"}, status=405)
-
-    data = _get_json_body(request)
-    if not data:
-        response = JsonResponse({"error": "Invalid JSON"}, status=400)
-        return _add_cors_headers(response)
-
-    title = data.get("title")
-    if not title:
-        response = JsonResponse({"error": "title is required"}, status=400)
-        return _add_cors_headers(response)
-
-    db = next(get_db())
-    try:
-        # Get project_id if provided (auto-captured from UI)
-        project_id = data.get("project_id")
-        if project_id:
-            try:
-                project_id = int(project_id)
-            except (ValueError, TypeError):
-                project_id = None
-
-        report = BugReport(
-            title=title,
-            description=data.get("description"),
-            screenshot=data.get("screenshot"),
-            url=data.get("url"),
-            user_agent=request.headers.get("User-Agent"),
-            app_name=data.get("app_name"),
-            project_id=project_id
-        )
-        db.add(report)
-        db.commit()
-        db.refresh(report)
-        log_event(db, "human", "create", "bug_report", report.id, {"title": title})
-
-        # Notify team via webhooks
-        _notify_webhooks(db, "bug_created", {
-            "event": "bug_created",
-            "bug": {
-                "id": report.id,
-                "title": report.title,
-                "description": report.description,
-                "app_name": report.app_name,
-                "url": report.url,
-                "status": report.status.value,
-                "created_at": report.created_at.isoformat() if report.created_at else None,
-                "dashboard_url": f"http://localhost:8000/ui/bugs/{report.id}/"
-            }
-        })
-
-        response = JsonResponse({"id": report.id, "status": "created"}, status=201)
-        return _add_cors_headers(response)
-    finally:
-        db.close()
-
-
-def bug_detail(request, bug_id):
-    """Get a single bug report."""
-    db = next(get_db())
-    try:
-        bug = db.query(BugReport).filter(BugReport.id == bug_id).first()
-        if not bug:
-            return JsonResponse({"error": "Bug report not found"}, status=404)
-        return JsonResponse({"bug": bug.to_dict()})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["PATCH", "POST"])
-def bug_update_status(request, bug_id):
-    """Update bug report status."""
-    data = _get_json_body(request)
-    if not data:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    status_str = data.get("status")
-    if not status_str:
-        return JsonResponse({"error": "status is required"}, status=400)
-
-    # Validate status value
-    try:
-        new_status = BugReportStatus(status_str)
-    except ValueError:
-        valid = [s.value for s in BugReportStatus]
-        return JsonResponse({"error": f"Invalid status. Must be one of: {valid}"}, status=400)
-
-    db = next(get_db())
-    try:
-        bug = db.query(BugReport).filter(BugReport.id == bug_id).first()
-        if not bug:
-            return JsonResponse({"error": "Bug report not found"}, status=404)
-
-        bug.status = new_status
-
-        # Set resolved_at if status is resolved
-        if new_status == BugReportStatus.RESOLVED:
-            from datetime import datetime, timezone
-            bug.resolved_at = datetime.now(timezone.utc)
-
-        db.commit()
-        db.refresh(bug)
-        log_event(db, "human", "update", "bug_report", bug_id, {"status": status_str})
-        return JsonResponse({"bug": bug.to_dict()})
-    finally:
-        db.close()
-
-
-def activity_feed(request):
-    """Get combined activity feed for dashboard.
-
-    Returns recent bugs, runs, and audit events combined and sorted by time.
-    """
-    db = next(get_db())
-    try:
-        limit = int(request.GET.get('limit', 20))
-
-        activity = []
-
-        # Recent bugs (exclude killed)
-        recent_bugs = db.query(BugReport).filter(BugReport.killed == False).order_by(BugReport.created_at.desc()).limit(limit).all()
-        for b in recent_bugs:
-            activity.append({
-                'type': 'bug',
-                'id': b.id,
-                'title': f'Bug #{b.id}: {b.title}',
-                'description': f'{b.app_name or "Unknown app"} - {b.status.value}',
-                'status': b.status.value,
-                'timestamp': b.created_at.isoformat() if b.created_at else None,
-                'url': f'/ui/bugs/{b.id}/'
-            })
-
-        # Recent runs (exclude killed)
-        recent_runs = db.query(Run).filter(Run.killed == False).order_by(Run.created_at.desc()).limit(limit).all()
-        for r in recent_runs:
-            activity.append({
-                'type': 'run',
-                'id': r.id,
-                'title': f'Run: {r.name}',
-                'description': f'State: {r.state.value}',
-                'status': r.state.value,
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-                'url': f'/ui/run/{r.id}/'
-            })
-
-        # Recent audit events
-        recent_events = db.query(AuditEvent).order_by(AuditEvent.timestamp.desc()).limit(limit).all()
-        for e in recent_events:
-            activity.append({
-                'type': 'audit',
-                'id': e.id,
-                'title': f'{e.action.title()} {e.entity_type}',
-                'description': f'by {e.actor}',
-                'status': e.action,
-                'timestamp': e.timestamp.isoformat() if e.timestamp else None,
-                'url': None
-            })
-
-        # Sort by timestamp descending
-        activity.sort(key=lambda x: x['timestamp'] or '', reverse=True)
-
-        return JsonResponse({
-            'activity': activity[:limit],
-            'count': len(activity[:limit])
-        })
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def bug_kill(request, bug_id):
-    """Kill (soft delete) a bug report. Preserves history."""
-    from datetime import datetime, timezone
-
-    db = next(get_db())
-    try:
-        bug = db.query(BugReport).filter(BugReport.id == bug_id).first()
-        if not bug:
-            return JsonResponse({"error": "Bug report not found"}, status=404)
-
-        bug.killed = True
-        bug.killed_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(bug)
-
-        log_event(db, "human", "kill", "bug_report", bug_id, {"title": bug.title})
-        return JsonResponse({"success": True, "bug": bug.to_dict()})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def run_kill(request, run_id):
-    """Kill (soft delete) a run. Preserves history."""
-    from datetime import datetime, timezone
-
-    db = next(get_db())
-    try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            return JsonResponse({"error": "Run not found"}, status=404)
-
-        run.killed = True
-        run.killed_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(run)
-
-        log_event(db, "human", "kill", "run", run_id, {"name": run.name})
-        return JsonResponse({"success": True, "run": run.to_dict()})
-    finally:
-        db.close()
-
-
-# =============================================================================
-# Task Pipeline API - Individual task workflow tracking
-# =============================================================================
-
-# Stage progression map: which stage follows which
-STAGE_PROGRESSION = {
-    TaskPipelineStage.NONE: TaskPipelineStage.DEV,
-    TaskPipelineStage.DEV: TaskPipelineStage.QA,
-    TaskPipelineStage.QA: TaskPipelineStage.SEC,
-    TaskPipelineStage.SEC: TaskPipelineStage.DOCS,
-    TaskPipelineStage.DOCS: TaskPipelineStage.COMPLETE,
-}
-
-
-@csrf_exempt
-@require_http_methods(["GET"])
-def task_queue(request):
-    """
-    Get next task(s) for an agent to work on.
-
-    Query params:
-        - run_id: Filter by specific run (get project from run)
-        - project_id: Filter by project directly
-        - stage: Filter by pipeline stage (dev, qa, sec, docs)
-        - limit: Max tasks to return (default 1)
-
-    Returns tasks that need work at the specified stage.
-    NOTE: run_id no longer links directly to tasks - we get project from run.
-    """
-    run_id = request.GET.get("run_id")
-    project_id = request.GET.get("project_id")
-    stage = request.GET.get("stage", "dev").lower()
-    limit = int(request.GET.get("limit", 1))
-
-    if not run_id and not project_id:
-        return JsonResponse({"error": "run_id or project_id required"}, status=400)
-
-    # Use enum's DRY helper for stage lookup
-    stage_map = TaskPipelineStage.get_stage_map()
-    target_stage = stage_map.get(stage.upper())
-    if not target_stage:
-        return JsonResponse({"error": f"Invalid stage: {stage}. Valid: {', '.join(TaskPipelineStage.valid_stages())}"}, status=400)
-
-    db = next(get_db())
-    try:
-        # Get project_id from run if needed
-        if run_id and not project_id:
-            run = db.query(Run).filter(Run.id == int(run_id)).first()
-            if run:
-                project_id = run.project_id
-            else:
-                return JsonResponse({"error": "Run not found"}, status=404)
-
-        # Find tasks at this stage that aren't done (filter by project)
-        tasks = db.query(Task).filter(
-            Task.project_id == int(project_id),
-            Task.pipeline_stage == target_stage,
-            Task.status != TaskStatus.DONE
-        ).order_by(Task.priority.desc()).limit(limit).all()
-
-        return JsonResponse({
-            "tasks": [t.to_dict() for t in tasks],
-            "count": len(tasks),
-            "stage": stage
-        })
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def task_advance_stage(request, task_id):
-    """
-    Advance a task to the next pipeline stage.
-
-    Body (optional):
-        - result: "pass" or "fail" (default: pass)
-        - notes: Agent notes about the work done
-        - actor: Who is advancing (default: agent)
-
-    On pass: Task advances to next stage
-    On fail: Task goes back to DEV stage
-    """
-    data = _get_json_body(request) or {}
-    result = data.get("result", "pass").lower()
-    notes = data.get("notes", "")
-    actor = data.get("actor", "agent")
-
-    db = next(get_db())
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        current_stage = task.pipeline_stage or TaskPipelineStage.NONE
-
-        if result == "pass":
-            # Advance to next stage
-            next_stage = STAGE_PROGRESSION.get(current_stage, TaskPipelineStage.COMPLETE)
-            task.pipeline_stage = next_stage
-
-            if next_stage == TaskPipelineStage.COMPLETE:
-                task.status = TaskStatus.DONE
-                task.completed = True
-                from datetime import datetime, timezone
-                task.completed_at = datetime.now(timezone.utc)
-        else:
-            # Failed - loop back to DEV
-            task.pipeline_stage = TaskPipelineStage.DEV
-            task.status = TaskStatus.IN_PROGRESS
-
-        db.commit()
-        db.refresh(task)
-
-        log_event(db, actor, "advance_stage", "task", task_id, {
-            "from_stage": current_stage.value,
-            "to_stage": task.pipeline_stage.value,
-            "result": result,
-            "notes": notes
-        })
-
-        return JsonResponse({
-            "success": True,
-            "task": task.to_dict(),
-            "from_stage": current_stage.value,
-            "to_stage": task.pipeline_stage.value
-        })
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def task_set_stage(request, task_id):
-    """
-    Set a task's pipeline stage directly.
-
-    Body:
-        - stage: Target stage (none, dev, qa, sec, docs, complete)
-        - actor: Who is setting (default: agent)
-    """
-    data = _get_json_body(request) or {}
-    stage_str = data.get("stage", "").lower()
-    actor = data.get("actor", "agent")
-
-    # Use enum's DRY helper for stage lookup
-    stage_map = TaskPipelineStage.get_stage_map()
-    stage_str_upper = stage_str.upper()
-
-    if stage_str_upper not in stage_map:
-        return JsonResponse({"error": f"Invalid stage: {stage_str}. Valid: {', '.join(TaskPipelineStage.valid_stages())}"}, status=400)
-
-    stage_str = stage_str_upper  # Use uppercase for lookup
-
-    db = next(get_db())
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        old_stage = task.pipeline_stage
-        task.pipeline_stage = stage_map[stage_str]
-
-        if stage_map[stage_str] == TaskPipelineStage.COMPLETE:
-            task.status = TaskStatus.DONE
-            task.completed = True
-            from datetime import datetime, timezone
-            task.completed_at = datetime.now(timezone.utc)
-        elif stage_map[stage_str] in (TaskPipelineStage.PM, TaskPipelineStage.DEV, TaskPipelineStage.QA, TaskPipelineStage.SEC, TaskPipelineStage.DOCS):
-            task.status = TaskStatus.IN_PROGRESS
-
-        db.commit()
-        db.refresh(task)
-
-        log_event(db, actor, "set_stage", "task", task_id, {
-            "from_stage": old_stage.value if old_stage else "none",
-            "to_stage": task.pipeline_stage.value
-        })
-
-        return JsonResponse({
-            "success": True,
-            "task": task.to_dict()
-        })
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def task_start_work(request, task_id):
-    """
-    Unified "Start Work" endpoint - combines stage change + agent trigger.
-
-    This is the primary action for moving a task through the pipeline.
-    One click: sets stage, updates status, triggers agent, returns job tracking.
-
-    Body:
-        - stage: Target stage (pm, dev, qa, sec, docs) - required
-        - actor: Who is starting (default: human)
-        - simplify: If true, run task_simplify first to convert description to steps (default: false)
-
-    Returns:
-        - task: Updated task object
-        - job_id: Queue job ID for tracking progress
-        - run_id: Associated run ID (if created)
-        - status: "queued" or "started"
-        - simplified: True if task was simplified before execution
-    """
-    from app.services.agent_service import AgentService
-    from app.services.llm_service import query_llm
-    from app.models.task import TaskPipelineStage, TaskStatus
-
-    data = _get_json_body(request) or {}
-    stage_str = data.get("stage", "").upper()
-    actor = data.get("actor", "human")
-    should_simplify = data.get("simplify", False)
-
-    # Validate stage
-    stage_map = TaskPipelineStage.get_stage_map()
-    valid_work_stages = ["PM", "DEV", "QA", "SEC", "DOCS"]
-
-    if stage_str not in valid_work_stages:
-        return JsonResponse({
-            "error": f"Invalid stage: {stage_str}. Valid work stages: {', '.join(valid_work_stages)}"
-        }, status=400)
-
-    db = next(get_db())
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        project = task.project
-        if not project or not project.repo_path:
-            return JsonResponse({"error": "Project has no repo_path configured"}, status=400)
-
-        # 0. Optionally simplify the task first
-        simplified = False
-        if should_simplify and task.description:
-            try:
-                prompt = f"""Simplify this task into step-by-step implementation instructions.
-
-Task: {task.title}
-Description:
-{task.description}
-
-Acceptance Criteria:
-{chr(10).join(f'- {c}' for c in task.acceptance_criteria) if task.acceptance_criteria else '(none)'}
-
-Create a simplified implementation plan with:
-1. Numbered steps (1, 2, 3...)
-2. Each step has ONE specific action
-3. Include exact file paths
-4. Include exact code snippets to add/modify
-5. Use format: "In FILE, find OLD_CODE and replace with NEW_CODE"
-6. End with verification command
-
-Return ONLY the numbered steps, no preamble."""
-
-                result = query_llm(
-                    prompt=prompt,
-                    project_id=project.id,
-                    task_id=task.id,
-                    system_prompt=f"""You are a senior developer creating implementation instructions for "{project.name}".
-Make complex tasks simple and executable. Be specific with file paths and code snippets.""",
-                    include_context=True,
-                    temperature=0.3,
-                    db_session=db
-                )
-
-                simplified_content = result.get("content", "").strip()
-                if simplified_content:
-                    original = task.description
-                    task.description = f"""## Implementation Steps
-
-{simplified_content}
-
----
-<details>
-<summary>Original Description</summary>
-
-{original}
-</details>"""
-                    simplified = True
-            except Exception as e:
-                # Log but don't fail - simplification is optional
-                print(f"[start-work] Simplification failed: {e}")
-
-        # 1. Update task stage and status
-        old_stage = task.pipeline_stage
-        task.pipeline_stage = stage_map[stage_str]
-        task.status = TaskStatus.IN_PROGRESS
-
-        # 2. Create or reuse run for this task
-        from app.services.run_service import RunService
-        run_service = RunService(db)
-
-        # Check for existing active run on this task's project
-        # Exclude deployed, merged, or killed runs
-        from app.models.run import Run, RunState
-        existing_run = db.query(Run).filter(
-            Run.project_id == project.id,
-            Run.killed == False,  # Not soft-deleted
-            Run.state.notin_([RunState.DEPLOYED, RunState.MERGED])
-        ).order_by(Run.created_at.desc()).first()
-
-        if existing_run:
-            run = existing_run
-            run_id = run.id
-        else:
-            run_name = f"Execute Task: {task.task_id} - {task.title}"[:497]
-            run = run_service.create_run(project.id, run_name)
-            run_id = run.id
-
-        # Capture values before commit
-        task_dict = task.to_dict()
-        project_id = project.id
-        project_path = project.repo_path
-
-        # Log and commit
-        log_event(db, actor, "start_work", "task", task_id, {
-            "stage": stage_str,
-            "run_id": run_id,
-            "from_stage": old_stage.value if old_stage else "none"
-        })
-        db.commit()
-
-        # 3. Trigger agent via queue
-        agent_service = AgentService()
-        agent_type = stage_str.lower()  # pm, dev, qa, sec, docs
-
-        result = agent_service.trigger_agent(
-            task_id=task_id,  # Use task-based flow, not legacy run-based
-            agent_type=agent_type,
-            async_mode=True
-        )
-
-        # Log auto-trigger
-        print(f"[Auto-trigger] Triggering {agent_type} agent for task {task_id}")
-        print(f"[Auto-trigger] Result: {result}")
-
-        return JsonResponse({
-            "success": True,
-            "task": task_dict,
-            "run_id": run_id,
-            "stage": stage_str,
-            "agent": agent_type,
-            "job_id": result.get("job_id"),
-            "position": result.get("position"),
-            "status": result.get("status", "started"),
-            "simplified": simplified,
-            "message": f"Started {agent_type.upper()} agent for task {task.task_id}"
-        }, status=202)
-
-    except Exception as e:
-        db.rollback()
-        import traceback
-        print(f"[start-work] Error: {e}")
-        traceback.print_exc()
-        return JsonResponse({"error": str(e)}, status=500)
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["GET"])
-def task_job_status(request, task_id):
-    """
-    Get current job status for a task.
-
-    Returns the most recent running or pending job for this task's project.
-    Used for live status updates without page refresh.
-    """
-    from app.models.llm_job import LLMJob, JobStatus
-
-    db = next(get_db())
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        # Find most recent job for this project
-        job = db.query(LLMJob).filter(
-            LLMJob.project_id == task.project_id,
-            LLMJob.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value])
-        ).order_by(LLMJob.created_at.desc()).first()
-
-        if not job:
-            # Check for recently completed job
-            from datetime import datetime, timedelta, timezone
-            recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
-            job = db.query(LLMJob).filter(
-                LLMJob.project_id == task.project_id,
-                LLMJob.completed_at >= recent_cutoff
-            ).order_by(LLMJob.completed_at.desc()).first()
-
-        if not job:
-            return JsonResponse({
-                "has_active_job": False,
-                "task_id": task_id,
-                "stage": task.pipeline_stage.value if task.pipeline_stage else "none",
-                "status": task.status.value if task.status else "backlog"
-            })
-
-        # Handle job.status as either string or enum
-        job_status = job.status.value if hasattr(job.status, 'value') else job.status
-
-        return JsonResponse({
-            "has_active_job": True,
-            "job_id": job.id,
-            "job_type": job.job_type,
-            "job_status": job_status,
-            "started_at": job.started_at.isoformat() if job.started_at else None,
-            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-            "error_message": job.error_message,
-            "task_id": task_id,
-            "stage": task.pipeline_stage.value if task.pipeline_stage else "none",
-            "status": task.status.value if task.status else "backlog"
-        })
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["GET"])
-def run_task_progress(request, run_id):
-    """
-    Get task pipeline progress for a run.
-
-    Returns count of tasks at each pipeline stage.
-    """
-    db = next(get_db())
-    try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            return JsonResponse({"error": "Run not found"}, status=404)
-
-        # NOTE: Task.run_id removed in refactor - get tasks by project
-        tasks = db.query(Task).filter(Task.project_id == run.project_id).all()
-
-        # Count by stage
-        stage_counts = {stage.value: 0 for stage in TaskPipelineStage}
-        for task in tasks:
-            stage = task.pipeline_stage or TaskPipelineStage.NONE
-            stage_counts[stage.value] += 1
-
-        # Calculate progress percentage
-        total = len(tasks)
-        completed = stage_counts.get("complete", 0)
-        progress_pct = (completed / total * 100) if total > 0 else 0
-
-        return JsonResponse({
-            "run_id": run_id,
-            "total_tasks": total,
-            "stage_counts": stage_counts,
-            "completed": completed,
-            "progress_percent": round(progress_pct, 1),
-            "tasks": [t.to_dict() for t in tasks]
-        })
-    finally:
-        db.close()
-
-
-# =============================================================================
-# Director / Task Pipeline Endpoints
-# =============================================================================
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def director_process_run(request, run_id):
-    """Process a run's tasks through the pipeline.
-
-    POST /api/runs/{run_id}/director/process
-
-    Triggers the Director to:
-    1. Find tasks needing work
-    2. Start BACKLOG tasks
-    3. Return work queue for agents
-
-    Returns:
-        {
-            "run_id": 432,
-            "tasks_queued": 5,
-            "work_queue": [...],
-            "progress": {...}
-        }
-    """
-    from app.services.director_service import DirectorService
-
-    db = next(get_db())
-    try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            return JsonResponse({"error": "Run not found"}, status=404)
-
-        director = DirectorService(db)
-        result = director.process_run(run_id)
-
-        return JsonResponse(result)
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
 def task_advance(request, task_id):
     """Advance a task to the next pipeline stage.
 
@@ -3190,13 +1670,16 @@ def director_status(request):
     """Get Director daemon status and statistics.
 
     GET /api/director/status
-    """
-    global _director_daemon_running
 
+    Uses database heartbeat to determine if daemon is running.
+    """
     db = next(get_db())
     try:
-        # Get settings from database
-        settings = _get_director_settings(db)
+        # Get settings and check daemon status from database heartbeat
+        from app.models.director_settings import DirectorSettings
+        settings_obj = DirectorSettings.get_settings(db)
+        settings = settings_obj.to_dict()
+        is_running = settings_obj.is_daemon_running()
 
         # Count director actions from audit log
         from app.models.audit import AuditEvent
@@ -3225,7 +1708,7 @@ def director_status(request):
         ).order_by(AuditEvent.timestamp.desc()).limit(10).all()
 
         return JsonResponse({
-            "running": _director_daemon_running,
+            "running": is_running,
             "settings": settings,
             "stats": {
                 "tasks_reviewed_hour": tasks_reviewed_hour,
@@ -3296,23 +1779,25 @@ def director_stop(request):
     POST /api/director/stop
 
     Note: This sets a flag - the daemon will stop on next poll cycle.
-    Also updates 'enabled' in database to False so Director doesn't auto-start on restart.
+    Also updates 'enabled' in database to False and clears heartbeat.
     """
     global _director_daemon_running
 
-    if not _director_daemon_running:
-        return JsonResponse({"status": "not_running", "message": "Director is not running"})
-
-    # Signal stop (daemon checks this and exits)
-    _director_daemon_running = False
-
-    # Update enabled flag so Director doesn't auto-start on restart
     db = next(get_db())
     try:
         from app.models.director_settings import DirectorSettings
         settings = DirectorSettings.get_settings(db)
+
+        # Check if running via database heartbeat
+        if not settings.is_daemon_running():
+            return JsonResponse({"status": "not_running", "message": "Director is not running"})
+
+        # Signal stop (daemon checks this and exits)
+        _director_daemon_running = False
+
+        # Update enabled flag and clear heartbeat
         settings.enabled = False
-        db.commit()
+        DirectorSettings.clear_heartbeat(db)
     finally:
         db.close()
 
@@ -3729,7 +2214,7 @@ def proof_upload(request, entity_type, entity_id):
     POST /api/tasks/{task_id}/proofs/upload
 
     Body (multipart/form-data or JSON):
-        - stage: Pipeline stage (dev, qa, sec, docs)
+        - stage: Pipeline stage (required)
         - proof_type: Type of proof (screenshot, log, report)
         - description: Optional description
         - file: File data (for multipart)
@@ -4113,7 +2598,7 @@ def task_work_cycle_accept(request, task_id):
     """
     from app.services import work_cycle_service
 
-    data = _get_json_body(request) or {}
+    data = _get_json_body(request)
     work_cycle_id = data.get("work_cycle_id")
 
     db = next(get_db())
@@ -4321,98 +2806,106 @@ def task_work_cycle_fail(request, task_id):
         db.close()
 
 
-def task_work_cycle_history(request, task_id):
-    """Get work_cycle history for a task.
+# =============================================================================
+# WorkCycle Maintenance
+# =============================================================================
 
-    GET /api/tasks/{task_id}/work_cycle/history
+@csrf_exempt
+@require_http_methods(["POST"])
+def work_cycles_cleanup_stale(request):
+    """Mark stale work_cycles as completed when their tasks are DONE.
 
-    Query params:
-        - stage: Filter by pipeline stage
-        - limit: Max results (default: 50)
-        - format: 'full' or 'compact' (default: full)
-
-    Returns all work_cycles for the task, ordered by creation date (newest first).
-    Used for agent memory - understanding previous work cycles.
+    POST /api/work_cycles/cleanup-stale
+    Body: {"limit": 100}
     """
     from app.services import work_cycle_service
 
-    stage = request.GET.get("stage")
-    limit = int(request.GET.get("limit", 50))
-    fmt = request.GET.get("format", "full")
+    data = _get_json_body(request) or {}
+    limit = data.get("limit", 100)
 
     db = next(get_db())
     try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        work_cycles = work_cycle_service.get_work_cycle_history(
-            db=db,
-            task_id=task_id,
-            stage=stage,
-            limit=limit
-        )
-
-        if fmt == "compact":
-            return JsonResponse({
-                "task_id": task_id,
-                "work_cycles": [h.to_agent_context() for h in work_cycles],
-                "count": len(work_cycles)
+        updated = work_cycle_service.cleanup_stale_work_cycles(db, limit=limit)
+        for work_cycle in updated:
+            log_event(db, "system", "cleanup_stale_work_cycle", "task", work_cycle.task_id, {
+                "work_cycle_id": work_cycle.id,
+                "status": work_cycle.status.value if work_cycle.status else None
             })
-        else:
-            return JsonResponse({
-                "task_id": task_id,
-                "work_cycles": [h.to_dict() for h in work_cycles],
-                "count": len(work_cycles)
-            })
+        return JsonResponse({
+            "updated_count": len(updated),
+            "work_cycle_ids": [w.id for w in updated]
+        })
     finally:
         db.close()
 
 
-def project_work_cycle_history(request, project_id):
-    """Get work_cycle history for a project.
+@csrf_exempt
+@require_http_methods(["POST"])
+def work_cycle_delete(request, work_cycle_id):
+    """Delete a work_cycle record.
 
-    GET /api/projects/{project_id}/work_cycle/history
-
-    Query params:
-        - stage: Filter by pipeline stage
-        - task_id: Filter by specific task
-        - limit: Max results (default: 100)
-
-    Returns all work_cycles for the project, useful for project-level memory.
+    POST /api/work_cycles/{work_cycle_id}/delete
     """
-    from app.services import work_cycle_service
-
-    stage = request.GET.get("stage")
-    task_filter = request.GET.get("task_id")
-    limit = int(request.GET.get("limit", 100))
+    from app.models.work_cycle import WorkCycle
 
     db = next(get_db())
     try:
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            return JsonResponse({"error": "Project not found"}, status=404)
+        work_cycle = db.query(WorkCycle).filter(WorkCycle.id == work_cycle_id).first()
+        if not work_cycle:
+            return JsonResponse({"error": "WorkCycle not found"}, status=404)
 
-        work_cycles = work_cycle_service.get_work_cycle_history(
-            db=db,
-            project_id=project_id,
-            task_id=int(task_filter) if task_filter else None,
-            stage=stage,
-            limit=limit
-        )
+        task_id = work_cycle.task_id
+        db.delete(work_cycle)
+        db.commit()
 
-        # Group by task for easier consumption
-        by_task = {}
-        for h in work_cycles:
-            if h.task_id not in by_task:
-                by_task[h.task_id] = []
-            by_task[h.task_id].append(h.to_agent_context())
+        log_event(db, "human", "delete_work_cycle", "task", task_id, {
+            "work_cycle_id": work_cycle_id
+        })
+
+        return JsonResponse({"success": True, "work_cycle_id": work_cycle_id})
+    finally:
+        db.close()
+
+
+# =============================================================================
+# Task Maintenance
+# =============================================================================
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def tasks_auto_assign_dev(request):
+    """Assign DEV pipeline stage to tasks with no stage or NONE.
+
+    POST /api/tasks/auto-assign-dev
+    Body: {"project_id": 123}
+    """
+    data = _get_json_body(request) or {}
+    project_id = data.get("project_id")
+
+    db = next(get_db())
+    try:
+        query = db.query(Task)
+        if project_id:
+            query = query.filter(Task.project_id == project_id)
+
+        tasks = query.filter(
+            Task.pipeline_stage.in_([None, TaskPipelineStage.NONE])
+        ).all()
+
+        updated_ids = []
+        for task in tasks:
+            task.pipeline_stage = TaskPipelineStage.DEV
+            updated_ids.append(task.id)
+            log_event(db, "system", "auto_assign_dev", "task", task.id, {
+                "task_id": task.task_id
+            })
+
+        if updated_ids:
+            db.commit()
 
         return JsonResponse({
-            "project_id": project_id,
-            "work_cycles": [h.to_dict() for h in work_cycles],
-            "by_task": by_task,
-            "count": len(work_cycles)
+            "updated_count": len(updated_ids),
+            "task_ids": updated_ids
         })
     finally:
         db.close()
@@ -5003,7 +3496,7 @@ def build_agent_prompt_view(request, task_id):
 
         # Build project context (similar to orchestrator_context)
         project_context = {
-            "project": project.to_dict(),
+            "project": project.to_dict(include_children=True),
             "commands": {
                 "build": project.build_command,
                 "test": project.test_command,
@@ -5011,30 +3504,27 @@ def build_agent_prompt_view(request, task_id):
                 "deploy": project.deploy_command,
                 **(project.additional_commands or {})
             },
-            "files": {}
+            "files": {},
         }
 
         # Load key files from disk
         if project.repo_path and os.path.isdir(project.repo_path):
             priority_files = include_files or [
+                "README.md",
                 "CLAUDE.md",
-                "coding_principles.md",
                 "todo.json",
-                "_spec/BRIEF.md",
-                "_spec/WORK_CYCLE.md",
-                "_spec/SESSION_CONTEXT.md"
+                "pyproject.toml",
+                "requirements.txt"
             ]
-
             for filename in priority_files:
                 filepath = os.path.join(project.repo_path, filename)
                 if os.path.isfile(filepath):
                     try:
                         with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-                            project_context["files"][filename] = {
-                                "content": f.read()
-                            }
-                    except Exception as e:
-                        project_context["files"][filename] = {"error": str(e)}
+                            content = f.read(20000)
+                            project_context["files"][filename] = content
+                    except Exception:
+                        project_context["files"][filename] = None
 
         # Fetch task history (work_cycles and proofs)
         from app.models import WorkCycle, Proof
@@ -5193,17 +3683,16 @@ def project_enrich(request, project_id):
         # --- Read key files if available ---
         file_contents = {}
         if project.repo_path and os.path.isdir(project.repo_path):
-            priority_files = ["README.md", "CLAUDE.md", "requirements.txt", "package.json", "setup.py", "pyproject.toml"]
+            priority_files = ["README.md", "CLAUDE.md", "todo.json", "pyproject.toml", "requirements.txt"]
             for filename in priority_files:
                 filepath = os.path.join(project.repo_path, filename)
                 if os.path.isfile(filepath):
                     try:
                         with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-                            content = f.read()
-                            if len(content) < 10000:  # Only include if reasonable size
-                                file_contents[filename] = content
-                    except:
-                        pass
+                            content = f.read(20000)
+                            file_contents[filename] = content
+                    except Exception:
+                        file_contents[filename] = None
 
             if file_contents:
                 context_parts.append("=== FILE CONTENTS (for context) ===")
@@ -5315,723 +3804,15 @@ Format the output as structured markdown that can be stored in the project descr
         db.close()
 
 
-# =============================================================================
-# LLM Session Management
-# =============================================================================
+def task_context(request, task_id):
+    """Return task-level context for agents/UI.
 
-@csrf_exempt
-@require_http_methods(["GET"])
-def llm_sessions_list(request):
-    """List LLM sessions with optional filtering.
+    GET /api/tasks/{task_id}/context
 
-    GET /api/llm/sessions
-
-    Query params:
-    - project_id: Filter by project
-    - task_id: Filter by task
-    - run_id: Filter by run
-    - active: Filter by active status (true/false)
-    - limit: Max results (default 50)
-
-    Returns:
-    {
-        "sessions": [...],
-        "count": 10
-    }
+    Returns task, its project, recent work_cycles, recent proofs, and a small selection
+    of key files from the repo (if available).
     """
-    from app.models import LLMSession
-
-    project_id = request.GET.get("project_id")
-    task_id = request.GET.get("task_id")
-    run_id = request.GET.get("run_id")
-    active = request.GET.get("active")
-    limit = int(request.GET.get("limit", 50))
-
-    db = next(get_db())
-    try:
-        query = db.query(LLMSession)
-
-        if project_id:
-            query = query.filter(LLMSession.project_id == int(project_id))
-        if task_id:
-            query = query.filter(LLMSession.task_id == int(task_id))
-        if run_id:
-            query = query.filter(LLMSession.run_id == int(run_id))
-        if active is not None:
-            query = query.filter(LLMSession.active == (active.lower() == "true"))
-
-        sessions = query.order_by(LLMSession.updated_at.desc()).limit(limit).all()
-
-        return JsonResponse({
-            "sessions": [s.to_dict() for s in sessions],
-            "count": len(sessions)
-        })
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["GET", "DELETE"])
-def llm_session_detail(request, session_id):
-    """Get or delete a specific LLM session.
-
-    GET /api/llm/sessions/{id}
-    DELETE /api/llm/sessions/{id}
-
-    GET Query params:
-    - messages: Include messages (true/false, default false)
-    - last_n: Only include last N messages
-
-    Returns (GET):
-    {
-        "session": {...},
-        "messages": [...]  // If requested
-    }
-    """
-    from app.models import LLMSession
-
-    db = next(get_db())
-    try:
-        session = db.query(LLMSession).filter(LLMSession.id == session_id).first()
-        if not session:
-            return JsonResponse({"error": "Session not found"}, status=404)
-
-        if request.method == "DELETE":
-            db.delete(session)
-            db.commit()
-            return JsonResponse({"success": True, "deleted": session_id})
-
-        # GET request
-        include_messages = request.GET.get("messages", "false").lower() == "true"
-        last_n = request.GET.get("last_n")
-
-        if include_messages:
-            if last_n:
-                result = session.to_dict_with_messages(int(last_n))
-            else:
-                result = session.to_dict_with_messages()
-        else:
-            result = session.to_dict()
-
-        return JsonResponse({"session": result})
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def llm_session_clear(request, session_id):
-    """Clear a session's message history.
-
-    POST /api/llm/sessions/{id}/clear
-
-    Body:
-    {
-        "keep_system": true  // Optional - keep system messages (default true)
-    }
-
-    Returns:
-    {
-        "success": true,
-        "session": {...}
-    }
-    """
-    from app.models import LLMSession
-
-    data = _get_json_body(request) or {}
-
-    db = next(get_db())
-    try:
-        session = db.query(LLMSession).filter(LLMSession.id == session_id).first()
-        if not session:
-            return JsonResponse({"error": "Session not found"}, status=404)
-
-        keep_system = data.get("keep_system", True)
-        session.clear_messages(keep_system=keep_system)
-        db.commit()
-
-        return JsonResponse({
-            "success": True,
-            "session": session.to_dict()
-        })
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["GET"])
-def llm_session_export(request, session_id):
-    """Export a session in Goose-compatible JSON format.
-
-    GET /api/llm/sessions/{id}/export
-
-    Returns:
-    {
-        "id": 1,
-        "name": "task_123",
-        "working_dir": "/path/to/project",
-        "created_at": "...",
-        "total_tokens": 1234,
-        "input_tokens": 567,
-        "output_tokens": 678,
-        "provider_name": "docker",
-        "model_config": {"model_name": "ai/qwen3-coder"},
-        "conversation": [...],
-        "metadata": {"project_id": 1, "task_id": 123, "run_id": null}
-    }
-    """
-    from app.models import LLMSession
-
-    db = next(get_db())
-    try:
-        session = db.query(LLMSession).filter(LLMSession.id == session_id).first()
-        if not session:
-            return JsonResponse({"error": "Session not found"}, status=404)
-
-        return JsonResponse(session.to_export_format())
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["GET"])
-def llm_session_by_name(request, name):
-    """Get a session by name.
-
-    GET /api/llm/sessions/name/{name}
-
-    Query params:
-    - project_id: Required if multiple sessions share the same name
-    - messages: Include messages (true/false)
-
-    Returns:
-    {
-        "session": {...}
-    }
-    """
-    from app.models import LLMSession
-
-    project_id = request.GET.get("project_id")
-    include_messages = request.GET.get("messages", "false").lower() == "true"
-
-    db = next(get_db())
-    try:
-        query = db.query(LLMSession).filter(
-            LLMSession.name == name,
-            LLMSession.active == True
-        )
-
-        if project_id:
-            query = query.filter(LLMSession.project_id == int(project_id))
-
-        session = query.order_by(LLMSession.updated_at.desc()).first()
-        if not session:
-            return JsonResponse({"error": "Session not found"}, status=404)
-
-        if include_messages:
-            result = session.to_dict_with_messages()
-        else:
-            result = session.to_dict()
-
-        return JsonResponse({"session": result})
-    finally:
-        db.close()
-
-
-# =============================================================================
-# FALSIFICATION FRAMEWORK - Claims, Tests, Evidence
-# =============================================================================
-
-@csrf_exempt
-@require_http_methods(["GET", "POST"])
-def project_claims(request, project_id):
-    """List or create claims for a project.
-
-    GET: List all claims
-        Query params:
-        - include_task_claims: Include task-level claims (default true)
-        - status: Filter by status (pending, validated, falsified, etc.)
-
-    POST: Create a new claim
-        Body:
-        {
-            "claim_text": "The system must do X with Y accuracy",
-            "scope": "project" or "task",
-            "task_id": 123,  // required if scope is "task"
-            "category": "accuracy",  // optional
-            "priority": 8  // 1-10, optional
-        }
-    """
-    from app.services.claim_service import ClaimService
-
-    db = next(get_db())
-    try:
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            return JsonResponse({"error": "Project not found"}, status=404)
-
-        claim_service = ClaimService(db)
-
-        if request.method == "GET":
-            include_task = request.GET.get("include_task_claims", "true").lower() == "true"
-            status_filter = request.GET.get("status")
-
-            status_list = None
-            if status_filter:
-                try:
-                    status_list = [ClaimStatus(s.strip()) for s in status_filter.split(",")]
-                except ValueError:
-                    pass
-
-            claims = claim_service.get_project_claims(
-                project_id,
-                include_task_claims=include_task,
-                status_filter=status_list
-            )
-
-            return JsonResponse({
-                "claims": [c.to_dict(include_tests=True) for c in claims],
-                "summary": claim_service.get_claims_summary(project_id)
-            })
-
-        else:  # POST
-            data = _get_json_body(request)
-            if not data:
-                return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-            claim_text = data.get("claim_text")
-            if not claim_text:
-                return JsonResponse({"error": "claim_text required"}, status=400)
-
-            scope_str = data.get("scope", "project").upper()
-            try:
-                scope = ClaimScope[scope_str]
-            except KeyError:
-                return JsonResponse({"error": f"Invalid scope: {scope_str}"}, status=400)
-
-            category_str = data.get("category", "other").upper()
-            try:
-                category = ClaimCategory[category_str]
-            except KeyError:
-                category = ClaimCategory.OTHER
-
-            claim, error = claim_service.create_claim(
-                project_id=project_id,
-                claim_text=claim_text,
-                scope=scope,
-                task_id=data.get("task_id"),
-                category=category,
-                priority=data.get("priority", 5),
-                created_by=data.get("created_by", "api")
-            )
-
-            if error:
-                return JsonResponse({"error": error}, status=400)
-
-            return JsonResponse({"claim": claim.to_dict(include_tests=True)}, status=201)
-
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["GET", "PUT", "DELETE"])
-def claim_detail(request, claim_id):
-    """Get, update, or delete a claim.
-
-    GET: Get claim details with tests and evidence
-    PUT: Update claim properties
-        Body: { "claim_text", "category", "priority" }
-    DELETE: Delete claim and all associated tests/evidence
-    """
-    from app.services.claim_service import ClaimService
-
-    db = next(get_db())
-    try:
-        claim_service = ClaimService(db)
-        claim = claim_service.get_claim(claim_id)
-        if not claim:
-            return JsonResponse({"error": "Claim not found"}, status=404)
-
-        if request.method == "GET":
-            return JsonResponse({
-                "claim": claim.to_dict(include_tests=True, include_evidence=True)
-            })
-
-        elif request.method == "PUT":
-            data = _get_json_body(request)
-            if not data:
-                return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-            category = None
-            if "category" in data:
-                try:
-                    category = ClaimCategory[data["category"].upper()]
-                except KeyError:
-                    pass
-
-            claim, error = claim_service.update_claim(
-                claim_id=claim_id,
-                claim_text=data.get("claim_text"),
-                category=category,
-                priority=data.get("priority"),
-                actor=data.get("actor", "api")
-            )
-
-            if error:
-                return JsonResponse({"error": error}, status=400)
-
-            return JsonResponse({"claim": claim.to_dict(include_tests=True)})
-
-        else:  # DELETE
-            success, error = claim_service.delete_claim(claim_id)
-            if not success:
-                return JsonResponse({"error": error}, status=400)
-            return JsonResponse({"status": "deleted"})
-
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["GET", "POST"])
-def claim_tests(request, claim_id):
-    """List or create tests for a claim.
-
-    GET: List all tests for claim
-    POST: Create a new test
-        Body:
-        {
-            "name": "Gold set comparison",
-            "test_type": "gold_set",
-            "config": {
-                "dataset_path": "/data/gold.csv",
-                "output_path": "/data/output.csv",
-                "metric": "accuracy",
-                "threshold": 0.90
-            },
-            "is_automated": true,
-            "run_on_stages": ["qa"],
-            "timeout_seconds": 300
-        }
-    """
-    from app.services.claim_service import ClaimService
-
-    db = next(get_db())
-    try:
-        claim_service = ClaimService(db)
-        claim = claim_service.get_claim(claim_id)
-        if not claim:
-            return JsonResponse({"error": "Claim not found"}, status=404)
-
-        if request.method == "GET":
-            tests = claim_service.get_claim_tests(claim_id)
-            return JsonResponse({
-                "tests": [t.to_dict(include_evidence=True) for t in tests]
-            })
-
-        else:  # POST
-            data = _get_json_body(request)
-            if not data:
-                return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-            name = data.get("name")
-            if not name:
-                return JsonResponse({"error": "name required"}, status=400)
-
-            test_type_str = data.get("test_type", "script").upper()
-            try:
-                test_type = TestType[test_type_str]
-            except KeyError:
-                return JsonResponse({"error": f"Invalid test_type: {test_type_str}"}, status=400)
-
-            test, error = claim_service.create_test(
-                claim_id=claim_id,
-                name=name,
-                test_type=test_type,
-                config=data.get("config", {}),
-                is_automated=data.get("is_automated", True),
-                run_on_stages=data.get("run_on_stages", ["qa"]),
-                timeout_seconds=data.get("timeout_seconds", 300)
-            )
-
-            if error:
-                return JsonResponse({"error": error}, status=400)
-
-            return JsonResponse({"test": test.to_dict()}, status=201)
-
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def test_run(request, test_id):
-    """Execute a test and capture evidence.
-
-    POST /api/tests/{test_id}/run
-        Body:
-        {
-            "run_id": 123,  // optional run context
-            "actor": "agent"  // who triggered the test
-        }
-
-    Returns:
-    {
-        "evidence": {...},  // created evidence record
-        "passed": true/false
-    }
-    """
-    from app.services.claim_service import ClaimService
-
-    data = _get_json_body(request) or {}
-    run_id = data.get("run_id")
-    actor = data.get("actor", "api")
-
-    db = next(get_db())
-    try:
-        claim_service = ClaimService(db)
-        test = claim_service.get_test(test_id)
-        if not test:
-            return JsonResponse({"error": "Test not found"}, status=404)
-
-        evidence, error = claim_service.run_test(test_id, run_id=run_id, actor=actor)
-
-        if error:
-            return JsonResponse({"error": error, "passed": False}, status=400)
-
-        return JsonResponse({
-            "evidence": evidence.to_dict() if evidence else None,
-            "passed": evidence.supports_claim if evidence else False
-        })
-
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def run_claim_tests(request, run_id):
-    """Run all claim tests for a pipeline stage.
-
-    POST /api/runs/{run_id}/run-claim-tests
-        Body:
-        {
-            "stage": "qa",  // required - which stage tests to run
-            "actor": "agent"
-        }
-
-    Returns:
-    {
-        "stage": "qa",
-        "run_id": 123,
-        "tests_run": 5,
-        "passed": 4,
-        "failed": 1,
-        "errors": 0,
-        "details": [...]
-    }
-    """
-    from app.services.claim_service import ClaimService
-
-    data = _get_json_body(request)
-    if not data:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    stage = data.get("stage")
-    if not stage:
-        return JsonResponse({"error": "stage required"}, status=400)
-
-    actor = data.get("actor", "api")
-
-    db = next(get_db())
-    try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            return JsonResponse({"error": "Run not found"}, status=404)
-
-        claim_service = ClaimService(db)
-        result = claim_service.run_tests_for_stage(run_id, stage, actor=actor)
-
-        log_event(
-            db,
-            actor=actor,
-            action="run_claim_tests",
-            entity_type="run",
-            entity_id=run_id,
-            details={
-                "stage": stage,
-                "tests_run": result.get("tests_run", 0),
-                "passed": result.get("passed", 0),
-                "failed": result.get("failed", 0)
-            }
-        )
-
-        return JsonResponse(result)
-
-    finally:
-        db.close()
-
-
-@csrf_exempt
-@require_http_methods(["GET", "POST"])
-def claim_evidence(request, claim_id):
-    """List or capture evidence for a claim.
-
-    GET: List all evidence
-        Query params:
-        - run_id: Filter by run
-
-    POST: Manually capture evidence
-        Body:
-        {
-            "title": "Gold set comparison results",
-            "evidence_type": "metrics_json",
-            "content": "...",  // inline content
-            "filename": "results.csv",
-            "filepath": "/path/to/file",
-            "metrics": {"accuracy": 0.92},
-            "failures": [],
-            "supports_claim": true,
-            "verdict_reason": "Accuracy 92% exceeds 90% threshold",
-            "test_id": 123,
-            "run_id": 456
-        }
-    """
-    from app.services.claim_service import ClaimService
-
-    db = next(get_db())
-    try:
-        claim_service = ClaimService(db)
-        claim = claim_service.get_claim(claim_id)
-        if not claim:
-            return JsonResponse({"error": "Claim not found"}, status=404)
-
-        if request.method == "GET":
-            run_id = request.GET.get("run_id")
-            evidence = claim_service.get_claim_evidence(
-                claim_id,
-                run_id=int(run_id) if run_id else None
-            )
-            return JsonResponse({
-                "evidence": [e.to_dict() for e in evidence]
-            })
-
-        else:  # POST
-            data = _get_json_body(request)
-            if not data:
-                return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-            title = data.get("title")
-            if not title:
-                return JsonResponse({"error": "title required"}, status=400)
-
-            evidence_type_str = data.get("evidence_type", "other").upper()
-            try:
-                evidence_type = EvidenceType[evidence_type_str]
-            except KeyError:
-                evidence_type = EvidenceType.OTHER
-
-            evidence, error = claim_service.capture_evidence(
-                claim_id=claim_id,
-                title=title,
-                evidence_type=evidence_type,
-                content=data.get("content"),
-                filename=data.get("filename"),
-                filepath=data.get("filepath"),
-                metrics=data.get("metrics"),
-                failures=data.get("failures"),
-                supports_claim=data.get("supports_claim"),
-                verdict_reason=data.get("verdict_reason"),
-                test_id=data.get("test_id"),
-                run_id=data.get("run_id"),
-                created_by=data.get("created_by", "api")
-            )
-
-            if error:
-                return JsonResponse({"error": error}, status=400)
-
-            return JsonResponse({"evidence": evidence.to_dict()}, status=201)
-
-    finally:
-        db.close()
-
-
-def run_claims_validate(request, run_id):
-    """Validate all claims have evidence for a run.
-
-    GET /api/runs/{run_id}/claims/validate
-
-    Returns:
-    {
-        "valid": true/false,
-        "total_claims": 10,
-        "validated": 8,
-        "falsified": 1,
-        "pending": 1,
-        "missing_evidence": [claim_ids],
-        "failed_claims": [claim_ids]
-    }
-    """
-    from app.services.claim_service import ClaimService
-
-    db = next(get_db())
-    try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            return JsonResponse({"error": "Run not found"}, status=404)
-
-        claim_service = ClaimService(db)
-        result = claim_service.validate_claims_for_run(run_id)
-
-        return JsonResponse(result)
-
-    finally:
-        db.close()
-
-
-def run_claims_summary(request, run_id):
-    """Get claims summary for a run.
-
-    GET /api/runs/{run_id}/claims/summary
-
-    Returns summary of all claims applicable to the run's project.
-    """
-    from app.services.claim_service import ClaimService
-
-    db = next(get_db())
-    try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            return JsonResponse({"error": "Run not found"}, status=404)
-
-        claim_service = ClaimService(db)
-        summary = claim_service.get_claims_summary(run.project_id)
-
-        # Add run-specific validation
-        validation = claim_service.validate_claims_for_run(run_id)
-
-        return JsonResponse({
-            "run_id": run_id,
-            "project_id": run.project_id,
-            "summary": summary,
-            "validation": validation
-        })
-
-    finally:
-        db.close()
-
-
-def task_claims(request, task_id):
-    """Get claims applicable to a task.
-
-    GET /api/tasks/{task_id}/claims
-        Query params:
-        - include_project_claims: Include inherited project claims (default true)
-
-    Returns task-specific claims plus inherited project claims.
-    """
-    from app.services.claim_service import ClaimService
+    import os
 
     db = next(get_db())
     try:
@@ -6039,357 +3820,159 @@ def task_claims(request, task_id):
         if not task:
             return JsonResponse({"error": "Task not found"}, status=404)
 
-        include_project = request.GET.get("include_project_claims", "true").lower() == "true"
+        project = task.project
 
-        claim_service = ClaimService(db)
-        claims = claim_service.get_task_claims(task_id, include_project_claims=include_project)
+        # Recent work_cycles (agent work units)
+        try:
+            work_cycles = db.query(WorkCycle).filter(WorkCycle.task_id == task_id).order_by(WorkCycle.created_at.desc()).limit(10).all()
+        except Exception:
+            work_cycles = []
+
+        # Recent proofs (artifacts)
+        try:
+            proofs = db.query(Proof).filter(Proof.task_id == task_id).order_by(Proof.created_at.desc()).limit(10).all()
+        except Exception:
+            proofs = []
+
+        # Small selection of repository files for context (if project repo available)
+        files_content = {}
+        if project and project.repo_path and os.path.isdir(project.repo_path):
+            priority_files = ["README.md", "CLAUDE.md", "todo.json", "pyproject.toml", "requirements.txt"]
+            for fname in priority_files:
+                fp = os.path.join(project.repo_path, fname)
+                if os.path.isfile(fp):
+                    try:
+                        with open(fp, 'r', encoding='utf-8', errors='replace') as f:
+                            content = f.read(20000)
+                            files_content[fname] = content
+                    except Exception:
+                        files_content[fname] = None
 
         return JsonResponse({
-            "task_id": task_id,
-            "claims": [c.to_dict(include_tests=True) for c in claims]
+            "task": task.to_dict(),
+            "project": project.to_dict() if project else None,
+            "work_cycles": [w.to_dict() for w in work_cycles],
+            "proofs": [p.to_dict() for p in proofs],
+            "files": files_content
         })
-
     finally:
         db.close()
 
 
-# =============================================================================
-# Job Queue API - LLM and Agent Request Queue Management
-# =============================================================================
+@csrf_exempt
+@require_http_methods(["POST"])
+def run_kill(request, run_id):
+    """Soft-kill a run (mark as killed).
+
+    POST /api/runs/{run_id}/kill
+
+    This sets the run.killed flag and killed_at timestamp. It's intended as a safe
+    way for humans to stop runs that were started or to mark them as cancelled.
+    """
+    from datetime import datetime
+
+    db = next(get_db())
+    try:
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            return JsonResponse({"error": "Run not found"}, status=404)
+
+        # Mark as killed (soft flag) and record time
+        run.killed = True
+        run.killed_at = datetime.utcnow()
+        db.commit()
+
+        log_event(db, "human", "kill", "run", run_id, {"run_id": run_id})
+
+        return JsonResponse({"success": True, "killed": True, "run_id": run_id})
+    finally:
+        db.close()
+
+
+# -----------------------------------------------------------------------------
+# Job Queue API
+# -----------------------------------------------------------------------------
 
 @csrf_exempt
 @require_http_methods(["GET"])
 def queue_status(request):
-    """Get current queue status.
+    """Get current job queue status including pending/running jobs and worker info.
 
-    GET /api/queue/status
-    GET /api/queue/status?pending=5  (include up to 5 pending job details)
-
-    Returns:
-        Queue lengths, running jobs, estimated wait times
+    Returns aggregated queue status, worker states, DMR health, and director status.
     """
-    from app.services.job_queue_service import get_queue_service
-    from app.services.job_worker import get_worker_manager
-    from app.models.llm_job import LLMJob, JobStatus
+    from app.services.job_queue_service import JobQueueService
+    from app.models.director_settings import DirectorSettings
+    from app.db import SessionLocal
 
-    queue = get_queue_service()
-    manager = get_worker_manager()
+    db = SessionLocal()
+    try:
+        # Get queue stats from JobQueueService
+        queue_service = JobQueueService(db)
+        queue_stats = queue_service.get_queue_status()
 
-    status = queue.get_queue_status()
-    worker_status = manager.get_status()
-
-    # Optionally include pending job details
-    pending_limit = request.GET.get('pending')
-    if pending_limit:
+        # Get worker status
+        workers_status = {"started": False, "workers": []}
         try:
-            limit = min(int(pending_limit), 20)  # Max 20
-            db = queue._get_db()
-            pending_jobs = db.query(LLMJob).filter(
-                LLMJob.status == JobStatus.PENDING.value
-            ).order_by(
-                LLMJob.priority.asc(),
-                LLMJob.created_at.asc()
-            ).limit(limit).all()
-
-            status['pending_jobs'] = [
-                {
-                    'id': j.id,
-                    'job_type': j.job_type,
-                    'task_id': j.task_id,
-                    'project_id': j.project_id,
-                    'priority': j.priority,
-                    'created_at': j.created_at.isoformat() if j.created_at else None
-                }
-                for j in pending_jobs
-            ]
-        except (ValueError, TypeError):
+            from app.services.job_worker import get_workers_status
+            workers_status = get_workers_status()
+        except Exception:
             pass
 
-    # Check DMR status if requested
-    dmr_status = None
-    if request.GET.get('dmr') == '1':
-        import requests
+        # Get DMR health (Docker Model Runner for local LLM)
+        dmr_healthy = False
+        dmr_error = None
         try:
-            dmr_resp = requests.get('http://localhost:12434/engines/llama.cpp/v1/models', timeout=2)
-            if dmr_resp.status_code == 200:
-                models = dmr_resp.json().get('data', [])
-                dmr_status = {
-                    'available': True,
-                    'models': len(models),
-                    'model_ids': [m['id'] for m in models[:5]]
-                }
-            else:
-                dmr_status = {'available': False, 'error': f'HTTP {dmr_resp.status_code}'}
-        except requests.exceptions.Timeout:
-            dmr_status = {'available': False, 'error': 'timeout'}
+            import socket
+            with socket.create_connection(("localhost", 12434), timeout=1):
+                dmr_healthy = True
         except Exception as e:
-            dmr_status = {'available': False, 'error': str(e)}
+            dmr_error = str(e)
 
-    response = {
-        "queue": status,
-        "workers": worker_status
-    }
-    if dmr_status is not None:
-        response['dmr'] = dmr_status
-
-    return JsonResponse(response)
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def queue_enqueue(request):
-    """Enqueue a job for async processing.
-
-    POST /api/queue/enqueue
-    Body:
-    {
-        "job_type": "llm_complete|llm_chat|llm_query|vision_analyze|agent_run",
-        "request_data": {...},
-        "priority": 1-4 (optional, default 3),
-        "project_id": int (optional),
-        "task_id": int (optional),
-        "timeout": int (optional, seconds)
-    }
-
-    Returns:
-        Created job with ID and queue position
-    """
-    from app.services.job_queue_service import get_queue_service
-    from app.models.llm_job import JobType, JobPriority
-
-    try:
-        data = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    job_type = data.get("job_type")
-    request_data = data.get("request_data", {})
-    priority = data.get("priority", JobPriority.NORMAL)
-    project_id = data.get("project_id")
-    task_id = data.get("task_id")
-    timeout = data.get("timeout", 300)
-
-    # Validate job type
-    valid_types = [jt.value for jt in JobType]
-    if job_type not in valid_types:
-        return JsonResponse({
-            "error": f"Invalid job_type. Must be one of: {valid_types}"
-        }, status=400)
-
-    queue = get_queue_service()
-
-    try:
-        job = queue.enqueue_llm_request(
-            job_type=job_type,
-            request_data=request_data,
-            priority=priority,
-            project_id=project_id,
-            task_id=task_id,
-            timeout=timeout
-        )
-
-        position = queue.get_job_position(job.id)
+        # Get director status (use global flag and database heartbeat)
+        try:
+            director_settings = db.query(DirectorSettings).first()
+            # Check running via global flag or database heartbeat
+            is_running = _director_daemon_running
+            if not is_running and director_settings:
+                is_running = director_settings.is_daemon_running()
+            director_status = {
+                "running": is_running,
+                "enabled": getattr(director_settings, 'enabled', False) if director_settings else False,
+                "poll_interval": getattr(director_settings, 'poll_interval', 30) if director_settings else 30
+            }
+        except Exception:
+            director_status = {"running": False, "enabled": False, "poll_interval": 30}
 
         return JsonResponse({
-            "job_id": job.id,
-            "job_type": job.job_type,
-            "status": job.status,
-            "priority": job.priority,
-            "position": position,
-            "created_at": job.created_at.isoformat() if job.created_at else None
-        }, status=201)
-
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-
-@csrf_exempt
-@require_http_methods(["GET"])
-def queue_job_status(request, job_id):
-    """Get status of a specific job.
-
-    GET /api/queue/jobs/{job_id}
-
-    Returns:
-        Job details including status, position, and result if completed
-    """
-    from app.services.job_queue_service import get_queue_service
-
-    queue = get_queue_service()
-    job = queue.get_job(job_id)
-
-    if not job:
-        return JsonResponse({"error": "Job not found"}, status=404)
-
-    position = queue.get_job_position(job_id) if job.status == "pending" else 0
-
-    return JsonResponse({
-        "job_id": job.id,
-        "job_type": job.job_type,
-        "status": job.status,
-        "priority": job.priority,
-        "position": position,
-        "project_id": job.project_id,
-        "task_id": job.task_id,
-        "result_data": job.result_data if job.status == "completed" else None,
-        "error_message": job.error_message if job.status == "failed" else None,
-        "created_at": job.created_at.isoformat() if job.created_at else None,
-        "started_at": job.started_at.isoformat() if job.started_at else None,
-        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-        "wait_time_seconds": job.wait_time_seconds,
-        "run_time_seconds": job.run_time_seconds if job.started_at else 0
-    })
-
-
-@csrf_exempt
-@require_http_methods(["GET"])
-def queue_job_wait(request, job_id):
-    """Long-poll until a job completes.
-
-    GET /api/queue/jobs/{job_id}/wait?timeout=120
-
-    Waits for the job to complete and returns the result.
-    Times out after specified seconds (default 120).
-    """
-    from app.services.job_queue_service import get_queue_service
-
-    timeout = int(request.GET.get("timeout", 120))
-    timeout = min(timeout, 300)  # Cap at 5 minutes
-
-    queue = get_queue_service()
-
-    job = queue.wait_for_job(job_id, timeout=timeout)
-
-    if not job:
-        return JsonResponse({
-            "error": "Job not found or timed out",
-            "status": "timeout"
-        }, status=408)
-
-    return JsonResponse({
-        "job_id": job.id,
-        "status": job.status,
-        "result_data": job.result_data,
-        "error_message": job.error_message,
-        "wait_time_seconds": job.wait_time_seconds,
-        "run_time_seconds": job.run_time_seconds
-    })
-
-
-@csrf_exempt
-@require_http_methods(["DELETE", "POST"])
-def queue_job_cancel(request, job_id):
-    """Cancel a pending job.
-
-    DELETE /api/queue/jobs/{job_id}
-    POST /api/queue/jobs/{job_id}/cancel
-
-    Only pending jobs can be cancelled.
-    """
-    from app.services.job_queue_service import get_queue_service
-
-    queue = get_queue_service()
-    success = queue.cancel_job(job_id)
-
-    if success:
-        return JsonResponse({
-            "job_id": job_id,
-            "status": "cancelled"
+            "queue": queue_stats,
+            "workers": workers_status,
+            "dmr": {"healthy": dmr_healthy, "error": dmr_error},
+            "director": director_status
         })
-    else:
-        return JsonResponse({
-            "error": "Job not found or not pending"
-        }, status=400)
+    finally:
+        db.close()
 
 
-@csrf_exempt
-@require_http_methods(["POST"])
-def queue_cleanup(request):
-    """Clean up old completed/failed jobs.
+# -----------------------------------------------------------------------------
+# Lightweight stubs for endpoints not yet implemented (prevent import errors)
+# -----------------------------------------------------------------------------
 
-    POST /api/queue/cleanup?max_age_hours=24
+_STUB_NAMES = [
+    'activity_feed', 'audit_log', 'bug_create', 'bug_detail', 'bug_kill', 'bug_list', 'bug_update_status',
+    'claim_detail', 'claim_evidence', 'claim_tests',
+    'credential_create', 'credential_delete', 'credential_detail', 'credential_update', 'credentials_list',
+    'environment_create', 'environment_delete', 'environment_detail', 'environment_update', 'environments_list',
+    'llm_activity', 'llm_activity_full', 'llm_session_by_name', 'llm_session_clear', 'llm_session_detail',
+    'llm_session_export', 'llm_sessions_list', 'project_audit_log', 'project_claims', 'project_work_cycle_history',
+    'queue_check_timeouts', 'queue_cleanup', 'queue_enqueue', 'queue_job_cancel', 'queue_job_kill',
+    'queue_job_status', 'queue_job_wait', 'queue_kill_all',
+    'run_claim_tests', 'run_claims_summary', 'run_claims_validate', 'run_task_progress',
+    'task_advance_stage', 'task_claims', 'task_director_prepare', 'task_enhance', 'task_job_status',
+    'task_queue', 'task_set_stage', 'task_simplify', 'task_start_work', 'task_work_cycle_history', 'test_run',
+    'threat_intel_create', 'threat_intel_list', 'webhook_create', 'webhook_delete', 'webhook_detail', 'webhook_update', 'webhooks_list'
+]
 
-    Admin endpoint to clean stale jobs.
-    """
-    from app.services.job_queue_service import get_queue_service
-
-    max_age_hours = int(request.GET.get("max_age_hours", 24))
-    queue = get_queue_service()
-
-    deleted = queue.cleanup_stale_jobs(max_age_hours)
-
-    return JsonResponse({
-        "deleted": deleted,
-        "max_age_hours": max_age_hours
-    })
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def queue_job_kill(request, job_id):
-    """Force kill a running job.
-
-    POST /api/queue/jobs/{job_id}/kill
-
-    Unlike cancel, this works on RUNNING jobs.
-    """
-    from app.services.job_queue_service import get_queue_service
-
-    data = _get_json_body(request) or {}
-    reason = data.get("reason", "Killed by user")
-
-    queue = get_queue_service()
-    success = queue.force_kill_job(job_id, reason)
-
-    if success:
-        return JsonResponse({
-            "job_id": job_id,
-            "status": "killed",
-            "reason": reason
-        })
-    else:
-        return JsonResponse({
-            "error": "Job not found or not running"
-        }, status=400)
+for _name in _STUB_NAMES:
+    exec(f"@csrf_exempt\ndef {_name}(request, *args, **kwargs):\n    '''Stub placeholder for { _name }'''\n    return JsonResponse({{'error': 'Not implemented', 'endpoint': '{_name}'}}, status=501)\n")
 
 
-@csrf_exempt
-@require_http_methods(["POST"])
-def queue_kill_all(request):
-    """Kill all running jobs.
-
-    POST /api/queue/kill-all
-
-    Emergency stop for all running jobs.
-    """
-    from app.services.job_queue_service import get_queue_service
-
-    data = _get_json_body(request) or {}
-    reason = data.get("reason", "System cleanup")
-
-    queue = get_queue_service()
-    killed = queue.kill_all_running(reason)
-
-    return JsonResponse({
-        "killed": killed,
-        "reason": reason
-    })
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def queue_check_timeouts(request):
-    """Check and timeout stale running jobs.
-
-    POST /api/queue/check-timeouts
-
-    Finds jobs that have exceeded their timeout and marks them as timed out.
-    """
-    from app.services.job_queue_service import get_queue_service
-
-    queue = get_queue_service()
-    timed_out = queue.check_timeouts()
-
-    return JsonResponse({
-        "timed_out": timed_out
-    })

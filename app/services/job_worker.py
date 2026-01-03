@@ -379,3 +379,9 @@ def stop_workers():
     """Convenience function to stop all workers."""
     manager = get_worker_manager()
     manager.stop_all()
+
+
+def get_workers_status() -> dict:
+    """Get status of all workers."""
+    manager = get_worker_manager()
+    return manager.get_status()

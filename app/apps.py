@@ -13,9 +13,18 @@ class WorkflowHubConfig(DjangoAppConfig):
 
     def ready(self):
         """Called when Django starts up."""
-        # Only start workers in the main process, not in autoreload subprocess
-        # Check RUN_MAIN to avoid double-starting in development
-        if os.environ.get('RUN_MAIN') == 'true':
+        # Startup logic for background workers:
+        # - In development: RUN_MAIN='true' indicates the main reloader process
+        # - In production (gunicorn): Single worker means no coordination needed
+
+        run_main = os.environ.get('RUN_MAIN')
+
+        if run_main == 'true':
+            # Django development server main process
+            self._start_job_workers()
+            self._start_director_if_enabled()
+        elif run_main is None:
+            # Production mode (gunicorn with single worker)
             self._start_job_workers()
             self._start_director_if_enabled()
 

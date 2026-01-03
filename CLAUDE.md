@@ -12,10 +12,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. `_spec/BRIEF.md` - Project goals
 4. `coding_principles.md` - TDD/DRY standards and development workflow
 5. `todo.json` - Current task status and priorities
+6. `agent_onboarding.md` - Compact project context and non-negotiables
 
 ---
 
 ## Core Principles (NON-NEGOTIABLE)
+
+### Naming: Atomic, Canonical, Deterministic
+- **Atomic** - Each name represents exactly one thing. No compound meanings, no ambiguity.
+- **Canonical** - One correct name per concept, used everywhere. Follow the casing convention for the context - never mix styles.
+- **Deterministic** - Given the same context, anyone would arrive at the same name. No creativity, no synonyms, no style variations.
+
+| Context | Convention | Example |
+|---------|------------|---------|
+| Python variables/functions | `snake_case` | `get_task_status`, `is_running` |
+| Python classes | `PascalCase`, singular | `DirectorSettings`, `LLMJob` |
+| Database tables | `snake_case`, plural | `tasks`, `agent_reports` |
+| Database columns | `snake_case` | `created_at`, `daemon_started_at` |
+| API endpoints | REST, plural resources | `/api/tasks`, `/api/runs/{id}` |
+| Constants | `UPPER_SNAKE_CASE` | `MAX_RETRIES`, `DEFAULT_TIMEOUT` |
+| JavaScript/TypeScript | `camelCase` | `getTaskStatus`, `isRunning` |
+| React components | `PascalCase` | `TaskList`, `RunDetail` |
+| CSS classes | `kebab-case` | `task-card`, `run-status` |
+| Environment variables | `UPPER_SNAKE_CASE` | `DATABASE_URL`, `LLM_BASE_URL` |
 
 ### TDD - Test-Driven Development
 - Write tests FIRST, then implement
@@ -54,12 +73,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Quick Start (ALWAYS use this)
 ```bash
-# Start everything (order matters!)
-docker compose -f docker/docker-compose.yml up -d
+# One command to start everything
+./start.sh
+
+# This handles: Docker, venv, .env, migrations, Django, Next.js frontend
+# Director daemon auto-starts if enabled in database (director_settings.enabled)
+```
+
+### Manual Start (if needed)
+```bash
+docker compose -f docker/docker-compose.yml up -d db postgrest
 source venv/bin/activate
-source .env  # CRITICAL: Load database credentials
-alembic upgrade head  # Ensure schema is current
-python scripts/seed_role_configs.py  # Seed agent role prompts (idempotent)
+source .env
+alembic upgrade head
 python manage.py runserver 0.0.0.0:8000
 ```
 
