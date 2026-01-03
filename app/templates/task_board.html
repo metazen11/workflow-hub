@@ -188,7 +188,7 @@
 
     .kanban-col-body {
         flex: 1;
-        padding: 8px;
+        padding: 4px 6px;
         overflow-y: auto;
         min-height: 300px;
         background: var(--bg-secondary, #f8fafc);
@@ -202,26 +202,52 @@
         background-color: rgba(59, 130, 246, 0.1);
     }
 
-    /* Task Cards - compact style */
+    /* Task Cards - dense compact style */
     .task-card {
         cursor: grab;
-        transition: transform 0.15s, box-shadow 0.15s;
+        transition: transform 0.1s, box-shadow 0.1s;
         background: var(--bg-card, #fff);
         border: 1px solid var(--border, #e2e8f0);
-        border-radius: 4px;
-        margin-bottom: 4px;
-        position: relative;
+        border-radius: 3px;
+        margin-bottom: 3px;
+        padding: 4px 6px;
     }
 
-    .task-card .card-body {
-        padding: 6px 8px !important;
+    .task-card .card-link {
+        text-decoration: none;
+        color: inherit;
+        display: block;
+    }
+
+    .task-card .card-header-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-bottom: 1px;
+    }
+
+    .task-card .task-id {
+        font-size: 0.6rem;
+        color: #6b7280;
+        font-weight: 500;
+    }
+
+    .task-card .priority-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        margin-left: auto;
+    }
+
+    .task-card .priority-dot.high {
+        background: #dc3545;
     }
 
     .task-card .card-title {
-        font-size: 0.75rem;
-        line-height: 1.25;
-        margin-bottom: 0 !important;
-        display: block;
+        font-size: 0.7rem;
+        line-height: 1.2;
+        color: #1f2937;
+        font-weight: 500;
     }
 
     .task-card:hover {

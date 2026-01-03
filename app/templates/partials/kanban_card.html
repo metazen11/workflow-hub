@@ -3,11 +3,12 @@
      data-priority="{{ task.priority }}"
      data-current-stage="{{ task.pipeline_stage.value|default:'none' }}"
      data-priority-val="{% if task.priority >= 8 %}high{% elif task.priority <= 3 %}low{% else %}medium{% endif %}">
-    <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center">
-            <span class="text-muted" style="font-size: 0.6rem;">{{ task.task_id }}</span>
+    <a href="/ui/task/{{ task.id }}/" class="card-link">
+        <div class="card-header-row">
+            <span class="task-id">{{ task.task_id }}</span>
             <span class="job-status-badge d-none" data-task="{{ task.id }}"></span>
+            {% if task.priority >= 8 %}<span class="priority-dot high"></span>{% endif %}
         </div>
-        <a href="/ui/task/{{ task.id }}/" class="card-title text-decoration-none text-dark">{{ task.title|truncatechars:45 }}</a>
-    </div>
+        <div class="card-title">{{ task.title|truncatechars:60 }}</div>
+    </a>
 </div>

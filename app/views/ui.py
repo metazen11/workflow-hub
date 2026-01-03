@@ -861,19 +861,24 @@ def global_board_view(request):
         # Get all projects for filter dropdown
         all_projects = db.query(Project).order_by(Project.name).all()
 
-        # Build query with optional project filter
+        # Build query with optional project filter - include DONE status for complete column
         query = db.query(Task).filter(
-            Task.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.BACKLOG])
+            Task.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.BACKLOG, TaskStatus.DONE])
         )
         if project_id:
             query = query.filter(Task.project_id == project_id)
 
+        # Limit DONE tasks to most recent 10 to keep board manageable
         tasks = query.order_by(Task.priority.desc(), Task.updated_at.desc()).all()
 
         # Build kanban columns by pipeline stage
         kanban = _build_task_kanban_dict()
         for task in tasks:
-            stage_key = task.pipeline_stage.value.lower() if task.pipeline_stage else 'none'
+            # Done tasks with no pipeline stage go to complete column
+            if task.status == TaskStatus.DONE:
+                stage_key = 'complete'
+            else:
+                stage_key = task.pipeline_stage.value.lower() if task.pipeline_stage else 'none'
             if stage_key in kanban:
                 project = db.query(Project).filter(Project.id == task.project_id).first()
                 # Build dict with all fields expected by kanban_card.html template
