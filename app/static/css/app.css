@@ -1505,7 +1505,9 @@ a.activity-item.clickable:hover .activity-title {
   gap: 8px;
 }
 
-.kanban-card {
+/* Task cards in kanban columns - apply to both .kanban-card and .task-card */
+.kanban-card,
+.task-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1513,11 +1515,12 @@ a.activity-item.clickable:hover .activity-title {
   box-shadow: var(--shadow-sm);
   cursor: pointer;
   transition: all 0.15s ease;
-  min-height: 60px; /* Ensure cards don't get squished */
+  min-height: 70px; /* Ensure cards don't get squished */
   flex-shrink: 0; /* Don't shrink cards to fit */
 }
 
-.kanban-card:hover {
+.kanban-card:hover,
+.task-card:hover {
   border-color: var(--accent);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
